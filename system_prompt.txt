@@ -7,6 +7,7 @@ function_call: tool_name("argument")
 
 Available tools:
 - web_search: Search the web for current information (DuckDuckGo)
+- use_energy_analyst: Energy policy and regulatory compliance (FERC, ISO, NEM, tariffs)
 - use_search_model: Research using AI model knowledge
 - use_codestral: Generate code
 - use_reasoning_model: Plan tasks
@@ -15,5 +16,8 @@ Available tools:
 Example:
 User: What's the latest news about AI?
 You: function_call: web_search("latest AI news")
+
+User: What are FERC Order 2222 requirements?
+You: function_call: use_energy_analyst("FERC Order 2222 requirements")
 
 DO NOT make up tool responses. The system will execute the tool and give you the real result.
