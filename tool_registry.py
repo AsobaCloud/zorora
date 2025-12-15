@@ -353,11 +353,11 @@ def use_energy_analyst(query: str) -> str:
         # EnergyAnalyst API endpoint
         api_url = "http://localhost:8000/chat"
 
-        # Make API request
+        # Make API request (longer timeout for slower inference)
         response = requests.post(
             api_url,
             json={"message": query, "use_rag": True},
-            timeout=60
+            timeout=180  # 3 minutes to accommodate slower LLM inference
         )
         response.raise_for_status()
 
@@ -385,7 +385,7 @@ def use_energy_analyst(query: str) -> str:
         return "Error: Could not connect to EnergyAnalyst API at http://localhost:8000. Is the API server running? Start it with: cd ~/Workbench/energyanalyst-v0.1 && python api/server.py"
 
     except requests.Timeout:
-        return "Error: EnergyAnalyst API request timed out after 60 seconds"
+        return "Error: EnergyAnalyst API request timed out after 180 seconds. The model may be generating a very long response or LM Studio may be overloaded."
 
     except requests.HTTPError as e:
         return f"Error: EnergyAnalyst API error (HTTP {e.response.status_code}): {e.response.text}"
