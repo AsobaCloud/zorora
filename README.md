@@ -44,29 +44,73 @@ Final Response (synthesized from tools/models)
 - ✅ **Retry logic** - Automatic retries for transient failures
 - ✅ **Rich UI** - Colored output, progress indicators, execution times
 
-## Installation
+## Getting Started
 
-1. **Install dependencies:**
+### Prerequisites
+
+- **Python 3.8+** installed
+- **LM Studio** running on `http://localhost:1234`
+  - Download: [lmstudio.ai](https://lmstudio.ai)
+  - Load at least one model (e.g., Qwen 3-4B, Mistral, etc.)
+
+### Installation
+
+Install Zorora directly from GitHub:
+
 ```bash
-pip install -r requirements.txt
+pip install git+https://github.com/AsobaCloud/zorora.git
 ```
 
-2. **Start LM Studio** with your orchestrator model loaded:
+This installs the `zorora` command globally - you can run it from anywhere!
+
+### Quick Start
+
+1. **Start LM Studio** and load a model
+
+2. **Run Zorora:**
 ```bash
-# Default: http://localhost:1234
+zorora
 ```
 
-3. **(Optional) Start EnergyAnalyst API** for energy policy queries:
+That's it! You're ready to go.
+
+### Optional: EnergyAnalyst Integration
+
+For energy policy queries with RAG (485+ policy documents):
+
 ```bash
-cd ~/Workbench/energyanalyst-v0.1
+# Clone and start the EnergyAnalyst API
+cd ~/Workbench
+git clone <energyanalyst-repo>
+cd energyanalyst-v0.1
 python api/server.py
 # Runs on http://localhost:8000
 ```
 
-4. **Run Zorora:**
-```bash
-python main.py
+Configure the endpoint in Zorora with `/models` command.
+
+### First-Time Setup
+
+**1. Configure models (optional):**
 ```
+[1] ⚙ > /models
+```
+
+Select your preferred models for:
+- Orchestrator (main routing)
+- Code generation (Codestral)
+- Reasoning/planning
+- Search/research
+- EnergyAnalyst endpoint (local/production/disabled)
+
+**2. Start using Zorora:**
+```
+[2] ⚙ > What files are in this directory?
+[3] ⚙ > Write a Python function to validate email addresses
+[4] ⚙ > What are FERC Order 2222 requirements?
+```
+
+The orchestrator automatically routes queries to the appropriate tools!
 
 ## Available Tools
 
