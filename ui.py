@@ -31,8 +31,30 @@ class ZororaUI:
 
     def display_welcome(self, model: str, version: str = "1.0.0"):
         """Display welcome banner."""
-        welcome = f"# Zorora REPL v{version}\n\nModel: [cyan]{model}[/cyan]\n\nType [yellow]'exit'[/yellow] or [yellow]Ctrl+C[/yellow] to quit."
-        self.console.print(Panel(Markdown(welcome), border_style="blue", padding=(1, 2)))
+        from rich.align import Align
+
+        title = Text(f"Zorora REPL v{version}", style="bold cyan", justify="center")
+
+        welcome_text = Text()
+        welcome_text.append("\n")
+        welcome_text.append("Model: ", style="dim")
+        welcome_text.append(f"{model}", style="cyan")
+        welcome_text.append("\n\n")
+        welcome_text.append("Type ", style="dim")
+        welcome_text.append("exit", style="yellow")
+        welcome_text.append(" or ", style="dim")
+        welcome_text.append("Ctrl+C", style="yellow")
+        welcome_text.append(" to quit.", style="dim")
+        welcome_text.append("\n")
+
+        panel = Panel(
+            Align.center(welcome_text),
+            title=Align.center(title),
+            border_style="blue",
+            padding=(1, 2)
+        )
+
+        self.console.print(panel)
         self.console.print()
 
     def get_prompt(self, turn_count: int, tools_available: bool):
