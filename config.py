@@ -31,6 +31,16 @@ SPECIALIZED_MODELS = {
     }
 }
 
+# External API Configuration
+ENERGY_ANALYST = {
+    "endpoint": "http://localhost:8000",  # Local or Production endpoint
+    "timeout": 180,  # 3 minutes for slower LLM inference
+    "enabled": True,  # Set to False to disable energy analyst tool
+}
+# Available endpoints:
+# - Local: http://localhost:8000
+# - Production: https://energyanalystragservice-production.up.railway.app
+
 # Context Management
 MAX_CONTEXT_MESSAGES = 50  # Changed from None (unlimited) to prevent context overflow
 

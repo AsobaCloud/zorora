@@ -347,17 +347,26 @@ def use_energy_analyst(query: str) -> str:
 
     try:
         import requests
+        import config
+
+        # Check if EnergyAnalyst is enabled
+        if not config.ENERGY_ANALYST.get("enabled", True):
+            return "Error: EnergyAnalyst is disabled. Enable it with /models command."
 
         logger.info(f"Delegating to EnergyAnalyst: {query[:100]}...")
 
-        # EnergyAnalyst API endpoint
-        api_url = "http://localhost:8000/chat"
+        # Get endpoint and timeout from config
+        endpoint = config.ENERGY_ANALYST.get("endpoint", "http://localhost:8000")
+        timeout = config.ENERGY_ANALYST.get("timeout", 180)
+        api_url = f"{endpoint.rstrip('/')}/chat"
 
-        # Make API request (longer timeout for slower inference)
+        logger.info(f"Using EnergyAnalyst endpoint: {endpoint}")
+
+        # Make API request
         response = requests.post(
             api_url,
             json={"message": query, "use_rag": True},
-            timeout=180  # 3 minutes to accommodate slower LLM inference
+            timeout=timeout
         )
         response.raise_for_status()
 
@@ -382,7 +391,11 @@ def use_energy_analyst(query: str) -> str:
         return "\n".join(formatted)
 
     except requests.ConnectionError:
-        return "Error: Could not connect to EnergyAnalyst API at http://localhost:8000. Is the API server running? Start it with: cd ~/Workbench/energyanalyst-v0.1 && python api/server.py"
+        endpoint = config.ENERGY_ANALYST.get("endpoint", "http://localhost:8000")
+        if "localhost" in endpoint:
+            return f"Error: Could not connect to EnergyAnalyst API at {endpoint}. Is the local API server running? Start it with: cd ~/Workbench/energyanalyst-v0.1 && python api/server.py"
+        else:
+            return f"Error: Could not connect to EnergyAnalyst API at {endpoint}. Check endpoint configuration with /models command."
 
     except requests.Timeout:
         return "Error: EnergyAnalyst API request timed out after 180 seconds. The model may be generating a very long response or LM Studio may be overloaded."

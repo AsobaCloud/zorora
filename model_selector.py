@@ -29,6 +29,8 @@ class ModelSelector:
             "codestral": config.SPECIALIZED_MODELS["codestral"]["model"],
             "reasoning": config.SPECIALIZED_MODELS["reasoning"]["model"],
             "search": config.SPECIALIZED_MODELS["search"]["model"],
+            "energy_analyst_endpoint": config.ENERGY_ANALYST["endpoint"],
+            "energy_analyst_enabled": config.ENERGY_ANALYST["enabled"],
         }
 
     def display_models(self, available: List[str], current: Dict[str, str]):
@@ -37,11 +39,13 @@ class ModelSelector:
         from rich.panel import Panel
 
         # Current configuration panel
+        energy_status = "Enabled" if current.get('energy_analyst_enabled', True) else "Disabled"
         config_text = "\n".join([
             f"[cyan]Orchestrator:[/cyan] {current['orchestrator']}",
             f"[cyan]Code Generation:[/cyan] {current['codestral']}",
             f"[cyan]Reasoning/Planning:[/cyan] {current['reasoning']}",
             f"[cyan]Search/Research:[/cyan] {current['search']}",
+            f"[cyan]EnergyAnalyst:[/cyan] {current.get('energy_analyst_endpoint', 'http://localhost:8000')} ({energy_status})",
         ])
         self.ui.console.print(Panel(config_text, title="Current Configuration", border_style="blue"))
 
@@ -77,6 +81,64 @@ class ModelSelector:
             self.ui.console.print("[red]Invalid input. Keeping current.[/red]")
             return None
 
+    def select_energy_analyst_endpoint(self, current_endpoint: str, current_enabled: bool) -> Optional[Dict[str, any]]:
+        """Interactive EnergyAnalyst endpoint selection."""
+        from rich.table import Table
+
+        self.ui.console.print(f"\n[bold]Configure EnergyAnalyst Endpoint[/bold]")
+        self.ui.console.print(f"[dim]Current: {current_endpoint} ({'Enabled' if current_enabled else 'Disabled'})[/dim]\n")
+
+        # Options table
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("#", style="dim", width=4)
+        table.add_column("Option", style="cyan")
+        table.add_column("Endpoint", style="dim")
+
+        options = [
+            ("Local (Development)", "http://localhost:8000"),
+            ("Production (Railway)", "https://energyanalystragservice-production.up.railway.app"),
+            ("Custom URL", "Enter custom endpoint"),
+            ("Disable", "Tool will not be called"),
+        ]
+
+        for idx, (name, desc) in enumerate(options, 1):
+            table.add_row(str(idx), name, desc)
+
+        self.ui.console.print(table)
+        self.ui.console.print("\n[dim]Enter number to select, or press Enter to keep current:[/dim]")
+
+        choice = input(">>> ").strip()
+
+        if not choice:
+            return None  # Keep current
+
+        try:
+            idx = int(choice)
+            if idx == 1:  # Local
+                return {"endpoint": "http://localhost:8000", "enabled": True}
+            elif idx == 2:  # Production
+                return {"endpoint": "https://energyanalystragservice-production.up.railway.app", "enabled": True}
+            elif idx == 3:  # Custom
+                self.ui.console.print("\n[bold]Enter custom endpoint URL:[/bold]")
+                self.ui.console.print("[dim]Example: https://your-api.com[/dim]")
+                custom_url = input(">>> ").strip()
+                if custom_url:
+                    # Ensure URL starts with http:// or https://
+                    if not custom_url.startswith(("http://", "https://")):
+                        custom_url = "https://" + custom_url
+                    return {"endpoint": custom_url, "enabled": True}
+                else:
+                    self.ui.console.print("[red]No URL entered. Keeping current.[/red]")
+                    return None
+            elif idx == 4:  # Disable
+                return {"endpoint": current_endpoint, "enabled": False}
+            else:
+                self.ui.console.print("[red]Invalid selection. Keeping current.[/red]")
+                return None
+        except ValueError:
+            self.ui.console.print("[red]Invalid input. Keeping current.[/red]")
+            return None
+
     def update_config_file(self, updates: Dict[str, str]) -> bool:
         """Update config.py with new model selections."""
         try:
@@ -97,6 +159,18 @@ class ModelSelector:
                     pattern = rf'"{role}":\s*\{{\s*"model":\s*"[^"]*"'
                     replacement = f'"{role}": {{\n        "model": "{updates[role]}"'
                     content = re.sub(pattern, replacement, content)
+
+            # Update EnergyAnalyst endpoint
+            if "energy_analyst_endpoint" in updates:
+                pattern = r'"endpoint":\s*"[^"]*"'
+                replacement = f'"endpoint": "{updates["energy_analyst_endpoint"]}"'
+                content = re.sub(pattern, replacement, content)
+
+            # Update EnergyAnalyst enabled status
+            if "energy_analyst_enabled" in updates:
+                pattern = r'"enabled":\s*(True|False)'
+                replacement = f'"enabled": {updates["energy_analyst_enabled"]}'
+                content = re.sub(pattern, replacement, content)
 
             self.config_path.write_text(content)
             return True
@@ -135,6 +209,15 @@ class ModelSelector:
             new_model = self.select_model(role_name, available, current[role_key])
             if new_model:
                 updates[role_key] = new_model
+
+        # Configure EnergyAnalyst endpoint
+        energy_config = self.select_energy_analyst_endpoint(
+            current.get('energy_analyst_endpoint', 'http://localhost:8000'),
+            current.get('energy_analyst_enabled', True)
+        )
+        if energy_config:
+            updates["energy_analyst_endpoint"] = energy_config["endpoint"]
+            updates["energy_analyst_enabled"] = energy_config["enabled"]
 
         # Apply updates
         if updates:
