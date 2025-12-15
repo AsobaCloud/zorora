@@ -425,19 +425,20 @@ def get_newsroom_headlines() -> str:
         # Get today's date folder
         today = datetime.now().strftime("%Y-%m-%d")
         bucket = "news-collection-website"
-        metadata_prefix = f"news/{today}/direct/metadata/"
+        date_prefix = f"news/{today}/"
 
         logger.info(f"Fetching newsroom headlines for {today}...")
 
         # Create temp directory for batch download
         with tempfile.TemporaryDirectory() as temp_dir:
-            # Batch download ALL metadata files at once using aws s3 sync
+            # Batch download ALL metadata files from all subdirectories
             sync_cmd = [
                 "aws", "s3", "sync",
-                f"s3://{bucket}/{metadata_prefix}",
+                f"s3://{bucket}/{date_prefix}",
                 temp_dir,
                 "--exclude", "*",
-                "--include", "*.json"
+                "--include", "*/metadata/*.json",
+                "--quiet"
             ]
 
             result = subprocess.run(
@@ -456,6 +457,8 @@ def get_newsroom_headlines() -> str:
 
             if not metadata_files:
                 return f"No articles found in newsroom for {today}"
+
+            logger.info(f"Found {len(metadata_files)} metadata files")
 
             headlines = []
             for file_path in metadata_files:  # Process all articles
