@@ -38,7 +38,8 @@ class TurnProcessor:
         Returns:
             Dict with 'tool' and 'arguments' if found, None otherwise
         """
-        # Format 1: function_call: tool_name("arg")
+        # Format 1: function_call: tool_name("arg") or function_call: tool_name()
+        # First try with arguments
         func_call_pattern = r'function_call:\s*(\w+)\s*\("([^"]+)"\)'
         match = re.search(func_call_pattern, text)
         if match:
@@ -47,6 +48,13 @@ class TurnProcessor:
             # Determine parameter name based on tool
             param_name = "query" if ("search" in tool_name or "energy" in tool_name or "analyst" in tool_name) else "code_context" if "code" in tool_name else "task"
             return {"tool": tool_name, "arguments": {param_name: query}}
+
+        # Try without arguments (empty parentheses)
+        func_call_no_args_pattern = r'function_call:\s*(\w+)\s*\(\s*\)'
+        match = re.search(func_call_no_args_pattern, text)
+        if match:
+            tool_name = match.group(1)
+            return {"tool": tool_name, "arguments": {}}
 
         # Format 2: JSON object with tool/action/name
         json_pattern = r'\{[^{}]*"(?:tool|action|name)"[^{}]*\}'
