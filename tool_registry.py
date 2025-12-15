@@ -346,30 +346,44 @@ def web_search(query: str, max_results: int = 5) -> str:
     if len(query) > 500:
         return "Error: query too long (max 500 characters)"
 
-    try:
-        from ddgs import DDGS
+    import time
 
-        logger.info(f"Web search: {query[:100]}...")
+    max_retries = 3
+    retry_delay = 2  # seconds
 
-        with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=max_results))
+    for attempt in range(max_retries):
+        try:
+            from ddgs import DDGS
 
-        if not results:
-            return f"No results found for: {query}"
+            logger.info(f"Web search: {query[:100]}... (attempt {attempt + 1}/{max_retries})")
 
-        # Format results
-        formatted = [f"Web search results for: {query}\n"]
-        for i, result in enumerate(results, 1):
-            title = result.get("title", "No title")
-            url = result.get("href", "")
-            snippet = result.get("body", "No description")
-            formatted.append(f"\n{i}. {title}\n   URL: {url}\n   {snippet}")
+            # Add small delay between requests to avoid rate limiting
+            if attempt > 0:
+                time.sleep(retry_delay * attempt)
 
-        return "\n".join(formatted)
+            with DDGS() as ddgs:
+                results = list(ddgs.text(query, max_results=max_results))
 
-    except Exception as e:
-        logger.error(f"Web search error: {e}")
-        return f"Error: Web search failed: {str(e)}"
+            if not results:
+                return f"No results found for: {query}"
+
+            # Format results
+            formatted = [f"Web search results for: {query}\n"]
+            for i, result in enumerate(results, 1):
+                title = result.get("title", "No title")
+                url = result.get("href", "")
+                snippet = result.get("body", "No description")
+                formatted.append(f"\n{i}. {title}\n   URL: {url}\n   {snippet}")
+
+            return "\n".join(formatted)
+
+        except Exception as e:
+            logger.warning(f"Web search attempt {attempt + 1} failed: {e}")
+            if attempt < max_retries - 1:
+                continue
+            # All retries failed
+            logger.error(f"Web search failed after {max_retries} attempts: {e}")
+            return f"Error: Web search failed after {max_retries} attempts. Try again or rephrase query."
 
 
 # Tool function mapping
