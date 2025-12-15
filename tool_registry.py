@@ -477,36 +477,49 @@ def get_newsroom_headlines() -> str:
 
         # Calculate tag distribution for overview
         from collections import Counter
-        all_tags = []
+        all_topics = []
         for h in headlines:
-            all_tags.extend(h['tags'])
-        tag_counts = Counter(all_tags)
+            # Extract core_topics from tags dict
+            if h['tags'] and isinstance(h['tags'], dict):
+                core_topics = h['tags'].get('core_topics', [])
+                if isinstance(core_topics, list):
+                    all_topics.extend([str(t) for t in core_topics if t])
+        topic_counts = Counter(all_topics)
 
-        # Format output with tag distribution first
+        # Format output with topic distribution first
         formatted = [f"Newsroom Headlines for {today} ({len(headlines)} articles)\n"]
         formatted.append("=" * 80 + "\n")
-        formatted.append("\nTopic Distribution (by tag):")
-        for tag, count in tag_counts.most_common(15):
-            formatted.append(f"  • {tag}: {count} articles")
-        formatted.append("\n" + "=" * 80 + "\n")
 
-        # Show sample headlines from each major topic
-        formatted.append("\nSample Headlines by Topic:\n")
+        if topic_counts:
+            formatted.append("\nTopic Distribution:")
+            for topic, count in topic_counts.most_common(15):
+                formatted.append(f"  • {topic}: {count} articles")
+            formatted.append("\n" + "=" * 80 + "\n")
 
-        # Group headlines by primary tag
-        from collections import defaultdict
-        by_topic = defaultdict(list)
-        for h in headlines:
-            if h['tags']:
-                primary_tag = h['tags'][0]
-                by_topic[primary_tag].append(h)
+            # Show sample headlines from each major topic
+            formatted.append("\nSample Headlines by Topic:\n")
 
-        # Show 3-5 examples from each major topic
-        for tag, count in tag_counts.most_common(10):
-            if tag in by_topic:
-                formatted.append(f"\n{tag.upper()} ({count} articles):")
-                for h in by_topic[tag][:3]:
-                    formatted.append(f"  • {h['title']} ({h['source']})")
+            # Group headlines by primary core_topic
+            from collections import defaultdict
+            by_topic = defaultdict(list)
+            for h in headlines:
+                if h['tags'] and isinstance(h['tags'], dict):
+                    core_topics = h['tags'].get('core_topics', [])
+                    if core_topics and isinstance(core_topics, list) and len(core_topics) > 0:
+                        primary_topic = str(core_topics[0])
+                        by_topic[primary_topic].append(h)
+
+            # Show 3 examples from each major topic
+            for topic, count in topic_counts.most_common(10):
+                if topic in by_topic:
+                    formatted.append(f"\n{topic.upper()} ({count} articles):")
+                    for h in by_topic[topic][:3]:
+                        formatted.append(f"  • {h['title']}")
+        else:
+            # Fallback: just list first 50 headlines if no topics
+            for idx, h in enumerate(headlines[:50], 1):
+                formatted.append(f"\n{idx}. {h['title']}")
+                formatted.append(f"   Source: {h['source']}")
 
         return "\n".join(formatted)
 
