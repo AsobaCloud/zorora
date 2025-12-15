@@ -339,6 +339,9 @@ TOOL_FUNCTIONS: Dict[str, Callable[..., str]] = {
     "use_codestral": use_codestral,
     "use_reasoning_model": use_reasoning_model,
     "use_search_model": use_search_model,
+    "search": use_search_model,  # Simple alias
+    "generate_code": use_codestral,  # Simple alias
+    "plan": use_reasoning_model,  # Simple alias
 }
 
 # Tool aliases
@@ -454,13 +457,13 @@ TOOLS_DEFINITION: List[DictType[str, Any]] = [
         "type": "function",
         "function": {
             "name": "use_codestral",
-            "description": "Generate or refactor code using the Codestral-22B model, specialized for code generation. Use this when you need to write new functions, refactor existing code, or solve complex programming tasks. The model excels at producing clean, documented, production-quality code.",
+            "description": "Generate or refactor code",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "code_context": {
                         "type": "string",
-                        "description": "Description of the code to generate, existing code to refactor, or programming task to solve. Be specific about requirements, edge cases, and desired code style."
+                        "description": "Code generation task or refactoring request"
                     }
                 },
                 "required": ["code_context"]
@@ -471,13 +474,13 @@ TOOLS_DEFINITION: List[DictType[str, Any]] = [
         "type": "function",
         "function": {
             "name": "use_reasoning_model",
-            "description": "Plan or reason about complex tasks using the Ministral-3-14B-Reasoning model, specialized for logical reasoning and planning. Use this when you need to design implementation plans, make architectural decisions, or solve multi-step reasoning problems. The model excels at breaking down complexity and considering trade-offs.",
+            "description": "Plan or reason about complex tasks",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "task": {
                         "type": "string",
-                        "description": "Planning task, architectural decision, or complex reasoning problem. Include context, constraints, and what you need help deciding or planning."
+                        "description": "Planning or reasoning task"
                     }
                 },
                 "required": ["task"]
@@ -488,16 +491,67 @@ TOOLS_DEFINITION: List[DictType[str, Any]] = [
         "type": "function",
         "function": {
             "name": "use_search_model",
-            "description": "Research information using the ii-search-4B model, specialized for information retrieval and research. Use this when you need to find factual information, research topics, or gather background knowledge. The model excels at providing comprehensive, accurate information.",
+            "description": "Research information or answer questions",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Research query or information retrieval task. Be specific about what information you need and why."
+                        "description": "Research query or question"
                     }
                 },
                 "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search",
+            "description": "Search for information",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query"
+                    }
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_code",
+            "description": "Generate code",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "code_context": {
+                        "type": "string",
+                        "description": "Code to generate"
+                    }
+                },
+                "required": ["code_context"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "plan",
+            "description": "Plan a task",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task": {
+                        "type": "string",
+                        "description": "Task to plan"
+                    }
+                },
+                "required": ["task"]
             }
         }
     }

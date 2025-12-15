@@ -4,7 +4,7 @@ from pathlib import Path
 
 # LM Studio API Configuration (OpenAI-compatible)
 API_URL = "http://localhost:1234/v1/chat/completions"
-MODEL = "qwen/qwen3-vl-4b"  # Lightweight model for MacBook Air
+MODEL = "qwen/qwen3-4b-2507"  # Regular model - fast and decisive
 MAX_TOKENS = 2048  # Increased from 1000 for longer responses
 TIMEOUT = 60  # Increased from 30s for complex tool operations
 TEMPERATURE = 0.2
@@ -35,7 +35,7 @@ SPECIALIZED_MODELS = {
 MAX_CONTEXT_MESSAGES = 50  # Changed from None (unlimited) to prevent context overflow
 
 # Tool Configuration
-TOOL_CHOICE = "auto"  # "auto", "required", "none", or {"type": "function", "function": {"name": "..."}}
+TOOL_CHOICE = "required"  # Force tool usage - was "auto"
 PARALLEL_TOOL_CALLS = True  # Enable parallel tool execution
 
 # Logging Configuration

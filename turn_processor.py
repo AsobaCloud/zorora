@@ -4,6 +4,7 @@ from typing import Optional, List, Dict, Any
 import re
 import logging
 import time
+import json
 
 from conversation import ConversationManager
 from llm_client import LLMClient
@@ -29,6 +30,41 @@ class TurnProcessor:
         self.tool_executor = tool_executor
         self.tool_registry = tool_registry
         self.ui = ui  # Optional UI for feedback
+
+    def _extract_json_tool_call(self, text: str) -> Optional[Dict[str, Any]]:
+        """
+        Extract JSON tool call from text output (for models that output JSON as text).
+
+        Returns:
+            Dict with 'tool' and 'arguments' if found, None otherwise
+        """
+        # Format 1: function_call: tool_name("arg")
+        func_call_pattern = r'function_call:\s*(\w+)\s*\("([^"]+)"\)'
+        match = re.search(func_call_pattern, text)
+        if match:
+            tool_name = match.group(1)
+            query = match.group(2)
+            # Determine parameter name based on tool
+            param_name = "query" if "search" in tool_name else "code_context" if "code" in tool_name else "task"
+            return {"tool": tool_name, "arguments": {param_name: query}}
+
+        # Format 2: JSON object with tool/action/name
+        json_pattern = r'\{[^{}]*"(?:tool|action|name)"[^{}]*\}'
+        matches = re.findall(json_pattern, text, re.DOTALL)
+
+        for match in matches:
+            try:
+                data = json.loads(match)
+                # Check for different JSON formats models might use
+                if "tool" in data or "action" in data or "name" in data:
+                    tool_name = data.get("tool") or data.get("action") or data.get("name")
+                    # Extract arguments (everything except the tool name key)
+                    arguments = {k: v for k, v in data.items() if k not in ["tool", "action", "name"]}
+                    return {"tool": tool_name, "arguments": arguments}
+            except json.JSONDecodeError:
+                continue
+
+        return None
 
     def process(self, user_input: str, tools_available: bool = True) -> tuple[str, float]:
         """
@@ -146,7 +182,41 @@ class TurnProcessor:
             content = self.llm_client.extract_content(response)
 
             if content and content.strip():
-                # Final response - add to conversation and return
+                # Check if content contains JSON tool call (for models that output JSON as text)
+                json_tool_call = self._extract_json_tool_call(content)
+
+                if json_tool_call:
+                    tool_name = json_tool_call["tool"]
+                    arguments = json_tool_call["arguments"]
+
+                    logger.info(f"Detected JSON tool call in text: {tool_name}({arguments})")
+
+                    # Show tool execution
+                    if self.ui:
+                        self.ui.show_tool_execution(tool_name, arguments)
+
+                    # Execute the tool
+                    tool_result = self.tool_executor.execute(tool_name, arguments)
+
+                    # Show result
+                    if self.ui:
+                        success = not tool_result.startswith("Error:")
+                        self.ui.show_tool_result(tool_name, success, len(tool_result))
+
+                    # Add assistant message with the thinking/content
+                    self.conversation.add_assistant_message(content=content)
+
+                    # Add tool result
+                    self.conversation.add_tool_result(
+                        f"json_call_{iteration}",
+                        tool_name,
+                        tool_result
+                    )
+
+                    # Continue loop to get final response
+                    continue
+
+                # No JSON tool call - this is the final response
                 logger.info(f"Final response: {len(content)} chars")
                 self.conversation.add_assistant_message(content=content)
                 execution_time = time.time() - total_start_time
