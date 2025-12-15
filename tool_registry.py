@@ -429,13 +429,21 @@ def get_newsroom_headlines() -> str:
 
         logger.info(f"Fetching newsroom headlines for {today}...")
 
-        # Create temp directory for batch download
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # Batch download ALL metadata files from all subdirectories
+        # Use persistent cache to avoid re-downloading same day's articles
+        import os
+        cache_dir = Path(tempfile.gettempdir()) / "newsroom_cache" / today
+
+        if cache_dir.exists():
+            logger.info(f"Using cached articles from {cache_dir}")
+            metadata_files = list(cache_dir.rglob("*.json"))
+        else:
+            # Download to cache directory
+            cache_dir.mkdir(parents=True, exist_ok=True)
+
             sync_cmd = [
                 "aws", "s3", "sync",
                 f"s3://{bucket}/{date_prefix}",
-                temp_dir,
+                str(cache_dir),
                 "--exclude", "*",
                 "--include", "*/metadata/*.json",
                 "--quiet"
@@ -451,17 +459,16 @@ def get_newsroom_headlines() -> str:
             if result.returncode != 0:
                 return f"Error: AWS S3 sync failed: {result.stderr}"
 
-            # Parse all downloaded metadata files locally (fast)
-            temp_path = Path(temp_dir)
-            metadata_files = list(temp_path.rglob("*.json"))
+            metadata_files = list(cache_dir.rglob("*.json"))
+            logger.info(f"Downloaded and cached {len(metadata_files)} articles")
 
-            if not metadata_files:
-                return f"No articles found in newsroom for {today}"
+        if not metadata_files:
+            return f"No articles found in newsroom for {today}"
 
-            logger.info(f"Found {len(metadata_files)} metadata files")
+        logger.info(f"Processing {len(metadata_files)} metadata files")
 
-            headlines = []
-            for file_path in metadata_files:  # Process all articles
+        headlines = []
+        for file_path in metadata_files:  # Process all articles
                 try:
                     with open(file_path, 'r') as f:
                         metadata = json.load(f)
