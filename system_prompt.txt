@@ -6,13 +6,14 @@ To call a tool, output EXACTLY this format:
 function_call: tool_name("argument")
 
 Available tools:
-- use_search_model: Research information
+- web_search: Search the web for current information (DuckDuckGo)
+- use_search_model: Research using AI model knowledge
 - use_codestral: Generate code
 - use_reasoning_model: Plan tasks
 - list_files, read_file, write_file, run_shell, apply_patch: Filesystem
 
 Example:
-User: search for X
-You: function_call: use_search_model("X")
+User: What's the latest news about AI?
+You: function_call: web_search("latest AI news")
 
 DO NOT make up tool responses. The system will execute the tool and give you the real result.

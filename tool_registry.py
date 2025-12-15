@@ -329,6 +329,49 @@ def use_search_model(query: str) -> str:
         return f"Error: Failed to call Search model: {str(e)}"
 
 
+def web_search(query: str, max_results: int = 5) -> str:
+    """
+    Search the web using DuckDuckGo.
+
+    Args:
+        query: Search query
+        max_results: Maximum number of results to return (default: 5)
+
+    Returns:
+        Formatted search results with titles, URLs, and snippets
+    """
+    if not query or not isinstance(query, str):
+        return "Error: query must be a non-empty string"
+
+    if len(query) > 500:
+        return "Error: query too long (max 500 characters)"
+
+    try:
+        from ddgs import DDGS
+
+        logger.info(f"Web search: {query[:100]}...")
+
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=max_results))
+
+        if not results:
+            return f"No results found for: {query}"
+
+        # Format results
+        formatted = [f"Web search results for: {query}\n"]
+        for i, result in enumerate(results, 1):
+            title = result.get("title", "No title")
+            url = result.get("href", "")
+            snippet = result.get("body", "No description")
+            formatted.append(f"\n{i}. {title}\n   URL: {url}\n   {snippet}")
+
+        return "\n".join(formatted)
+
+    except Exception as e:
+        logger.error(f"Web search error: {e}")
+        return f"Error: Web search failed: {str(e)}"
+
+
 # Tool function mapping
 TOOL_FUNCTIONS: Dict[str, Callable[..., str]] = {
     "read_file": read_file,
@@ -339,6 +382,7 @@ TOOL_FUNCTIONS: Dict[str, Callable[..., str]] = {
     "use_codestral": use_codestral,
     "use_reasoning_model": use_reasoning_model,
     "use_search_model": use_search_model,
+    "web_search": web_search,
     "search": use_search_model,  # Simple alias
     "generate_code": use_codestral,  # Simple alias
     "plan": use_reasoning_model,  # Simple alias
@@ -552,6 +596,28 @@ TOOLS_DEFINITION: List[DictType[str, Any]] = [
                     }
                 },
                 "required": ["task"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": "Search the web using DuckDuckGo for current information, news, or real-time data",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query for the web"
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum number of results to return (default: 5)",
+                        "default": 5
+                    }
+                },
+                "required": ["query"]
             }
         }
     }
