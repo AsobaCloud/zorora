@@ -458,7 +458,7 @@ def get_newsroom_headlines() -> str:
                 return f"No articles found in newsroom for {today}"
 
             headlines = []
-            for file_path in metadata_files[:100]:  # Limit to 100 articles
+            for file_path in metadata_files:  # Process all articles
                 try:
                     with open(file_path, 'r') as f:
                         metadata = json.load(f)
