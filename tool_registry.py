@@ -496,7 +496,7 @@ def get_newsroom_headlines() -> str:
                     all_topics.extend([str(t) for t in core_topics if t])
         topic_counts = Counter(all_topics)
 
-        # Format output with topic distribution first
+        # Format output with topic distribution and ALL headlines
         formatted = [f"Newsroom Headlines for {today} ({len(headlines)} articles)\n"]
         formatted.append("=" * 80 + "\n")
 
@@ -505,9 +505,6 @@ def get_newsroom_headlines() -> str:
             for topic, count in topic_counts.most_common(15):
                 formatted.append(f"  • {topic}: {count} articles")
             formatted.append("\n" + "=" * 80 + "\n")
-
-            # Show sample headlines from each major topic
-            formatted.append("\nSample Headlines by Topic:\n")
 
             # Group headlines by primary core_topic
             from collections import defaultdict
@@ -519,15 +516,16 @@ def get_newsroom_headlines() -> str:
                         primary_topic = str(core_topics[0])
                         by_topic[primary_topic].append(h)
 
-            # Show 3 examples from each major topic
-            for topic, count in topic_counts.most_common(10):
+            # Show ALL headlines grouped by topic (not just samples)
+            formatted.append("\nAll Headlines by Topic:\n")
+            for topic, count in topic_counts.most_common():
                 if topic in by_topic:
                     formatted.append(f"\n{topic.upper()} ({count} articles):")
-                    for h in by_topic[topic][:3]:
+                    for h in by_topic[topic]:
                         formatted.append(f"  • {h['title']}")
         else:
-            # Fallback: just list first 50 headlines if no topics
-            for idx, h in enumerate(headlines[:50], 1):
+            # Fallback: just list all headlines if no topics
+            for idx, h in enumerate(headlines, 1):
                 formatted.append(f"\n{idx}. {h['title']}")
                 formatted.append(f"   Source: {h['source']}")
 
