@@ -475,15 +475,38 @@ def get_newsroom_headlines() -> str:
         if not headlines:
             return f"Found {len(metadata_files)} files but couldn't parse any metadata"
 
-        # Format headlines for output
+        # Calculate tag distribution for overview
+        from collections import Counter
+        all_tags = []
+        for h in headlines:
+            all_tags.extend(h['tags'])
+        tag_counts = Counter(all_tags)
+
+        # Format output with tag distribution first
         formatted = [f"Newsroom Headlines for {today} ({len(headlines)} articles)\n"]
         formatted.append("=" * 80 + "\n")
+        formatted.append("\nTopic Distribution (by tag):")
+        for tag, count in tag_counts.most_common(15):
+            formatted.append(f"  • {tag}: {count} articles")
+        formatted.append("\n" + "=" * 80 + "\n")
 
-        for idx, h in enumerate(headlines, 1):
-            formatted.append(f"\n{idx}. {h['title']}")
-            formatted.append(f"   Source: {h['source']}")
+        # Show sample headlines from each major topic
+        formatted.append("\nSample Headlines by Topic:\n")
+
+        # Group headlines by primary tag
+        from collections import defaultdict
+        by_topic = defaultdict(list)
+        for h in headlines:
             if h['tags']:
-                formatted.append(f"   Tags: {', '.join(h['tags'])}")
+                primary_tag = h['tags'][0]
+                by_topic[primary_tag].append(h)
+
+        # Show 3-5 examples from each major topic
+        for tag, count in tag_counts.most_common(10):
+            if tag in by_topic:
+                formatted.append(f"\n{tag.upper()} ({count} articles):")
+                for h in by_topic[tag][:3]:
+                    formatted.append(f"  • {h['title']} ({h['source']})")
 
         return "\n".join(formatted)
 
