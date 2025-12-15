@@ -188,3 +188,30 @@ class LLMClient:
 
         choice = response["choices"][0]
         return choice.get("finish_reason")
+
+    def list_models(self) -> List[str]:
+        """
+        List available models from LM Studio.
+
+        Returns:
+            List of model IDs
+
+        Raises:
+            RuntimeError: If API call fails
+        """
+        # Convert chat/completions URL to models endpoint
+        models_url = self.api_url.replace("/chat/completions", "/models")
+
+        try:
+            response = requests.get(models_url, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+
+            # OpenAI format: {"data": [{"id": "model-name"}, ...]}
+            if "data" in data and isinstance(data["data"], list):
+                return [model["id"] for model in data["data"] if "id" in model]
+
+            return []
+
+        except requests.RequestException as e:
+            raise RuntimeError(f"Failed to fetch models from LM Studio: {e}") from e

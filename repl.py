@@ -5,6 +5,7 @@ from llm_client import LLMClient
 from tool_executor import ToolExecutor
 from tool_registry import ToolRegistry
 from turn_processor import TurnProcessor
+from model_selector import ModelSelector
 from config import load_system_prompt
 import config
 from ui import ZororaUI
@@ -30,6 +31,30 @@ class REPL:
             self.tool_registry,
             ui=self.ui
         )
+        self.model_selector = ModelSelector(self.llm_client, self.ui)
+
+    def _handle_slash_command(self, command: str):
+        """Handle slash commands."""
+        cmd = command.lower().strip()
+
+        if cmd == "/models":
+            self.model_selector.run()
+        elif cmd == "/help":
+            self._show_help()
+        else:
+            self.ui.console.print(f"[red]Unknown command: {command}[/red]")
+            self.ui.console.print("[dim]Type /help for available commands[/dim]")
+
+    def _show_help(self):
+        """Display help information."""
+        help_text = """
+[bold cyan]Available Commands:[/bold cyan]
+
+  [cyan]/models[/cyan]  - Select models for orchestrator and specialist tools
+  [cyan]/help[/cyan]    - Show this help message
+  [cyan]exit[/cyan]     - Exit the REPL
+        """
+        self.ui.console.print(help_text)
 
     def run(self):
         """Run the REPL loop."""
@@ -51,6 +76,12 @@ class REPL:
                 if user_input.lower() in ("exit", "quit", "q"):
                     self.ui.console.print("\n[dim]Exiting.[/dim]")
                     break
+
+                # Handle slash commands
+                if user_input.startswith("/"):
+                    self._handle_slash_command(user_input)
+                    turn_count -= 1  # Don't count slash commands
+                    continue
 
                 # Determine if tools should be available
                 tools_available = self.turn_processor.should_provide_tools(user_input)
