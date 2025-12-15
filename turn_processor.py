@@ -45,7 +45,7 @@ class TurnProcessor:
             tool_name = match.group(1)
             query = match.group(2)
             # Determine parameter name based on tool
-            param_name = "query" if "search" in tool_name else "code_context" if "code" in tool_name else "task"
+            param_name = "query" if ("search" in tool_name or "energy" in tool_name or "analyst" in tool_name) else "code_context" if "code" in tool_name else "task"
             return {"tool": tool_name, "arguments": {param_name: query}}
 
         # Format 2: JSON object with tool/action/name
