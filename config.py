@@ -4,10 +4,32 @@ from pathlib import Path
 
 # LM Studio API Configuration (OpenAI-compatible)
 API_URL = "http://localhost:1234/v1/chat/completions"
-MODEL = "essentialai/rnj-1"
+MODEL = "qwen/qwen3-vl-4b"  # Lightweight model for MacBook Air
 MAX_TOKENS = 2048  # Increased from 1000 for longer responses
 TIMEOUT = 60  # Increased from 30s for complex tool operations
 TEMPERATURE = 0.2
+
+# Specialized Model Configuration
+SPECIALIZED_MODELS = {
+    "codestral": {
+        "model": "mistralai/codestral-22b-v0.1",
+        "max_tokens": 4096,
+        "temperature": 0.3,
+        "timeout": 90,
+    },
+    "reasoning": {
+        "model": "qwen/qwen3-4b-thinking-2507",
+        "max_tokens": 3072,
+        "temperature": 0.4,
+        "timeout": 90,
+    },
+    "search": {
+        "model": "ii-search-4b",
+        "max_tokens": 2048,
+        "temperature": 0.5,
+        "timeout": 60,
+    }
+}
 
 # Context Management
 MAX_CONTEXT_MESSAGES = 50  # Changed from None (unlimited) to prevent context overflow

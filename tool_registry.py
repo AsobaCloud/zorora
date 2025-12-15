@@ -3,6 +3,9 @@
 from typing import Dict, Callable, List, Dict as DictType, Any, Optional
 from pathlib import Path
 import subprocess
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # Tool function implementations
@@ -166,6 +169,166 @@ def apply_patch(path: str, unified_diff: str) -> str:
         return f"Error applying patch: {e}"
 
 
+def use_codestral(code_context: str) -> str:
+    """
+    Generate or refactor code using Codestral-22B model.
+
+    Args:
+        code_context: Description of code to generate, existing code to refactor,
+                     or programming task to solve
+
+    Returns:
+        Generated code with explanations
+    """
+    if not code_context or not isinstance(code_context, str):
+        return "Error: code_context must be a non-empty string"
+
+    if len(code_context) > 8000:
+        return "Error: code_context too long (max 8000 characters)"
+
+    try:
+        from llm_client import LLMClient
+        import config
+
+        logger.info(f"Delegating to Codestral: {code_context[:100]}...")
+
+        model_config = config.SPECIALIZED_MODELS["codestral"]
+        client = LLMClient(
+            api_url=config.API_URL,
+            model=model_config["model"],
+            max_tokens=model_config["max_tokens"],
+            temperature=model_config["temperature"],
+            timeout=model_config["timeout"]
+        )
+
+        response = client.chat_complete([
+            {
+                "role": "system",
+                "content": "You are an expert software engineer. Generate clean, well-documented, production-quality code. Include docstrings and comments for complex logic."
+            },
+            {
+                "role": "user",
+                "content": code_context
+            }
+        ])
+
+        content = client.extract_content(response)
+        if not content or not content.strip():
+            return "Error: Codestral returned empty response"
+
+        return content.strip()
+
+    except Exception as e:
+        logger.error(f"Codestral error: {e}")
+        return f"Error: Failed to call Codestral: {str(e)}"
+
+
+def use_reasoning_model(task: str) -> str:
+    """
+    Plan or reason about complex tasks using Ministral-3-14B-Reasoning model.
+
+    Args:
+        task: Planning task, architectural decision, or complex reasoning problem
+
+    Returns:
+        Detailed plan or reasoning steps
+    """
+    if not task or not isinstance(task, str):
+        return "Error: task must be a non-empty string"
+
+    if len(task) > 8000:
+        return "Error: task too long (max 8000 characters)"
+
+    try:
+        from llm_client import LLMClient
+        import config
+
+        logger.info(f"Delegating to Reasoning model: {task[:100]}...")
+
+        model_config = config.SPECIALIZED_MODELS["reasoning"]
+        client = LLMClient(
+            api_url=config.API_URL,
+            model=model_config["model"],
+            max_tokens=model_config["max_tokens"],
+            temperature=model_config["temperature"],
+            timeout=model_config["timeout"]
+        )
+
+        response = client.chat_complete([
+            {
+                "role": "system",
+                "content": "You are a logical reasoning and planning expert. Break down complex problems into clear, actionable steps. Consider edge cases and trade-offs."
+            },
+            {
+                "role": "user",
+                "content": task
+            }
+        ])
+
+        content = client.extract_content(response)
+        if not content or not content.strip():
+            return "Error: Reasoning model returned empty response"
+
+        return content.strip()
+
+    except Exception as e:
+        logger.error(f"Reasoning model error: {e}")
+        return f"Error: Failed to call Reasoning model: {str(e)}"
+
+
+def use_search_model(query: str) -> str:
+    """
+    Research information using ii-search-4B model.
+
+    Args:
+        query: Research query or information retrieval task
+
+    Returns:
+        Research findings and relevant information
+    """
+    if not query or not isinstance(query, str):
+        return "Error: query must be a non-empty string"
+
+    if len(query) > 8000:
+        return "Error: query too long (max 8000 characters)"
+
+    try:
+        from llm_client import LLMClient
+        import config
+
+        logger.info(f"Delegating to Search model: {query[:100]}...")
+
+        model_config = config.SPECIALIZED_MODELS["search"]
+        client = LLMClient(
+            api_url=config.API_URL,
+            model=model_config["model"],
+            max_tokens=model_config["max_tokens"],
+            temperature=model_config["temperature"],
+            timeout=model_config["timeout"]
+        )
+
+        response = client.chat_complete([
+            {
+                "role": "system",
+                "content": "You are a research and information retrieval expert. Provide comprehensive, accurate information with sources when possible. Focus on factual accuracy."
+            },
+            {
+                "role": "user",
+                "content": query
+            }
+        ])
+
+        content = client.extract_content(response)
+        if not content or not content.strip():
+            return "Error: Search model returned empty response"
+
+        return content.strip()
+
+    except Exception as e:
+        logger.error(f"Search model error: {e}")
+        return f"Error: Failed to call Search model: {str(e)}"
+
+
 # Tool function mapping
 TOOL_FUNCTIONS: Dict[str, Callable[..., str]] = {
     "read_file": read_file,
@@ -173,6 +336,9 @@ TOOL_FUNCTIONS: Dict[str, Callable[..., str]] = {
     "list_files": list_files,
     "run_shell": run_shell,
     "apply_patch": apply_patch,
+    "use_codestral": use_codestral,
+    "use_reasoning_model": use_reasoning_model,
+    "use_search_model": use_search_model,
 }
 
 # Tool aliases
@@ -184,6 +350,9 @@ TOOL_ALIASES: Dict[str, str] = {
     "ls": "list_files",
     "cat": "read_file",
     "open": "read_file",
+    "code": "use_codestral",
+    "plan": "use_reasoning_model",
+    "research": "use_search_model",
 }
 
 # Tool definitions in OpenAI function calling format
@@ -278,6 +447,57 @@ TOOLS_DEFINITION: List[DictType[str, Any]] = [
                     }
                 },
                 "required": ["path", "unified_diff"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "use_codestral",
+            "description": "Generate or refactor code using the Codestral-22B model, specialized for code generation. Use this when you need to write new functions, refactor existing code, or solve complex programming tasks. The model excels at producing clean, documented, production-quality code.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "code_context": {
+                        "type": "string",
+                        "description": "Description of the code to generate, existing code to refactor, or programming task to solve. Be specific about requirements, edge cases, and desired code style."
+                    }
+                },
+                "required": ["code_context"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "use_reasoning_model",
+            "description": "Plan or reason about complex tasks using the Ministral-3-14B-Reasoning model, specialized for logical reasoning and planning. Use this when you need to design implementation plans, make architectural decisions, or solve multi-step reasoning problems. The model excels at breaking down complexity and considering trade-offs.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task": {
+                        "type": "string",
+                        "description": "Planning task, architectural decision, or complex reasoning problem. Include context, constraints, and what you need help deciding or planning."
+                    }
+                },
+                "required": ["task"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "use_search_model",
+            "description": "Research information using the ii-search-4B model, specialized for information retrieval and research. Use this when you need to find factual information, research topics, or gather background knowledge. The model excels at providing comprehensive, accurate information.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Research query or information retrieval task. Be specific about what information you need and why."
+                    }
+                },
+                "required": ["query"]
             }
         }
     }
