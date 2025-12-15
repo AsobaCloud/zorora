@@ -12,7 +12,7 @@ TEMPERATURE = 0.2
 # Specialized Model Configuration
 SPECIALIZED_MODELS = {
     "codestral": {
-        "model": "mistralai/codestral-22b-v0.1",
+        "model": "qwen/qwen3-4b-thinking-2507",
         "max_tokens": 4096,
         "temperature": 0.3,
         "timeout": 90,
@@ -24,7 +24,7 @@ SPECIALIZED_MODELS = {
         "timeout": 90,
     },
     "search": {
-        "model": "ii-search-4b",
+        "model": "qwen/qwen3-4b-thinking-2507",
         "max_tokens": 2048,
         "temperature": 0.5,
         "timeout": 60,
