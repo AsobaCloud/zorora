@@ -33,8 +33,6 @@ class ZororaUI:
         """Display welcome banner."""
         from rich.align import Align
 
-        title = Text(f"Zorora REPL v{version}", style="bold cyan", justify="center")
-
         welcome_text = Text()
         welcome_text.append("\n")
         welcome_text.append("Model: ", style="dim")
@@ -49,7 +47,8 @@ class ZororaUI:
 
         panel = Panel(
             Align.center(welcome_text),
-            title=Align.center(title),
+            title=f"Zorora REPL v{version}",
+            title_align="center",
             border_style="blue",
             padding=(1, 2)
         )
