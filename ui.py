@@ -32,21 +32,61 @@ class ZororaUI:
     def display_welcome(self, model: str, version: str = "1.0.0"):
         """Display welcome banner."""
         from rich.align import Align
+        from rich.columns import Columns
+        from rich.table import Table
 
-        welcome_text = Text()
-        welcome_text.append("\n")
-        welcome_text.append("Model: ", style="dim")
-        welcome_text.append(f"{model}", style="cyan")
-        welcome_text.append("\n\n")
-        welcome_text.append("Type ", style="dim")
-        welcome_text.append("exit", style="yellow")
-        welcome_text.append(" or ", style="dim")
-        welcome_text.append("Ctrl+C", style="yellow")
-        welcome_text.append(" to quit.", style="dim")
-        welcome_text.append("\n")
+        # Left column: Welcome and model info
+        left_text = Text()
+        left_text.append("\n")
+        left_text.append("Welcome to Zorora!", style="bold cyan")
+        left_text.append("\n\n")
+        left_text.append("Orchestrator: ", style="dim")
+        left_text.append(f"{model}", style="cyan")
+        left_text.append("\n\n")
+        left_text.append("Type ", style="dim")
+        left_text.append("exit", style="yellow")
+        left_text.append(" or ", style="dim")
+        left_text.append("Ctrl+C", style="yellow")
+        left_text.append(" to quit", style="dim")
+        left_text.append("\n")
+
+        # Right column: Available commands
+        right_text = Text()
+        right_text.append("Available Commands\n", style="bold yellow")
+        right_text.append("─" * 40 + "\n", style="dim")
+        right_text.append("\n")
+
+        # Slash commands
+        right_text.append("/models", style="cyan")
+        right_text.append("  - Configure models\n", style="dim")
+        right_text.append("/help", style="cyan")
+        right_text.append("    - Show help message\n", style="dim")
+        right_text.append("\n")
+
+        # Tools section
+        right_text.append("Available Tools\n", style="bold yellow")
+        right_text.append("─" * 40 + "\n", style="dim")
+        right_text.append("\n")
+        right_text.append("• Filesystem", style="green")
+        right_text.append(" - read, write, list, shell\n", style="dim")
+        right_text.append("• Code Gen", style="green")
+        right_text.append("   - Codestral specialist\n", style="dim")
+        right_text.append("• Web Search", style="green")
+        right_text.append(" - DuckDuckGo search\n", style="dim")
+        right_text.append("• Energy", style="green")
+        right_text.append("     - Policy RAG analysis\n", style="dim")
+        right_text.append("• Reasoning", style="green")
+        right_text.append("  - Planning & analysis\n", style="dim")
+
+        # Create two-column layout
+        columns = Columns(
+            [Align.center(left_text), right_text],
+            equal=True,
+            expand=True
+        )
 
         panel = Panel(
-            Align.center(welcome_text),
+            columns,
             title=f"Zorora REPL v{version}",
             title_align="center",
             border_style="blue",
