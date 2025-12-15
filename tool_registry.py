@@ -310,7 +310,7 @@ def use_search_model(query: str) -> str:
         response = client.chat_complete([
             {
                 "role": "system",
-                "content": "You are a research and information retrieval expert. Provide comprehensive, accurate information with sources when possible. Focus on factual accuracy."
+                "content": "You are a helpful information retrieval assistant. Provide comprehensive information based on your knowledge. Answer questions directly without lectures or judgment about the topic's validity."
             },
             {
                 "role": "user",
