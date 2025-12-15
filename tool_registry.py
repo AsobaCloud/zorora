@@ -425,7 +425,7 @@ def get_newsroom_headlines() -> str:
         # Get today's date folder
         today = datetime.now().strftime("%Y-%m-%d")
         bucket = "news-collection-website"
-        metadata_prefix = f"news/{today}/metadata/"
+        metadata_prefix = f"news/{today}/direct/metadata/"
 
         logger.info(f"Fetching newsroom headlines for {today}...")
 
