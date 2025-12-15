@@ -408,6 +408,94 @@ def use_energy_analyst(query: str) -> str:
         return f"Error: Failed to call EnergyAnalyst: {str(e)}"
 
 
+def get_newsroom_headlines() -> str:
+    """
+    Fetch today's compiled articles from Asoba newsroom via AWS S3.
+
+    Returns:
+        List of today's article headlines with sources and URLs
+    """
+    from datetime import datetime
+    import json
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    try:
+        # Get today's date folder
+        today = datetime.now().strftime("%Y-%m-%d")
+        bucket = "news-collection-website"
+        metadata_prefix = f"news/{today}/metadata/"
+
+        logger.info(f"Fetching newsroom headlines for {today}...")
+
+        # Create temp directory for batch download
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Batch download ALL metadata files at once using aws s3 sync
+            sync_cmd = [
+                "aws", "s3", "sync",
+                f"s3://{bucket}/{metadata_prefix}",
+                temp_dir,
+                "--exclude", "*",
+                "--include", "*.json"
+            ]
+
+            result = subprocess.run(
+                sync_cmd,
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+
+            if result.returncode != 0:
+                return f"Error: AWS S3 sync failed: {result.stderr}"
+
+            # Parse all downloaded metadata files locally (fast)
+            temp_path = Path(temp_dir)
+            metadata_files = list(temp_path.rglob("*.json"))
+
+            if not metadata_files:
+                return f"No articles found in newsroom for {today}"
+
+            headlines = []
+            for file_path in metadata_files[:100]:  # Limit to 100 articles
+                try:
+                    with open(file_path, 'r') as f:
+                        metadata = json.load(f)
+                        headline = {
+                            "title": metadata.get("title", "No title"),
+                            "source": metadata.get("source", "Unknown"),
+                            "url": metadata.get("url", ""),
+                            "tags": metadata.get("tags", []),
+                        }
+                        headlines.append(headline)
+                except (json.JSONDecodeError, IOError):
+                    continue
+
+        if not headlines:
+            return f"Found {len(metadata_files)} files but couldn't parse any metadata"
+
+        # Format headlines for output
+        formatted = [f"Newsroom Headlines for {today} ({len(headlines)} articles)\n"]
+        formatted.append("=" * 80 + "\n")
+
+        for idx, h in enumerate(headlines, 1):
+            formatted.append(f"\n{idx}. {h['title']}")
+            formatted.append(f"   Source: {h['source']}")
+            if h['tags']:
+                formatted.append(f"   Tags: {', '.join(h['tags'])}")
+
+        return "\n".join(formatted)
+
+    except subprocess.TimeoutExpired:
+        return "Error: AWS S3 sync timed out (taking longer than 60s)"
+    except FileNotFoundError:
+        return "Error: AWS CLI not found. Install with: brew install awscli"
+    except Exception as e:
+        logger.error(f"Newsroom headlines error: {e}")
+        return f"Error: Failed to fetch newsroom headlines: {str(e)}"
+
+
 def web_search(query: str, max_results: int = 5) -> str:
     """
     Search the web using DuckDuckGo.
@@ -477,6 +565,7 @@ TOOL_FUNCTIONS: Dict[str, Callable[..., str]] = {
     "use_search_model": use_search_model,
     "use_energy_analyst": use_energy_analyst,
     "web_search": web_search,
+    "get_newsroom_headlines": get_newsroom_headlines,
     "search": use_search_model,  # Simple alias
     "generate_code": use_codestral,  # Simple alias
     "plan": use_reasoning_model,  # Simple alias
@@ -729,6 +818,18 @@ TOOLS_DEFINITION: List[DictType[str, Any]] = [
                     }
                 },
                 "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_newsroom_headlines",
+            "description": "Fetch today's compiled news articles from Asoba newsroom (AWS S3). Returns headlines from energy, AI, blockchain, and legislation articles collected today. Use when user asks about today's news, current articles, newsroom content, or wants to analyze news themes.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
             }
         }
     }
