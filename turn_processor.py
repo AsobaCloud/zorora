@@ -9,7 +9,7 @@ import json
 from conversation import ConversationManager
 from llm_client import LLMClient
 from tool_executor import ToolExecutor
-from tool_registry import ToolRegistry
+from tool_registry import ToolRegistry, SPECIALIST_TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +148,7 @@ class TurnProcessor:
                 )
 
                 # THEN execute ALL tool calls and add results (parallel execution)
+                specialist_result = None
                 for tool_call in tool_calls:
                     # Validate tool_call_id exists
                     tool_call_id = tool_call.get("id")
@@ -180,6 +181,17 @@ class TurnProcessor:
                         function_name,
                         tool_result
                     )
+
+                    # Check if this is a specialist tool - if so, return result directly
+                    if function_name in SPECIALIST_TOOLS and not tool_result.startswith("Error:"):
+                        specialist_result = tool_result
+                        logger.info(f"Specialist tool {function_name} returned result - ending iteration")
+
+                # If a specialist tool was called, return its result immediately
+                # instead of continuing the orchestrator loop
+                if specialist_result:
+                    execution_time = time.time() - total_start_time
+                    return specialist_result.strip(), execution_time
 
                 # Continue loop - model will see tool results and can call more tools or respond
                 # Keep tools available for potential chaining

@@ -8,6 +8,15 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+# Specialist tools that should return their results directly to the user
+# instead of continuing the orchestrator iteration loop
+SPECIALIST_TOOLS = [
+    "use_codestral",
+    "use_reasoning_model",
+    "use_search_model"
+]
+
+
 # Tool function implementations
 def _validate_path(path: str) -> tuple[bool, str]:
     """
