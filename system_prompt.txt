@@ -42,5 +42,8 @@ CRITICAL WORKFLOW PRINCIPLES:
 
 3. CHAIN THOUGHTFULLY: When multiple tools are needed, call them in logical order and pass information forward (e.g., fetch data first, then analyze it with that data as context).
 
+CODE WORKFLOW: For code changes, follow this sequence:
+explore (read_file/list_files) → plan (use_reasoning_model) → ask user approval → code (use_codestral) → apply (write_file) → validate (run_shell if needed)
+
 DO NOT make up tool responses. The system will execute the tool and give you the real result.
 DO NOT write code inline. ALWAYS delegate to use_codestral for code generation.
