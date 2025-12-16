@@ -34,6 +34,11 @@ class TurnProcessor:
         # Track last specialist tool output for reference resolution
         self.last_specialist_output: Optional[str] = None
 
+        # Track recent tool outputs for auto-context injection
+        # Store tuples of (tool_name, result)
+        self.recent_tool_outputs: List[tuple[str, str]] = []
+        self.max_context_tools = 3  # Keep last 3 tool results for context
+
     def _extract_json_tool_call(self, text: str) -> Optional[Dict[str, Any]]:
         """
         Extract JSON tool call from text output (for models that output JSON as text).
@@ -127,6 +132,57 @@ class TurnProcessor:
 
         return arguments
 
+    def _inject_context(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Auto-inject previous tool results into specialist tool parameters.
+
+        When a specialist tool is called, prepend recent tool outputs to provide context
+        without relying on orchestrator intelligence.
+
+        Args:
+            tool_name: Name of the tool being called
+            arguments: Tool arguments dict
+
+        Returns:
+            Updated arguments dict with context injected
+        """
+        # Only inject context for specialist tools
+        if tool_name not in SPECIALIST_TOOLS:
+            return arguments
+
+        # Skip if no recent tool outputs to inject
+        if not self.recent_tool_outputs:
+            return arguments
+
+        # Determine which parameter to inject into
+        param_name = None
+        if tool_name == "use_reasoning_model":
+            param_name = "task"
+        elif tool_name == "use_search_model":
+            param_name = "query"
+        elif tool_name == "use_codestral":
+            param_name = "code_context"
+
+        if not param_name or param_name not in arguments:
+            return arguments
+
+        # Build context from recent tool outputs
+        context_parts = []
+        for prev_tool_name, prev_result in self.recent_tool_outputs:
+            # Truncate very long results
+            truncated_result = prev_result[:2000] + "..." if len(prev_result) > 2000 else prev_result
+            context_parts.append(f"[Previous {prev_tool_name} output]:\n{truncated_result}")
+
+        context_str = "\n\n".join(context_parts)
+
+        # Inject context into parameter
+        original_value = arguments[param_name]
+        arguments = arguments.copy()
+        arguments[param_name] = f"{context_str}\n\n---\nTask: {original_value}"
+
+        logger.info(f"Auto-injected context from {len(self.recent_tool_outputs)} previous tools into {tool_name}")
+        return arguments
+
     def process(self, user_input: str, tools_available: bool = True) -> tuple[str, float]:
         """
         Process a single user turn to completion.
@@ -149,6 +205,9 @@ class TurnProcessor:
         # Add user message to conversation
         logger.info(f"User: {user_input[:100]}{'...' if len(user_input) > 100 else ''}")
         self.conversation.add_user_message(user_input)
+
+        # Clear recent tool outputs for this turn
+        self.recent_tool_outputs = []
 
         max_iterations = 10  # Prevent infinite loops
         iteration = 0
@@ -223,6 +282,9 @@ class TurnProcessor:
                     # Resolve references (e.g., "this plan" -> actual content)
                     arguments = self._resolve_references(function_name, arguments)
 
+                    # Auto-inject context from previous tools
+                    arguments = self._inject_context(function_name, arguments)
+
                     # Loop detection: Check if we're calling the same tool repeatedly
                     arguments_json = json.dumps(arguments, sort_keys=True)
                     tool_signature = (function_name, arguments_json)
@@ -244,6 +306,13 @@ class TurnProcessor:
                         self.ui.show_tool_execution(function_name, arguments)
 
                     tool_result = self.tool_executor.execute(function_name, arguments)
+
+                    # Track tool output for context injection (only non-specialist tools)
+                    if function_name not in SPECIALIST_TOOLS and not tool_result.startswith("Error:"):
+                        self.recent_tool_outputs.append((function_name, tool_result))
+                        # Keep only last N tool outputs
+                        if len(self.recent_tool_outputs) > self.max_context_tools:
+                            self.recent_tool_outputs.pop(0)
 
                     # Show tool execution result
                     if self.ui:
@@ -291,6 +360,9 @@ class TurnProcessor:
                     # Resolve references (e.g., "this plan" -> actual content)
                     arguments = self._resolve_references(tool_name, arguments)
 
+                    # Auto-inject context from previous tools
+                    arguments = self._inject_context(tool_name, arguments)
+
                     # Loop detection: Check if we're calling the same tool repeatedly
                     arguments_json = json.dumps(arguments, sort_keys=True)
                     tool_signature = (tool_name, arguments_json)
@@ -313,6 +385,13 @@ class TurnProcessor:
 
                     # Execute the tool
                     tool_result = self.tool_executor.execute(tool_name, arguments)
+
+                    # Track tool output for context injection (only non-specialist tools)
+                    if tool_name not in SPECIALIST_TOOLS and not tool_result.startswith("Error:"):
+                        self.recent_tool_outputs.append((tool_name, tool_result))
+                        # Keep only last N tool outputs
+                        if len(self.recent_tool_outputs) > self.max_context_tools:
+                            self.recent_tool_outputs.pop(0)
 
                     # Show result
                     if self.ui:
