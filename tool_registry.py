@@ -201,7 +201,7 @@ def use_codestral(code_context: str) -> str:
             timeout=model_config["timeout"]
         )
 
-        response = client.chat_complete([
+        messages = [
             {
                 "role": "system",
                 "content": "You are an expert software engineer. Generate clean, well-documented, production-quality code. Include docstrings and comments for complex logic."
@@ -210,9 +210,19 @@ def use_codestral(code_context: str) -> str:
                 "role": "user",
                 "content": code_context
             }
-        ])
+        ]
 
-        content = client.extract_content(response)
+        # Stream the response for real-time feedback
+        print("\n", flush=True)  # New line before streaming
+        full_response = []
+
+        for chunk in client.chat_complete_stream(messages):
+            print(chunk, end='', flush=True)
+            full_response.append(chunk)
+
+        print("\n", flush=True)  # New line after streaming
+
+        content = ''.join(full_response)
         if not content or not content.strip():
             return "Error: Codestral returned empty response"
 
@@ -254,7 +264,7 @@ def use_reasoning_model(task: str) -> str:
             timeout=model_config["timeout"]
         )
 
-        response = client.chat_complete([
+        messages = [
             {
                 "role": "system",
                 "content": "You are a logical reasoning and planning expert. Break down complex problems into clear, actionable steps. Consider edge cases and trade-offs."
@@ -263,9 +273,19 @@ def use_reasoning_model(task: str) -> str:
                 "role": "user",
                 "content": task
             }
-        ])
+        ]
 
-        content = client.extract_content(response)
+        # Stream the response for real-time feedback
+        print("\n", flush=True)  # New line before streaming
+        full_response = []
+
+        for chunk in client.chat_complete_stream(messages):
+            print(chunk, end='', flush=True)
+            full_response.append(chunk)
+
+        print("\n", flush=True)  # New line after streaming
+
+        content = ''.join(full_response)
         if not content or not content.strip():
             return "Error: Reasoning model returned empty response"
 

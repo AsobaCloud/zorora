@@ -189,6 +189,84 @@ class LLMClient:
         choice = response["choices"][0]
         return choice.get("finish_reason")
 
+    def chat_complete_stream(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ):
+        """
+        Stream chat completion response from LLM (generator).
+
+        Args:
+            messages: List of message dicts with 'role' and 'content'
+            tools: Optional list of tool definitions
+
+        Yields:
+            Chunks of response content as they arrive
+
+        Raises:
+            RuntimeError: If API call fails
+        """
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "stream": True,
+        }
+
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = self.tool_choice
+            payload["parallel_tool_calls"] = self.parallel_tool_calls
+
+        try:
+            response = requests.post(
+                self.api_url,
+                json=payload,
+                timeout=self.timeout,
+                stream=True,
+            )
+            response.raise_for_status()
+
+            # Process SSE stream
+            for line in response.iter_lines():
+                if not line:
+                    continue
+
+                line = line.decode('utf-8')
+
+                # Skip SSE prefix
+                if line.startswith('data: '):
+                    line = line[6:]  # Remove 'data: ' prefix
+
+                # Check for stream end
+                if line == '[DONE]':
+                    break
+
+                try:
+                    import json
+                    chunk = json.loads(line)
+
+                    # Extract content delta from chunk
+                    if 'choices' in chunk and len(chunk['choices']) > 0:
+                        delta = chunk['choices'][0].get('delta', {})
+                        content = delta.get('content', '')
+                        if content:
+                            yield content
+
+                except json.JSONDecodeError:
+                    continue
+
+        except requests.Timeout:
+            raise RuntimeError(f"LLM API streaming timed out after {self.timeout}s")
+        except requests.ConnectionError:
+            raise RuntimeError(f"Could not connect to LM Studio at {self.api_url}")
+        except requests.HTTPError as e:
+            raise RuntimeError(f"LLM API error (HTTP {e.response.status_code}): {e.response.text}") from e
+        except requests.RequestException as e:
+            raise RuntimeError(f"LLM API streaming failed: {e}") from e
+
     def list_models(self) -> List[str]:
         """
         List available models from LM Studio.
