@@ -120,12 +120,19 @@ class REPL:
             self.ui.console.print("[dim]Run a query that uses a specialist tool first (e.g., ask for analysis, plan, or code).[/dim]")
             return
 
+        # Remove <think></think> tags and their content
+        import re
+        content = self.turn_processor.last_specialist_output
+        # Remove thinking tags (including newlines around them)
+        content = re.sub(r'<think>.*?</think>\s*', '', content, flags=re.DOTALL)
+        content = content.strip()
+
         # Write to file
         try:
             with open(filename, 'w') as f:
-                f.write(self.turn_processor.last_specialist_output)
+                f.write(content)
 
-            size = len(self.turn_processor.last_specialist_output)
+            size = len(content)
             self.ui.console.print(f"[green]✓[/green] Saved {size:,} characters to {filename}")
         except Exception as e:
             self.ui.console.print(f"[red]Error saving file: {e}[/red]")
