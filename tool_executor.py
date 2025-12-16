@@ -3,7 +3,7 @@
 from typing import Dict, Any, Optional
 import json
 
-from tool_registry import ToolRegistry
+from tool_registry import ToolRegistry, SPECIALIST_TOOLS
 
 
 # Maximum size for tool results (to prevent context bloat)
@@ -33,22 +33,28 @@ class ToolExecutor:
 
         try:
             result = tool_func(**arguments)
-            return self._truncate_result(result)
+            return self._truncate_result(result, tool_name)
         except TypeError as e:
             return f"Error: Invalid arguments for tool '{tool_name}': {e}"
         except Exception as e:
             return f"Error executing tool '{tool_name}': {e}"
 
-    def _truncate_result(self, result: str) -> str:
+    def _truncate_result(self, result: str, tool_name: str) -> str:
         """
         Truncate large tool results to prevent context bloat.
+        Specialist tools are exempt from truncation as they return final responses.
 
         Args:
             result: Tool result string
+            tool_name: Name of the tool that produced the result
 
         Returns:
-            Truncated result with indicator if truncated
+            Truncated result with indicator if truncated (or full result for specialist tools)
         """
+        # Don't truncate specialist tools - they return final responses to be shown in full
+        if tool_name in SPECIALIST_TOOLS:
+            return result
+
         if len(result) <= MAX_TOOL_RESULT_SIZE:
             return result
 
