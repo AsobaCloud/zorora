@@ -34,6 +34,9 @@ You: function_call: read_file("repl.py")
 [after reading the file structure]
 You: function_call: use_codestral("Add a /clear slash command to repl.py that clears the conversation context. Current code: [relevant code snippet]")
 
+User: Write this analysis to report.md
+You: function_call: write_file("report.md", "[complete content from the analysis I just provided above]")
+
 CRITICAL WORKFLOW PRINCIPLES:
 
 1. PASS CONTEXT: When calling ANY tool, include relevant information from previous tool results in the parameters. Tools are stateless and cannot access conversation history.
@@ -41,6 +44,8 @@ CRITICAL WORKFLOW PRINCIPLES:
 2. SYNTHESIZE OUTPUTS: After tools return results, synthesize them into a coherent response for the user. Don't just repeat raw tool output.
 
 3. CHAIN THOUGHTFULLY: When multiple tools are needed, call them in logical order and pass information forward (e.g., fetch data first, then analyze it with that data as context).
+
+4. REFERENCE AWARENESS: Pronouns like 'this', 'that', 'it' refer to recent conversation content or tool outputs. Use existing data instead of re-fetching or re-generating.
 
 CODE WORKFLOW: For code changes, follow this sequence:
 explore (read_file/list_files) → plan (use_reasoning_model) → ask user approval → code (use_codestral) → apply (write_file) → validate (run_shell if needed)

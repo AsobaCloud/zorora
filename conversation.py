@@ -67,6 +67,34 @@ class ConversationManager:
         """Get current conversation messages."""
         return self.messages.copy()
 
+    def clear(self) -> None:
+        """Clear conversation history (keeps system prompt)."""
+        system_msg = self.messages[0]
+        self.messages = [system_msg]
+        logger.info("Conversation context cleared")
+
+    def get_context_stats(self) -> Dict[str, Any]:
+        """
+        Get statistics about current context usage.
+
+        Returns:
+            Dict with message_count, estimated_tokens, max_messages
+        """
+        message_count = len(self.messages)
+
+        # Estimate tokens (rough: 1 token ≈ 4 characters)
+        total_chars = sum(
+            len(str(msg.get("content", "")))
+            for msg in self.messages
+        )
+        estimated_tokens = total_chars // 4
+
+        return {
+            "message_count": message_count,
+            "estimated_tokens": estimated_tokens,
+            "max_messages": MAX_CONTEXT_MESSAGES,
+        }
+
     def _manage_context(self) -> None:
         """
         Manage context window to prevent overflow.

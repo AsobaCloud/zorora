@@ -41,6 +41,10 @@ class REPL:
             self.model_selector.run()
         elif cmd == "/help":
             self._show_help()
+        elif cmd == "/clear":
+            self._clear_context()
+        elif cmd == "/visualize":
+            self._visualize_context()
         else:
             self.ui.console.print(f"[red]Unknown command: {command}[/red]")
             self.ui.console.print("[dim]Type /help for available commands[/dim]")
@@ -50,11 +54,53 @@ class REPL:
         help_text = """
 [bold cyan]Available Commands:[/bold cyan]
 
-  [cyan]/models[/cyan]  - Select models for orchestrator and specialist tools
-  [cyan]/help[/cyan]    - Show this help message
-  [cyan]exit[/cyan]     - Exit the REPL
+  [cyan]/models[/cyan]     - Select models for orchestrator and specialist tools
+  [cyan]/clear[/cyan]      - Clear conversation context (reset to fresh state)
+  [cyan]/visualize[/cyan]  - Show context usage statistics
+  [cyan]/help[/cyan]       - Show this help message
+  [cyan]exit[/cyan]        - Exit the REPL
         """
         self.ui.console.print(help_text)
+
+    def _clear_context(self):
+        """Clear conversation context."""
+        self.conversation.clear()
+        self.ui.console.print("[green]✓[/green] Conversation context cleared")
+
+    def _visualize_context(self):
+        """Display context usage visualization."""
+        stats = self.conversation.get_context_stats()
+
+        # Calculate percentages
+        if stats["max_messages"]:
+            msg_percent = (stats["message_count"] / stats["max_messages"]) * 100
+        else:
+            msg_percent = 0
+
+        # Create visualization
+        from rich.panel import Panel
+        from rich.text import Text
+
+        viz = Text()
+        viz.append(f"Messages: {stats['message_count']}", style="cyan")
+        if stats["max_messages"]:
+            viz.append(f" / {stats['max_messages']}", style="dim")
+            viz.append(f" ({msg_percent:.1f}%)\n", style="yellow" if msg_percent > 75 else "green")
+        else:
+            viz.append(" (unlimited)\n", style="dim")
+
+        viz.append(f"Est. Tokens: ~{stats['estimated_tokens']:,}", style="cyan")
+
+        # Show bar visualization for messages
+        if stats["max_messages"]:
+            bar_width = 30
+            filled = int((stats["message_count"] / stats["max_messages"]) * bar_width)
+            bar = "█" * filled + "░" * (bar_width - filled)
+            color = "red" if msg_percent > 90 else "yellow" if msg_percent > 75 else "green"
+            viz.append(f"\n{bar}", style=color)
+
+        panel = Panel(viz, title="Context Usage", border_style="cyan")
+        self.ui.console.print(panel)
 
     def run(self):
         """Run the REPL loop."""

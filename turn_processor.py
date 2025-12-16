@@ -102,6 +102,9 @@ class TurnProcessor:
         tools_provided = tools_available
         total_start_time = time.time()
 
+        # Track recent tool calls for loop detection
+        recent_tool_calls = []  # List of (function_name, arguments_json)
+
         while iteration < max_iterations:
             iteration += 1
 
@@ -164,6 +167,22 @@ class TurnProcessor:
 
                     function_name, arguments = self.tool_executor.parse_tool_call(tool_call)
 
+                    # Loop detection: Check if we're calling the same tool repeatedly
+                    arguments_json = json.dumps(arguments, sort_keys=True)
+                    tool_signature = (function_name, arguments_json)
+                    recent_tool_calls.append(tool_signature)
+
+                    # If the same tool call appears 3+ times in recent history, we're stuck
+                    if recent_tool_calls.count(tool_signature) >= 3:
+                        logger.warning(f"Loop detected: {function_name} called 3+ times with same arguments")
+                        execution_time = time.time() - total_start_time
+                        return (
+                            f"Error: Loop detected. I called '{function_name}' multiple times without progress.\n"
+                            f"Recent tool calls: {[name for name, _ in recent_tool_calls[-5:]]}\n"
+                            f"I may be stuck. Could you clarify what you need or try rephrasing your request?",
+                            execution_time
+                        )
+
                     # Show tool execution start
                     if self.ui:
                         self.ui.show_tool_execution(function_name, arguments)
@@ -210,6 +229,22 @@ class TurnProcessor:
                     arguments = json_tool_call["arguments"]
 
                     logger.info(f"Detected JSON tool call in text: {tool_name}({arguments})")
+
+                    # Loop detection: Check if we're calling the same tool repeatedly
+                    arguments_json = json.dumps(arguments, sort_keys=True)
+                    tool_signature = (tool_name, arguments_json)
+                    recent_tool_calls.append(tool_signature)
+
+                    # If the same tool call appears 3+ times in recent history, we're stuck
+                    if recent_tool_calls.count(tool_signature) >= 3:
+                        logger.warning(f"Loop detected: {tool_name} called 3+ times with same arguments")
+                        execution_time = time.time() - total_start_time
+                        return (
+                            f"Error: Loop detected. I called '{tool_name}' multiple times without progress.\n"
+                            f"Recent tool calls: {[name for name, _ in recent_tool_calls[-5:]]}\n"
+                            f"I may be stuck. Could you clarify what you need or try rephrasing your request?",
+                            execution_time
+                        )
 
                     # Show tool execution
                     if self.ui:
