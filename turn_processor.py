@@ -233,6 +233,12 @@ class TurnProcessor:
                         tool_result
                     )
 
+                    # Check if this is a specialist tool - if so, return result directly
+                    if tool_name in SPECIALIST_TOOLS and not tool_result.startswith("Error:"):
+                        logger.info(f"Specialist tool {tool_name} (text-based) returned result - ending iteration")
+                        execution_time = time.time() - total_start_time
+                        return tool_result.strip(), execution_time
+
                     # Continue loop to get final response
                     continue
 
