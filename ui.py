@@ -135,7 +135,7 @@ class ZororaUI:
         self.console.print()
 
         if UI_MARKDOWN_RENDERING:
-            self.console.print(Markdown(response, code_theme=UI_THEME))
+            self.console.print(Markdown(response, code_theme=UI_THEME, justify="left"))
         else:
             self.console.print(Text(response, style="bold"))
 
