@@ -31,6 +31,9 @@ class TurnProcessor:
         self.tool_registry = tool_registry
         self.ui = ui  # Optional UI for feedback
 
+        # Track last specialist tool output for reference resolution
+        self.last_specialist_output: Optional[str] = None
+
     def _extract_json_tool_call(self, text: str) -> Optional[Dict[str, Any]]:
         """
         Extract JSON tool call from text output (for models that output JSON as text).
@@ -73,6 +76,56 @@ class TurnProcessor:
                 continue
 
         return None
+
+    def _resolve_references(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Resolve reference pronouns in tool arguments to actual content.
+
+        If write_file is called with content containing "this", "that", "the plan", etc.,
+        replace with last_specialist_output.
+
+        Args:
+            tool_name: Name of the tool being called
+            arguments: Tool arguments dict
+
+        Returns:
+            Updated arguments dict with references resolved
+        """
+        # Only handle write_file for now
+        if tool_name != "write_file":
+            return arguments
+
+        # Check if content parameter exists and contains references
+        content = arguments.get("content", "")
+
+        # Skip if content is already long (likely not a reference)
+        if len(content) > 100:
+            return arguments
+
+        # Reference patterns to detect
+        reference_patterns = [
+            r'\bthis\b',
+            r'\bthat\b',
+            r'\bthe plan\b',
+            r'\bthe outline\b',
+            r'\bthe analysis\b',
+            r'\bthe report\b',
+            r'\babove\b',
+            r'\bprevious\b',
+            r'\bjust generated\b',
+            r'\bjust provided\b',
+        ]
+
+        # Check if content contains any reference pattern
+        has_reference = any(re.search(pattern, content, re.IGNORECASE) for pattern in reference_patterns)
+
+        if has_reference and self.last_specialist_output:
+            logger.info(f"Resolving reference in write_file: '{content}' -> using last specialist output ({len(self.last_specialist_output)} chars)")
+            # Replace content with last specialist output
+            arguments = arguments.copy()
+            arguments["content"] = self.last_specialist_output
+
+        return arguments
 
     def process(self, user_input: str, tools_available: bool = True) -> tuple[str, float]:
         """
@@ -167,6 +220,9 @@ class TurnProcessor:
 
                     function_name, arguments = self.tool_executor.parse_tool_call(tool_call)
 
+                    # Resolve references (e.g., "this plan" -> actual content)
+                    arguments = self._resolve_references(function_name, arguments)
+
                     # Loop detection: Check if we're calling the same tool repeatedly
                     arguments_json = json.dumps(arguments, sort_keys=True)
                     tool_signature = (function_name, arguments_json)
@@ -204,6 +260,8 @@ class TurnProcessor:
                     # Check if this is a specialist tool - if so, return result directly
                     if function_name in SPECIALIST_TOOLS and not tool_result.startswith("Error:"):
                         specialist_result = tool_result
+                        # Store for reference resolution
+                        self.last_specialist_output = tool_result
                         logger.info(f"Specialist tool {function_name} returned result - ending iteration")
 
                 # If a specialist tool was called, return its result immediately
@@ -229,6 +287,9 @@ class TurnProcessor:
                     arguments = json_tool_call["arguments"]
 
                     logger.info(f"Detected JSON tool call in text: {tool_name}({arguments})")
+
+                    # Resolve references (e.g., "this plan" -> actual content)
+                    arguments = self._resolve_references(tool_name, arguments)
 
                     # Loop detection: Check if we're calling the same tool repeatedly
                     arguments_json = json.dumps(arguments, sort_keys=True)
@@ -270,6 +331,8 @@ class TurnProcessor:
 
                     # Check if this is a specialist tool - if so, return result directly
                     if tool_name in SPECIALIST_TOOLS and not tool_result.startswith("Error:"):
+                        # Store for reference resolution
+                        self.last_specialist_output = tool_result
                         logger.info(f"Specialist tool {tool_name} (text-based) returned result - ending iteration")
                         execution_time = time.time() - total_start_time
                         return tool_result.strip(), execution_time
