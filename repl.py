@@ -45,6 +45,15 @@ class REPL:
             self._clear_context()
         elif cmd == "/visualize":
             self._visualize_context()
+        elif cmd.startswith("/save"):
+            # Extract filename from command
+            parts = command.split(maxsplit=1)
+            if len(parts) < 2:
+                self.ui.console.print("[red]Usage: /save <filename>[/red]")
+                self.ui.console.print("[dim]Example: /save plan.md[/dim]")
+            else:
+                filename = parts[1].strip()
+                self._save_output(filename)
         else:
             self.ui.console.print(f"[red]Unknown command: {command}[/red]")
             self.ui.console.print("[dim]Type /help for available commands[/dim]")
@@ -54,11 +63,12 @@ class REPL:
         help_text = """
 [bold cyan]Available Commands:[/bold cyan]
 
-  [cyan]/models[/cyan]     - Select models for orchestrator and specialist tools
-  [cyan]/clear[/cyan]      - Clear conversation context (reset to fresh state)
-  [cyan]/visualize[/cyan]  - Show context usage statistics
-  [cyan]/help[/cyan]       - Show this help message
-  [cyan]exit[/cyan]        - Exit the REPL
+  [cyan]/models[/cyan]              - Select models for orchestrator and specialist tools
+  [cyan]/save <filename>[/cyan]    - Save last specialist output to file (e.g., /save plan.md)
+  [cyan]/clear[/cyan]               - Clear conversation context (reset to fresh state)
+  [cyan]/visualize[/cyan]           - Show context usage statistics
+  [cyan]/help[/cyan]                - Show this help message
+  [cyan]exit[/cyan]                 - Exit the REPL
         """
         self.ui.console.print(help_text)
 
@@ -101,6 +111,24 @@ class REPL:
 
         panel = Panel(viz, title="Context Usage", border_style="cyan")
         self.ui.console.print(panel)
+
+    def _save_output(self, filename: str):
+        """Save last specialist output to a file."""
+        # Check if there's any specialist output to save
+        if not self.turn_processor.last_specialist_output:
+            self.ui.console.print("[yellow]No specialist output to save.[/yellow]")
+            self.ui.console.print("[dim]Run a query that uses a specialist tool first (e.g., ask for analysis, plan, or code).[/dim]")
+            return
+
+        # Write to file
+        try:
+            with open(filename, 'w') as f:
+                f.write(self.turn_processor.last_specialist_output)
+
+            size = len(self.turn_processor.last_specialist_output)
+            self.ui.console.print(f"[green]✓[/green] Saved {size:,} characters to {filename}")
+        except Exception as e:
+            self.ui.console.print(f"[red]Error saving file: {e}[/red]")
 
     def run(self):
         """Run the REPL loop."""
