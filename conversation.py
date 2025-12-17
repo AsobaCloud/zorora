@@ -4,7 +4,7 @@ from typing import List, Dict, Any, Optional
 import logging
 from datetime import datetime
 
-from config import MAX_CONTEXT_MESSAGES
+from config import MAX_CONTEXT_MESSAGES, ENABLE_CONTEXT_SUMMARIZATION, CONTEXT_KEEP_RECENT
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,8 @@ class ConversationManager:
         system_prompt: str,
         session_id: Optional[str] = None,
         persistence = None,
-        auto_save: bool = True
+        auto_save: bool = True,
+        tool_executor = None
     ):
         """
         Initialize conversation manager.
@@ -27,6 +28,7 @@ class ConversationManager:
             session_id: Optional session identifier for persistence
             persistence: Optional ConversationPersistence instance
             auto_save: Whether to auto-save after each message
+            tool_executor: Optional ToolExecutor for context summarization
         """
         self.messages: List[Dict[str, Any]] = [
             {"role": "system", "content": system_prompt}
@@ -34,6 +36,7 @@ class ConversationManager:
         self.session_id = session_id or self._generate_session_id()
         self.persistence = persistence
         self.auto_save_enabled = auto_save
+        self.tool_executor = tool_executor
         self.metadata = {
             "start_time": datetime.now().isoformat(),
         }
@@ -118,12 +121,79 @@ class ConversationManager:
             "max_messages": MAX_CONTEXT_MESSAGES,
         }
 
+    def _summarize_conversation(self, messages_to_summarize: List[Dict[str, Any]]) -> str:
+        """
+        Create a summary of old messages using the reasoning model.
+
+        Args:
+            messages_to_summarize: List of message dicts to summarize
+
+        Returns:
+            Summary text
+        """
+        if not self.tool_executor:
+            logger.warning("No tool_executor available for summarization, using fallback")
+            return "[Previous conversation context unavailable]"
+
+        try:
+            # Format messages for summarization
+            formatted_messages = []
+            for msg in messages_to_summarize:
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")
+
+                # Skip empty messages
+                if not content or content == "":
+                    continue
+
+                # Truncate very long messages
+                if len(content) > 1000:
+                    content = content[:1000] + "..."
+
+                formatted_messages.append(f"{role.upper()}: {content}")
+
+            conversation_text = "\n\n".join(formatted_messages)
+
+            # Call reasoning model to create summary
+            summary_prompt = f"""Summarize the following conversation history concisely. Focus on:
+- Key decisions made
+- Important facts or context established
+- Files created/modified
+- Tools used and their results
+
+Keep the summary under 500 words.
+
+Conversation to summarize:
+{conversation_text}
+
+Provide a concise summary:"""
+
+            logger.info(f"Creating summary of {len(messages_to_summarize)} messages...")
+            summary = self.tool_executor.execute("use_reasoning_model", {"task": summary_prompt})
+
+            # Clean up the summary
+            summary = summary.strip()
+            if len(summary) > 2000:
+                summary = summary[:2000] + "..."
+
+            logger.info(f"Created summary: {len(summary)} chars")
+            return summary
+
+        except Exception as e:
+            logger.error(f"Summarization failed: {e}")
+            return "[Conversation summary unavailable due to error]"
+
     def _manage_context(self) -> None:
         """
         Manage context window to prevent overflow.
 
-        Strategy: Keep system message + recent messages.
-        If context exceeds limit, remove oldest non-system messages.
+        Strategy with summarization enabled:
+        - When limit is reached, summarize oldest messages
+        - Keep system message + summary + recent messages
+
+        Fallback strategy (no summarization):
+        - Keep system message + recent messages
+        - Remove oldest non-system messages
         """
         if MAX_CONTEXT_MESSAGES is None:
             return  # No limit
@@ -131,9 +201,52 @@ class ConversationManager:
         if len(self.messages) <= MAX_CONTEXT_MESSAGES:
             return  # Within limit
 
-        # Keep system message + recent messages
+        logger.warning(f"Context limit reached: {len(self.messages)} messages (limit: {MAX_CONTEXT_MESSAGES})")
+
+        # Use summarization if enabled and available
+        if ENABLE_CONTEXT_SUMMARIZATION and self.tool_executor:
+            try:
+                system_msg = self.messages[0]
+
+                # Check if we already have a summary
+                has_summary = len(self.messages) > 1 and "Previous conversation summary:" in str(self.messages[1].get("content", ""))
+
+                if has_summary:
+                    # Already have a summary - append to it
+                    old_summary = self.messages[1]
+                    messages_to_summarize = self.messages[2:-(CONTEXT_KEEP_RECENT)]
+                    recent_messages = self.messages[-(CONTEXT_KEEP_RECENT):]
+
+                    logger.info(f"Appending to existing summary: summarizing {len(messages_to_summarize)} messages")
+                    new_summary_text = self._summarize_conversation(messages_to_summarize)
+
+                    # Combine summaries
+                    combined_summary = f"{old_summary['content']}\n\n[Additional context:]\n{new_summary_text}"
+                    summary_message = {"role": "user", "content": combined_summary}
+
+                    self.messages = [system_msg, summary_message] + recent_messages
+                else:
+                    # First summarization
+                    messages_to_summarize = self.messages[1:-(CONTEXT_KEEP_RECENT)]
+                    recent_messages = self.messages[-(CONTEXT_KEEP_RECENT):]
+
+                    logger.info(f"Creating first summary: summarizing {len(messages_to_summarize)} messages, keeping {len(recent_messages)} recent")
+                    summary_text = self._summarize_conversation(messages_to_summarize)
+
+                    summary_message = {"role": "user", "content": f"[Previous conversation summary: {summary_text}]"}
+
+                    self.messages = [system_msg, summary_message] + recent_messages
+
+                logger.info(f"Context managed with summarization: now {len(self.messages)} messages")
+                return
+
+            except Exception as e:
+                logger.error(f"Context summarization failed: {e}, falling back to FIFO")
+                # Fall through to FIFO fallback
+
+        # Fallback: Simple FIFO
         removed_count = len(self.messages) - MAX_CONTEXT_MESSAGES
-        logger.warning(f"Context limit reached: removing {removed_count} oldest messages (keeping {MAX_CONTEXT_MESSAGES})")
+        logger.warning(f"Using FIFO fallback: removing {removed_count} oldest messages")
 
         system_msg = self.messages[0]
         recent_messages = self.messages[-(MAX_CONTEXT_MESSAGES - 1):]

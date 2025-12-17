@@ -30,7 +30,8 @@ class REPL:
         self.conversation = ConversationManager(
             system_prompt=load_system_prompt(),
             persistence=self.persistence,
-            auto_save=True
+            auto_save=True,
+            tool_executor=self.tool_executor  # For context summarization
         )
         self.turn_processor = TurnProcessor(
             self.conversation,
