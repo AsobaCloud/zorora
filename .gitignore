@@ -41,6 +41,9 @@ repl.log
 # Configuration (contains API tokens)
 config.py
 
+# Conversation history (user data)
+.zorora/
+
 # OS
 .DS_Store
 Thumbs.db

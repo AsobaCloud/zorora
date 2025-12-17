@@ -20,6 +20,7 @@ setup(
         "repl",
         "config",
         "conversation",
+        "conversation_persistence",
         "llm_client",
         "tool_executor",
         "tool_registry",

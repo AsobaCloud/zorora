@@ -1,6 +1,7 @@
 """REPL main loop for interactive code assistant."""
 
 from conversation import ConversationManager
+from conversation_persistence import ConversationPersistence
 from llm_client import LLMClient
 from tool_executor import ToolExecutor
 from tool_registry import ToolRegistry
@@ -19,11 +20,18 @@ class REPL:
         # Initialize UI
         self.ui = ZororaUI(no_color=config.UI_NO_COLOR)
 
+        # Initialize persistence
+        self.persistence = ConversationPersistence()
+
         # Initialize components
         self.tool_registry = ToolRegistry()
         self.tool_executor = ToolExecutor(self.tool_registry)
         self.llm_client = self._create_orchestrator_client()
-        self.conversation = ConversationManager(load_system_prompt())
+        self.conversation = ConversationManager(
+            system_prompt=load_system_prompt(),
+            persistence=self.persistence,
+            auto_save=True
+        )
         self.turn_processor = TurnProcessor(
             self.conversation,
             self.llm_client,
@@ -73,6 +81,17 @@ class REPL:
             self._clear_context()
         elif cmd == "/visualize":
             self._visualize_context()
+        elif cmd == "/history":
+            self._show_history()
+        elif cmd.startswith("/resume"):
+            # Extract session ID from command
+            parts = command.split(maxsplit=1)
+            if len(parts) < 2:
+                self.ui.console.print("[red]Usage: /resume <session_id>[/red]")
+                self.ui.console.print("[dim]Use /history to see available sessions[/dim]")
+            else:
+                session_id = parts[1].strip()
+                self._resume_session(session_id)
         elif cmd.startswith("/save"):
             # Extract filename from command
             parts = command.split(maxsplit=1)
@@ -91,12 +110,14 @@ class REPL:
         help_text = """
 [bold cyan]Available Commands:[/bold cyan]
 
-  [cyan]/models[/cyan]              - Select models for orchestrator and specialist tools
-  [cyan]/save <filename>[/cyan]    - Save last specialist output to file (e.g., /save plan.md)
-  [cyan]/clear[/cyan]               - Clear conversation context (reset to fresh state)
-  [cyan]/visualize[/cyan]           - Show context usage statistics
-  [cyan]/help[/cyan]                - Show this help message
-  [cyan]exit[/cyan]                 - Exit the REPL
+  [cyan]/models[/cyan]                  - Select models for orchestrator and specialist tools
+  [cyan]/save <filename>[/cyan]        - Save last specialist output to file (e.g., /save plan.md)
+  [cyan]/history[/cyan]                 - List all saved conversation sessions
+  [cyan]/resume <session_id>[/cyan]    - Resume a previous conversation session
+  [cyan]/clear[/cyan]                   - Clear conversation context (reset to fresh state)
+  [cyan]/visualize[/cyan]               - Show context usage statistics
+  [cyan]/help[/cyan]                    - Show this help message
+  [cyan]exit[/cyan]                     - Exit the REPL
         """
         self.ui.console.print(help_text)
 
@@ -165,6 +186,68 @@ class REPL:
         except Exception as e:
             self.ui.console.print(f"[red]Error saving file: {e}[/red]")
 
+    def _show_history(self):
+        """Display list of saved conversation sessions."""
+        from rich.table import Table
+        from datetime import datetime
+
+        conversations = self.persistence.list_conversations()
+
+        if not conversations:
+            self.ui.console.print("[yellow]No saved conversations found.[/yellow]")
+            self.ui.console.print(f"[dim]Conversations are auto-saved to .zorora/conversations/[/dim]")
+            return
+
+        # Create table
+        table = Table(title="Conversation History", show_header=True, header_style="bold magenta")
+        table.add_column("Session ID", style="cyan", no_wrap=True)
+        table.add_column("Messages", style="dim", width=8)
+        table.add_column("Started", style="dim")
+        table.add_column("Preview", style="white")
+
+        for conv in conversations:
+            # Format start time
+            start_time = conv.get("start_time", "")
+            if start_time:
+                try:
+                    dt = datetime.fromisoformat(start_time)
+                    start_display = dt.strftime("%Y-%m-%d %H:%M")
+                except:
+                    start_display = start_time[:16]
+            else:
+                start_display = "Unknown"
+
+            # Highlight current session
+            session_id = conv["session_id"]
+            if session_id == self.conversation.session_id:
+                session_id = f"[green]{session_id} (current)[/green]"
+
+            table.add_row(
+                session_id,
+                str(conv.get("user_message_count", 0)),
+                start_display,
+                conv.get("preview", "")
+            )
+
+        self.ui.console.print(table)
+        self.ui.console.print(f"\n[dim]Use [cyan]/resume <session_id>[/cyan] to load a conversation[/dim]")
+
+    def _resume_session(self, session_id: str):
+        """Resume a previous conversation session."""
+        # Check if trying to resume current session
+        if session_id == self.conversation.session_id:
+            self.ui.console.print("[yellow]Already in this session.[/yellow]")
+            return
+
+        # Try to load the session
+        if self.conversation.load_from_session(session_id):
+            self.ui.console.print(f"[green]✓[/green] Resumed session: {session_id}")
+            stats = self.conversation.get_context_stats()
+            self.ui.console.print(f"[dim]Loaded {stats['message_count']} messages[/dim]")
+        else:
+            self.ui.console.print(f"[red]Failed to resume session: {session_id}[/red]")
+            self.ui.console.print("[dim]Use /history to see available sessions[/dim]")
+
     def run(self):
         """Run the REPL loop."""
         self.ui.display_welcome(model=config.MODEL, version="1.0.0")
@@ -199,6 +282,10 @@ class REPL:
                 try:
                     response, execution_time = self.turn_processor.process(user_input, tools_available)
                     self.ui.display_response(response, execution_time)
+                except KeyboardInterrupt:
+                    self.ui.console.print("\n\n[yellow]⚠ Query interrupted[/yellow]")
+                    turn_count -= 1  # Don't count interrupted turns
+                    continue
                 except Exception as e:
                     self.ui.display_error('error', str(e))
 
