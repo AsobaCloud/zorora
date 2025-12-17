@@ -242,12 +242,26 @@ class TurnProcessor:
                 logger.warning("No specialist output available for write_file")
                 return None
 
-            logger.info(f"Forcing write_file: {filename} ({len(self.last_specialist_output)} chars)")
+            content = self.last_specialist_output
+
+            # If the content has markdown code blocks, extract just the code
+            # Pattern: ```language\ncode\n``` or ```\ncode\n```
+            code_block_pattern = r'```(?:\w+)?\n(.*?)```'
+            code_blocks = re.findall(code_block_pattern, content, re.DOTALL)
+
+            if code_blocks:
+                # If multiple code blocks, join them with newlines
+                content = '\n\n'.join(code_blocks)
+                logger.info(f"Extracted {len(code_blocks)} code block(s) from markdown")
+            else:
+                logger.info("No code blocks found, using full content")
+
+            logger.info(f"Forcing write_file: {filename} ({len(content)} chars)")
 
             # Execute write_file directly
             arguments = {
                 "path": filename,
-                "content": self.last_specialist_output
+                "content": content
             }
 
             result = self.tool_executor.execute(tool_name, arguments)
