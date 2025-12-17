@@ -64,6 +64,7 @@ class ModelSelector:
             "reasoning": config.SPECIALIZED_MODELS["reasoning"]["model"],
             "search": config.SPECIALIZED_MODELS["search"]["model"],
             "intent_detector": config.SPECIALIZED_MODELS["intent_detector"]["model"],
+            "vision": config.SPECIALIZED_MODELS.get("vision", {}).get("model", "Not configured"),
             "energy_analyst_endpoint": config.ENERGY_ANALYST["endpoint"],
             "energy_analyst_enabled": config.ENERGY_ANALYST["enabled"],
         }
@@ -76,6 +77,7 @@ class ModelSelector:
                 "reasoning_endpoint": config.MODEL_ENDPOINTS.get("reasoning", "local"),
                 "search_endpoint": config.MODEL_ENDPOINTS.get("search", "local"),
                 "intent_detector_endpoint": config.MODEL_ENDPOINTS.get("intent_detector", "local"),
+                "vision_endpoint": config.MODEL_ENDPOINTS.get("vision", "local"),
             })
 
         # Add HF token information if available
@@ -114,6 +116,7 @@ class ModelSelector:
             f"[cyan]Reasoning/Planning:[/cyan] {current['reasoning']}" + (f" [dim]({format_origin(current.get('reasoning_endpoint', 'local'))})[/dim]" if current.get('reasoning_endpoint') else ""),
             f"[cyan]Search/Research:[/cyan] {current['search']}" + (f" [dim]({format_origin(current.get('search_endpoint', 'local'))})[/dim]" if current.get('search_endpoint') else ""),
             f"[cyan]Intent Detection:[/cyan] {current['intent_detector']}" + (f" [dim]({format_origin(current.get('intent_detector_endpoint', 'local'))})[/dim]" if current.get('intent_detector_endpoint') else ""),
+            f"[cyan]Vision/Image Analysis:[/cyan] {current.get('vision', 'Not configured')}" + (f" [dim]({format_origin(current.get('vision_endpoint', 'local'))})[/dim]" if current.get('vision_endpoint') else ""),
             f"[cyan]EnergyAnalyst:[/cyan] {current.get('energy_analyst_endpoint', 'http://localhost:8000')} ({energy_status})",
             f"[cyan]HuggingFace Token:[/cyan] {mask_token(current.get('hf_token'))}",
         ])
@@ -196,6 +199,90 @@ class ModelSelector:
 
         return new_token
 
+    def add_hf_endpoint(self) -> Optional[Dict[str, any]]:
+        """Interactive HuggingFace endpoint addition."""
+        self.ui.console.print(f"\n[bold cyan]Add New HuggingFace Inference Endpoint[/bold cyan]\n")
+
+        # Endpoint key (identifier)
+        self.ui.console.print("[bold]1. Endpoint Key (identifier)[/bold]")
+        self.ui.console.print("[dim]This is a short name to identify this endpoint (e.g., 'llama-70b', 'mistral-large')[/dim]")
+        endpoint_key = input(">>> ").strip()
+
+        if not endpoint_key:
+            self.ui.console.print("[red]Endpoint key is required.[/red]")
+            return None
+
+        # Check if endpoint already exists
+        import config
+        if hasattr(config, 'HF_ENDPOINTS') and endpoint_key in config.HF_ENDPOINTS:
+            self.ui.console.print(f"[yellow]Warning: Endpoint '{endpoint_key}' already exists.[/yellow]")
+            self.ui.console.print("[dim]Overwrite? (y/n):[/dim]")
+            confirm = input(">>> ").strip().lower()
+            if confirm != 'y':
+                self.ui.console.print("[dim]Cancelled.[/dim]")
+                return None
+
+        # Endpoint URL
+        self.ui.console.print("\n[bold]2. Endpoint URL[/bold]")
+        self.ui.console.print("[dim]Full URL to the inference endpoint (must end with /v1/chat/completions)[/dim]")
+        self.ui.console.print("[dim]Example: https://xyz.endpoints.huggingface.cloud/v1/chat/completions[/dim]")
+        url = input(">>> ").strip()
+
+        if not url:
+            self.ui.console.print("[red]URL is required.[/red]")
+            return None
+
+        # Ensure URL is valid
+        if not url.startswith(("http://", "https://")):
+            self.ui.console.print("[yellow]Warning: URL should start with http:// or https://[/yellow]")
+            url = "https://" + url
+
+        # Model name
+        self.ui.console.print("\n[bold]3. Model Name[/bold]")
+        self.ui.console.print("[dim]The model identifier (e.g., 'meta-llama/Llama-3.1-70B-Instruct')[/dim]")
+        model_name = input(">>> ").strip()
+
+        if not model_name:
+            self.ui.console.print("[red]Model name is required.[/red]")
+            return None
+
+        # Timeout (optional)
+        self.ui.console.print("\n[bold]4. Timeout (seconds)[/bold]")
+        self.ui.console.print("[dim]Request timeout in seconds (default: 120, press Enter to use default)[/dim]")
+        timeout_input = input(">>> ").strip()
+
+        timeout = 120  # Default
+        if timeout_input:
+            try:
+                timeout = int(timeout_input)
+                if timeout <= 0:
+                    self.ui.console.print("[yellow]Invalid timeout, using default (120s)[/yellow]")
+                    timeout = 120
+            except ValueError:
+                self.ui.console.print("[yellow]Invalid timeout, using default (120s)[/yellow]")
+                timeout = 120
+
+        # Summary and confirmation
+        self.ui.console.print("\n[bold]Summary:[/bold]")
+        self.ui.console.print(f"  [cyan]Key:[/cyan] {endpoint_key}")
+        self.ui.console.print(f"  [cyan]URL:[/cyan] {url}")
+        self.ui.console.print(f"  [cyan]Model:[/cyan] {model_name}")
+        self.ui.console.print(f"  [cyan]Timeout:[/cyan] {timeout}s")
+        self.ui.console.print("\n[dim]Add this endpoint? (y/n):[/dim]")
+
+        confirm = input(">>> ").strip().lower()
+        if confirm != 'y':
+            self.ui.console.print("[dim]Cancelled.[/dim]")
+            return None
+
+        return {
+            "key": endpoint_key,
+            "url": url,
+            "model_name": model_name,
+            "timeout": timeout,
+            "enabled": True
+        }
+
     def select_energy_analyst_endpoint(self, current_endpoint: str, current_enabled: bool) -> Optional[Dict[str, any]]:
         """Interactive EnergyAnalyst endpoint selection."""
         from rich.table import Table
@@ -268,7 +355,7 @@ class ModelSelector:
                 )
 
             # Update specialized models
-            for role in ["codestral", "reasoning", "search", "intent_detector"]:
+            for role in ["codestral", "reasoning", "search", "intent_detector", "vision"]:
                 if role in updates:
                     # Find the role's config block and update the model line
                     pattern = rf'"{role}":\s*\{{\s*"model":\s*"[^"]*"'
@@ -276,7 +363,7 @@ class ModelSelector:
                     content = re.sub(pattern, replacement, content)
 
             # Update MODEL_ENDPOINTS mapping
-            for role in ["orchestrator", "codestral", "reasoning", "search", "intent_detector"]:
+            for role in ["orchestrator", "codestral", "reasoning", "search", "intent_detector", "vision"]:
                 endpoint_key = f"{role}_endpoint"
                 if endpoint_key in updates:
                     # Update the specific role's endpoint in MODEL_ENDPOINTS dict
@@ -309,6 +396,75 @@ class ModelSelector:
             self.ui.display_error('error', f"Failed to update config: {e}")
             return False
 
+    def add_hf_endpoint_to_config(self, endpoint_data: Dict[str, any]) -> bool:
+        """Add a new HuggingFace endpoint to config.py HF_ENDPOINTS dictionary."""
+        try:
+            content = self.config_path.read_text()
+
+            # Find the HF_ENDPOINTS dictionary
+            hf_endpoints_pattern = r'HF_ENDPOINTS = \{([^}]*(?:\{[^}]*\}[^}]*)*)\}'
+            match = re.search(hf_endpoints_pattern, content, re.DOTALL)
+
+            if not match:
+                self.ui.console.print("[red]Could not find HF_ENDPOINTS in config.py[/red]")
+                return False
+
+            # Build the new endpoint entry
+            new_entry = f'''    "{endpoint_data['key']}": {{
+        "url": "{endpoint_data['url']}",
+        "model_name": "{endpoint_data['model_name']}",
+        "timeout": {endpoint_data['timeout']},
+        "enabled": {endpoint_data['enabled']},
+    }},'''
+
+            # Find the position to insert (before the closing brace of HF_ENDPOINTS)
+            # We want to add it before the comment "# Add more HF endpoints here as needed"
+            # or before the last closing brace if no comment exists
+
+            hf_endpoints_start = match.start()
+            hf_endpoints_end = match.end()
+            hf_endpoints_content = match.group(0)
+
+            # Check if endpoint already exists (overwrite case)
+            endpoint_key = endpoint_data['key']
+            existing_pattern = rf'"{endpoint_key}":\s*\{{[^}}]*\}},'
+            if re.search(existing_pattern, hf_endpoints_content, re.DOTALL):
+                # Replace existing entry
+                new_hf_endpoints = re.sub(
+                    existing_pattern,
+                    f'"{endpoint_key}": {{\n        "url": "{endpoint_data["url"]}",\n        "model_name": "{endpoint_data["model_name"]}",\n        "timeout": {endpoint_data["timeout"]},\n        "enabled": {endpoint_data["enabled"]},\n    }},',
+                    hf_endpoints_content,
+                    flags=re.DOTALL
+                )
+                content = content[:hf_endpoints_start] + new_hf_endpoints + content[hf_endpoints_end:]
+            else:
+                # Add new entry before the comment line or closing brace
+                comment_pattern = r'\s*#\s*Add more HF endpoints here as needed'
+                if re.search(comment_pattern, hf_endpoints_content):
+                    # Insert before comment
+                    new_hf_endpoints = re.sub(
+                        comment_pattern,
+                        f'\n{new_entry}\n    # Add more HF endpoints here as needed',
+                        hf_endpoints_content
+                    )
+                else:
+                    # Insert before closing brace
+                    new_hf_endpoints = hf_endpoints_content.replace(
+                        '\n}',
+                        f'\n{new_entry}\n}}'
+                    )
+
+                content = content[:hf_endpoints_start] + new_hf_endpoints + content[hf_endpoints_end:]
+
+            self.config_path.write_text(content)
+            return True
+
+        except Exception as e:
+            self.ui.display_error('error', f"Failed to add HF endpoint: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
     def run(self):
         """Run the model selector interface."""
         self.ui.console.print("\n[bold cyan]═══ Model Selector ═══[/bold cyan]\n")
@@ -325,6 +481,22 @@ class ModelSelector:
         # Display current state
         self.display_models(available, current)
 
+        # Ask if user wants to add a new HF endpoint first
+        self.ui.console.print("\n[bold]Would you like to add a new HuggingFace inference endpoint?[/bold]")
+        self.ui.console.print("[dim]Enter 'y' to add endpoint, or press Enter to skip:[/dim]")
+        add_endpoint_choice = input(">>> ").strip().lower()
+
+        if add_endpoint_choice == 'y':
+            endpoint_data = self.add_hf_endpoint()
+            if endpoint_data:
+                if self.add_hf_endpoint_to_config(endpoint_data):
+                    self.ui.console.print(f"[green]✓ Added HF endpoint '{endpoint_data['key']}' successfully![/green]")
+                    self.ui.console.print("[yellow]⚠ Restart or run /models again to see it in the list.[/yellow]")
+                    # Refresh available models to include the new endpoint
+                    available = self.get_available_models()
+                else:
+                    self.ui.console.print("[red]✗ Failed to add HF endpoint.[/red]")
+
         # Collect updates
         updates = {}
 
@@ -334,10 +506,11 @@ class ModelSelector:
             ("reasoning", "Reasoning/Planning"),
             ("search", "Search/Research"),
             ("intent_detector", "Intent Detection (fast routing)"),
+            ("vision", "Vision/Image Analysis"),
         ]
 
         for role_key, role_name in roles:
-            selection = self.select_model(role_name, available, current[role_key])
+            selection = self.select_model(role_name, available, current.get(role_key, "Not configured"))
             if selection:
                 updates[role_key] = selection["model"]
                 updates[f"{role_key}_endpoint"] = selection["endpoint"]
