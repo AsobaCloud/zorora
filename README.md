@@ -19,6 +19,7 @@ Orchestrator Model (fast, lightweight)
     ↓ (intelligently routes to...)
     ├─→ Filesystem Tools (read, write, list, run_shell, apply_patch)
     ├─→ Vision Tools (analyze_image - OCR & image understanding)
+    ├─→ Image Generation (generate_image - text-to-image with Flux Schnell)
     ├─→ Codestral (code generation - local or HF endpoint)
     ├─→ Reasoning Model (planning, complex analysis)
     ├─→ Search Model (AI knowledge retrieval)
@@ -43,6 +44,7 @@ Final Response (synthesized from tools/models)
 - ✅ **Hybrid deployment** - Local + remote HuggingFace endpoints
 - ✅ **Intent detection** - Fast classifier prevents orchestrator confusion
 - ✅ **Vision/OCR** - Image analysis with VL models (Qwen3-VL)
+- ✅ **Image generation** - Text-to-image with Flux Schnell (16:9, 1344x768)
 - ✅ **Filesystem tools** - Read, write, list, shell commands, patches
 - ✅ **Code generation** - Dedicated models for coding tasks
 - ✅ **Context summarization** - Intelligent conversation compression for VRAM
@@ -168,6 +170,13 @@ The orchestrator automatically routes queries to the appropriate tools!
   - Chart/graph understanding
   - Uses configured vision model (e.g., Qwen3-VL-8B)
 
+- `generate_image(prompt, filename)` - Text-to-image generation
+  - Uses Flux Schnell model via HuggingFace endpoint
+  - 16:9 aspect ratio (1344x768 resolution)
+  - Optimized parameters: guidance_scale=0.0, 4 inference steps
+  - Auto-generates timestamped filename if not provided
+  - Returns path to generated PNG file
+
 ### Specialist Models
 - `use_codestral(code_context)` - Code generation and refactoring
   - Supports local or HF endpoints
@@ -239,34 +248,40 @@ The orchestrator automatically routes queries to the appropriate tools!
 ```
 *Routes to:* `analyze_image` → VL model extracts text/data → Returns markdown
 
+### Image Generation
+```
+[2] ⚙ > generate an image of a sunset over mountains with vibrant colors
+```
+*Routes to:* `generate_image` → Flux Schnell creates 1344x768 image → Saves as `generated_YYYYMMDD_HHMMSS.png`
+
 ### Code Generation with Save
 ```
-[2] ⚙ > create a python script that generates interactive charts
-[3] ⚙ > save to chart.py
+[3] ⚙ > create a python script that generates interactive charts
+[4] ⚙ > save to chart.py
 ```
 *Routes to:* `use_codestral` → Generates code with explanation → Saves only code to file
 
 ### General Queries
 ```
-[4] ⚙ > What's the latest news about Python 3.13?
+[5] ⚙ > What's the latest news about Python 3.13?
 ```
 *Routes to:* `web_search` → Returns current news
 
 ### Energy Policy
 ```
-[5] ⚙ > What are FERC Order 2222 requirements for battery storage?
+[6] ⚙ > What are FERC Order 2222 requirements for battery storage?
 ```
 *Routes to:* `use_energy_analyst` → Returns policy analysis with sources
 
 ### Filesystem Operations
 ```
-[6] ⚙ > List all Python files in src/
+[7] ⚙ > List all Python files in src/
 ```
 *Routes to:* `list_files` → Shows directory contents
 
 ### Multi-Tool Queries
 ```
-[7] ⚙ > What's the best way to monetize a solar farm in Vermont?
+[8] ⚙ > What's the best way to monetize a solar farm in Vermont?
 ```
 *Routes to:* `use_energy_analyst` → policy foundation
 *Then:* `web_search` (multiple) → current Vermont-specific info

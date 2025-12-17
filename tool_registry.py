@@ -4,6 +4,8 @@ from typing import Dict, Callable, List, Dict as DictType, Any, Optional
 from pathlib import Path
 import subprocess
 import logging
+import requests
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +17,8 @@ SPECIALIST_TOOLS = [
     "use_reasoning_model",
     "use_search_model",
     "use_intent_detector",  # Internal routing tool (not shown to user)
-    "analyze_image"
+    "analyze_image",
+    "generate_image"
 ]
 
 
@@ -245,6 +248,107 @@ def analyze_image(path: str, task: str = "Convert this image to markdown format,
     except Exception as e:
         logger.error(f"Image analysis error: {e}")
         return f"Error: Failed to analyze image: {str(e)}"
+
+
+def generate_image(prompt: str, filename: str = "") -> str:
+    """
+    Generate an image from a text prompt using Flux Schnell model.
+
+    Args:
+        prompt: Text description of the image to generate
+        filename: Optional filename to save image (default: auto-generated with timestamp)
+
+    Returns:
+        Path to the generated image file
+    """
+    if not prompt or not isinstance(prompt, str):
+        return "Error: prompt must be a non-empty string"
+
+    if len(prompt) > 1000:
+        return "Error: prompt too long (max 1000 characters)"
+
+    try:
+        import config
+
+        logger.info(f"Generating image with Flux Schnell: {prompt[:100]}...")
+
+        # Get image generation config
+        model_config = config.SPECIALIZED_MODELS.get("image_generation")
+        if not model_config:
+            return "Error: Image generation not configured. Use /models to set up the image_generation endpoint."
+
+        # Determine endpoint
+        endpoint_key = config.MODEL_ENDPOINTS.get("image_generation", "local")
+        if endpoint_key == "local":
+            return "Error: Image generation requires a HuggingFace endpoint. Use /models to configure it."
+
+        # Get HF endpoint config
+        hf_config = config.HF_ENDPOINTS.get(endpoint_key)
+        if not hf_config or not hf_config.get("enabled", True):
+            return f"Error: HuggingFace endpoint '{endpoint_key}' not found or disabled."
+
+        # Get HF token
+        hf_token = getattr(config, 'HF_TOKEN', None)
+        if not hf_token:
+            return "Error: HF_TOKEN not configured. Use /models to set your HuggingFace token."
+
+        # Prepare request
+        url = hf_config["url"]
+        headers = {
+            "Authorization": f"Bearer {hf_token}",
+            "Content-Type": "application/json"
+        }
+
+        # Flux Schnell optimized parameters (16:9 aspect ratio, 1344x768)
+        payload = {
+            "inputs": prompt,
+            "parameters": {
+                "guidance_scale": 0.0,  # Flux Schnell optimized
+                "num_inference_steps": 4,  # Flux Schnell optimized for 4 steps
+                "width": 1344,  # 16:9 aspect ratio
+                "height": 768
+            }
+        }
+
+        timeout = hf_config.get("timeout", 120)
+
+        logger.info(f"Sending request to {url}")
+        print(f"\n🎨 Generating image (1344x768, ~{timeout}s)...\n", flush=True)
+
+        # Make request
+        response = requests.post(url, headers=headers, json=payload, timeout=timeout)
+
+        if response.status_code != 200:
+            error_msg = f"HTTP {response.status_code}"
+            try:
+                error_detail = response.json()
+                error_msg += f": {error_detail}"
+            except:
+                error_msg += f": {response.text[:200]}"
+            return f"Error: Image generation failed - {error_msg}"
+
+        # Save image
+        if not filename:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"generated_{timestamp}.png"
+
+        # Ensure .png extension
+        if not filename.endswith(('.png', '.jpg', '.jpeg')):
+            filename += '.png'
+
+        filepath = Path(filename)
+        filepath.write_bytes(response.content)
+
+        file_size = len(response.content) / 1024  # KB
+        logger.info(f"Image saved to {filepath} ({file_size:.1f} KB)")
+
+        return f"✅ Image generated successfully!\nSaved to: {filepath}\nSize: {file_size:.1f} KB\nResolution: 1344x768 (16:9)"
+
+    except requests.Timeout:
+        return f"Error: Image generation timed out after {timeout}s. Flux Schnell is usually fast - check endpoint status."
+    except Exception as e:
+        logger.error(f"Image generation error: {e}")
+        return f"Error: Failed to generate image: {str(e)}"
 
 
 def run_shell(command: str) -> str:
@@ -529,7 +633,8 @@ Available tools:
 - write_file: User wants to save/write/create a file (keywords: "write to", "save to", "create file", ".py file", ".md file")
 - read_file: User wants to ONLY read/view a file WITHOUT analysis (keywords: "read", "show me", "view file", "content of") - BUT NOT if they also want analysis
 - list_files: User wants to list directory contents (keywords: "list files", "show files", "ls", "what files", "directory contents")
-- analyze_image: User wants to analyze/OCR/convert an image (keywords: "analyze image", "convert image", "OCR", "extract text from image", ".png", ".jpg", "image to markdown", "what's in this image")
+- analyze_image: User wants to analyze/OCR/convert an EXISTING image (keywords: "analyze image", "convert image", "OCR", "extract text from image", ".png", ".jpg", "image to markdown", "what's in this image")
+- generate_image: User wants to CREATE/GENERATE a new image from text (keywords: "generate image", "create image", "make an image", "draw", "visualize", "illustration of", "picture of")
 - use_codestral: User wants to generate/modify code (keywords: "write function", "create script", "generate code")
 - use_reasoning_model: User wants analysis/planning/thinking (keywords: "analyze", "deep dive", "implications", "think deeply", "examine", "investigate") - PRIORITIZE this over read_file if analysis keywords present
 - web_search: User wants current web information (keywords: "search", "latest", "current news", "what's happening")
@@ -539,7 +644,8 @@ Available tools:
 
 CRITICAL PRIORITY RULES:
 1. If user mentions BOTH a file AND analysis keywords ("analyze", "deep dive", "implications", "think about"), choose use_reasoning_model NOT read_file. The reasoning model can request file reads if needed.
-2. If user mentions an image file (.png, .jpg, etc.) or image analysis/OCR keywords, ALWAYS choose analyze_image.
+2. If user mentions an EXISTING image file (.png, .jpg, etc.) or image analysis/OCR keywords, choose analyze_image.
+3. If user wants to CREATE/GENERATE a new image from text description, choose generate_image.
 
 Output format (ONLY this, nothing else):
 {"tool": "tool_name", "confidence": "high|medium|low", "reasoning": "one sentence why"}
@@ -568,6 +674,9 @@ Output: {"tool": "analyze_image", "confidence": "high", "reasoning": "image file
 
 Input: "what's in this screenshot.jpg?"
 Output: {"tool": "analyze_image", "confidence": "high", "reasoning": "image analysis request"}
+
+Input: "generate an image of a sunset over mountains"
+Output: {"tool": "generate_image", "confidence": "high", "reasoning": "text-to-image generation request"}
 
 Input: "create a python script for clustering"
 Output: {"tool": "use_codestral", "confidence": "high", "reasoning": "code generation request"}
@@ -922,6 +1031,7 @@ TOOL_FUNCTIONS: Dict[str, Callable[..., str]] = {
     "write_file": write_file,
     "list_files": list_files,
     "analyze_image": analyze_image,
+    "generate_image": generate_image,
     "run_shell": run_shell,
     "apply_patch": apply_patch,
     "use_codestral": use_codestral,
@@ -987,6 +1097,27 @@ TOOLS_DEFINITION: List[DictType[str, Any]] = [
                     }
                 },
                 "required": ["path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_image",
+            "description": "Generate an image from a text prompt using Flux Schnell model. Creates high-quality 16:9 images (1344x768) from descriptions. Use for creating illustrations, visualizations, or any image content from text.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "Text description of the image to generate. Be specific and detailed for best results."
+                    },
+                    "filename": {
+                        "type": "string",
+                        "description": "Optional filename to save the image (default: auto-generated with timestamp). Example: 'sunset.png'"
+                    }
+                },
+                "required": ["prompt"]
             }
         }
     },

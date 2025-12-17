@@ -503,7 +503,7 @@ class TurnProcessor:
                 # If high confidence for forceable tools, execute directly
                 # Include file operations AND specialist tools to prevent orchestrator confusion
                 forceable_tools = ["write_file", "read_file", "list_files", "analyze_image"]
-                forceable_specialists = ["use_codestral", "use_reasoning_model", "use_search_model", "use_energy_analyst", "web_search"]
+                forceable_specialists = ["use_codestral", "use_reasoning_model", "use_search_model", "use_energy_analyst", "web_search", "generate_image"]
 
                 if detected_tool in (forceable_tools + forceable_specialists) and confidence == "high":
                     logger.info(f"Forcing tool call: {detected_tool}")

@@ -65,6 +65,7 @@ class ModelSelector:
             "search": config.SPECIALIZED_MODELS["search"]["model"],
             "intent_detector": config.SPECIALIZED_MODELS["intent_detector"]["model"],
             "vision": config.SPECIALIZED_MODELS.get("vision", {}).get("model", "Not configured"),
+            "image_generation": config.SPECIALIZED_MODELS.get("image_generation", {}).get("model", "Not configured"),
             "energy_analyst_endpoint": config.ENERGY_ANALYST["endpoint"],
             "energy_analyst_enabled": config.ENERGY_ANALYST["enabled"],
         }
@@ -78,6 +79,7 @@ class ModelSelector:
                 "search_endpoint": config.MODEL_ENDPOINTS.get("search", "local"),
                 "intent_detector_endpoint": config.MODEL_ENDPOINTS.get("intent_detector", "local"),
                 "vision_endpoint": config.MODEL_ENDPOINTS.get("vision", "local"),
+                "image_generation_endpoint": config.MODEL_ENDPOINTS.get("image_generation", "local"),
             })
 
         # Add HF token information if available
@@ -117,6 +119,7 @@ class ModelSelector:
             f"[cyan]Search/Research:[/cyan] {current['search']}" + (f" [dim]({format_origin(current.get('search_endpoint', 'local'))})[/dim]" if current.get('search_endpoint') else ""),
             f"[cyan]Intent Detection:[/cyan] {current['intent_detector']}" + (f" [dim]({format_origin(current.get('intent_detector_endpoint', 'local'))})[/dim]" if current.get('intent_detector_endpoint') else ""),
             f"[cyan]Vision/Image Analysis:[/cyan] {current.get('vision', 'Not configured')}" + (f" [dim]({format_origin(current.get('vision_endpoint', 'local'))})[/dim]" if current.get('vision_endpoint') else ""),
+            f"[cyan]Image Generation:[/cyan] {current.get('image_generation', 'Not configured')}" + (f" [dim]({format_origin(current.get('image_generation_endpoint', 'local'))})[/dim]" if current.get('image_generation_endpoint') else ""),
             f"[cyan]EnergyAnalyst:[/cyan] {current.get('energy_analyst_endpoint', 'http://localhost:8000')} ({energy_status})",
             f"[cyan]HuggingFace Token:[/cyan] {mask_token(current.get('hf_token'))}",
         ])
@@ -355,7 +358,7 @@ class ModelSelector:
                 )
 
             # Update specialized models
-            for role in ["codestral", "reasoning", "search", "intent_detector", "vision"]:
+            for role in ["codestral", "reasoning", "search", "intent_detector", "vision", "image_generation"]:
                 if role in updates:
                     # Find the role's config block and update the model line
                     pattern = rf'"{role}":\s*\{{\s*"model":\s*"[^"]*"'
@@ -363,7 +366,7 @@ class ModelSelector:
                     content = re.sub(pattern, replacement, content)
 
             # Update MODEL_ENDPOINTS mapping
-            for role in ["orchestrator", "codestral", "reasoning", "search", "intent_detector", "vision"]:
+            for role in ["orchestrator", "codestral", "reasoning", "search", "intent_detector", "vision", "image_generation"]:
                 endpoint_key = f"{role}_endpoint"
                 if endpoint_key in updates:
                     # Update the specific role's endpoint in MODEL_ENDPOINTS dict
@@ -399,68 +402,71 @@ class ModelSelector:
     def add_hf_endpoint_to_config(self, endpoint_data: Dict[str, any]) -> bool:
         """Add a new HuggingFace endpoint to config.py HF_ENDPOINTS dictionary."""
         try:
-            content = self.config_path.read_text()
+            lines = self.config_path.read_text().splitlines(keepends=True)
 
-            # Find the HF_ENDPOINTS dictionary
-            hf_endpoints_pattern = r'HF_ENDPOINTS = \{([^}]*(?:\{[^}]*\}[^}]*)*)\}'
-            match = re.search(hf_endpoints_pattern, content, re.DOTALL)
+            # Build the new endpoint entry
+            new_endpoint_lines = [
+                f'    "{endpoint_data["key"]}": {{\n',
+                f'        "url": "{endpoint_data["url"]}",\n',
+                f'        "model_name": "{endpoint_data["model_name"]}",\n',
+                f'        "timeout": {endpoint_data["timeout"]},\n',
+                f'        "enabled": {str(endpoint_data["enabled"])},\n',
+                f'    }},\n',
+            ]
 
-            if not match:
+            # Find the insertion point (before closing brace of HF_ENDPOINTS or before comment)
+            insert_idx = None
+            endpoint_key = endpoint_data['key']
+            endpoint_start_idx = None
+            endpoint_end_idx = None
+            in_hf_endpoints = False
+
+            for i, line in enumerate(lines):
+                # Check if we're entering HF_ENDPOINTS
+                if 'HF_ENDPOINTS = {' in line:
+                    in_hf_endpoints = True
+                    continue
+
+                if in_hf_endpoints:
+                    # Check if this endpoint already exists
+                    if f'"{endpoint_key}"' in line and endpoint_start_idx is None:
+                        endpoint_start_idx = i
+
+                    # Find the end of existing endpoint entry (if replacing)
+                    if endpoint_start_idx is not None and endpoint_end_idx is None:
+                        if '},' in line:
+                            endpoint_end_idx = i + 1
+                            break
+
+                    # Find insertion point (before comment or closing brace)
+                    if '# Add more HF endpoints here as needed' in line:
+                        insert_idx = i
+                        break
+                    elif line.strip() == '}':
+                        insert_idx = i
+                        break
+
+            if not in_hf_endpoints:
                 self.ui.console.print("[red]Could not find HF_ENDPOINTS in config.py[/red]")
                 return False
 
-            # Build the new endpoint entry
-            new_entry = f'''    "{endpoint_data['key']}": {{
-        "url": "{endpoint_data['url']}",
-        "model_name": "{endpoint_data['model_name']}",
-        "timeout": {endpoint_data['timeout']},
-        "enabled": {endpoint_data['enabled']},
-    }},'''
-
-            # Find the position to insert (before the closing brace of HF_ENDPOINTS)
-            # We want to add it before the comment "# Add more HF endpoints here as needed"
-            # or before the last closing brace if no comment exists
-
-            hf_endpoints_start = match.start()
-            hf_endpoints_end = match.end()
-            hf_endpoints_content = match.group(0)
-
-            # Check if endpoint already exists (overwrite case)
-            endpoint_key = endpoint_data['key']
-            existing_pattern = rf'"{endpoint_key}":\s*\{{[^}}]*\}},'
-            if re.search(existing_pattern, hf_endpoints_content, re.DOTALL):
-                # Replace existing entry
-                new_hf_endpoints = re.sub(
-                    existing_pattern,
-                    f'"{endpoint_key}": {{\n        "url": "{endpoint_data["url"]}",\n        "model_name": "{endpoint_data["model_name"]}",\n        "timeout": {endpoint_data["timeout"]},\n        "enabled": {endpoint_data["enabled"]},\n    }},',
-                    hf_endpoints_content,
-                    flags=re.DOTALL
-                )
-                content = content[:hf_endpoints_start] + new_hf_endpoints + content[hf_endpoints_end:]
+            # Replace existing or insert new
+            if endpoint_start_idx is not None and endpoint_end_idx is not None:
+                # Replace existing endpoint
+                lines[endpoint_start_idx:endpoint_end_idx] = new_endpoint_lines
+            elif insert_idx is not None:
+                # Insert new endpoint
+                lines[insert_idx:insert_idx] = new_endpoint_lines
             else:
-                # Add new entry before the comment line or closing brace
-                comment_pattern = r'\s*#\s*Add more HF endpoints here as needed'
-                if re.search(comment_pattern, hf_endpoints_content):
-                    # Insert before comment
-                    new_hf_endpoints = re.sub(
-                        comment_pattern,
-                        f'\n{new_entry}\n    # Add more HF endpoints here as needed',
-                        hf_endpoints_content
-                    )
-                else:
-                    # Insert before closing brace
-                    new_hf_endpoints = hf_endpoints_content.replace(
-                        '\n}',
-                        f'\n{new_entry}\n}}'
-                    )
+                self.ui.console.print("[red]Could not find insertion point in HF_ENDPOINTS[/red]")
+                return False
 
-                content = content[:hf_endpoints_start] + new_hf_endpoints + content[hf_endpoints_end:]
-
-            self.config_path.write_text(content)
+            # Write back
+            self.config_path.write_text(''.join(lines))
             return True
 
         except Exception as e:
-            self.ui.display_error('error', f"Failed to add HF endpoint: {e}")
+            self.ui.console.print(f"[red]Failed to add HF endpoint: {e}[/red]")
             import traceback
             traceback.print_exc()
             return False
@@ -507,6 +513,7 @@ class ModelSelector:
             ("search", "Search/Research"),
             ("intent_detector", "Intent Detection (fast routing)"),
             ("vision", "Vision/Image Analysis"),
+            ("image_generation", "Image Generation (text-to-image)"),
         ]
 
         for role_key, role_name in roles:
