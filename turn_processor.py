@@ -46,7 +46,41 @@ class TurnProcessor:
         Returns:
             Dict with 'tool' and 'arguments' if found, None otherwise
         """
-        # Format 1: function_call: tool_name("arg") or function_call: tool_name()
+        # Format 1: XML-style tool call: <tool_call> {"name": "...", "arguments": {...}} </tool_call>
+        xml_pattern = r'<tool_call>\s*(\{.+?\})\s*</tool_call>'
+        match = re.search(xml_pattern, text, re.DOTALL)
+        if match:
+            try:
+                json_str = match.group(1)
+                # Handle nested braces by finding the matching closing brace
+                brace_count = 0
+                end_pos = 0
+                for i, char in enumerate(json_str):
+                    if char == '{':
+                        brace_count += 1
+                    elif char == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            end_pos = i + 1
+                            break
+
+                if end_pos > 0:
+                    json_str = json_str[:end_pos]
+
+                data = json.loads(json_str)
+                tool_name = data.get("name")
+                arguments = data.get("arguments", {})
+                if tool_name:
+                    # Convert "prompt" to appropriate parameter name
+                    if "prompt" in arguments and tool_name == "use_reasoning_model":
+                        arguments["task"] = arguments.pop("prompt")
+                    logger.info(f"Extracted XML tool call: {tool_name}")
+                    return {"tool": tool_name, "arguments": arguments}
+            except (json.JSONDecodeError, IndexError) as e:
+                logger.warning(f"Failed to parse XML tool call: {e}")
+                pass
+
+        # Format 2: function_call: tool_name("arg") or function_call: tool_name()
         # First try with arguments
         func_call_pattern = r'function_call:\s*(\w+)\s*\("([^"]+)"\)'
         match = re.search(func_call_pattern, text)
@@ -64,7 +98,7 @@ class TurnProcessor:
             tool_name = match.group(1)
             return {"tool": tool_name, "arguments": {}}
 
-        # Format 2: JSON object with tool/action/name
+        # Format 3: JSON object with tool/action/name
         json_pattern = r'\{[^{}]*"(?:tool|action|name)"[^{}]*\}'
         matches = re.findall(json_pattern, text, re.DOTALL)
 
@@ -131,6 +165,156 @@ class TurnProcessor:
             arguments["content"] = self.last_specialist_output
 
         return arguments
+
+    def _should_use_intent_detection(self, user_input: str) -> bool:
+        """
+        Determine if we should use intent detection for this input.
+
+        Args:
+            user_input: The user's request
+
+        Returns:
+            True if intent detection should be used
+        """
+        # Always use intent detection if we have previous specialist output (user might reference it)
+        if self.last_specialist_output:
+            return True
+
+        # Check for file operation keywords
+        file_keywords = [
+            r'\bwrite\b.*\bfile\b',
+            r'\bsave\b.*\bto\b',
+            r'\bcreate\b.*\bfile\b',
+            r'\b\.py\b',
+            r'\b\.md\b',
+            r'\b\.txt\b',
+            r'\b\.json\b',
+            r'\bwrite\b.*\bto\b',
+            r'\bput\b.*\bin\b',
+            r'\bstore\b.*\bin\b',
+        ]
+
+        for pattern in file_keywords:
+            if re.search(pattern, user_input, re.IGNORECASE):
+                logger.info(f"File operation keyword detected: {pattern}")
+                return True
+
+        return False
+
+    def _execute_forced_tool_call(self, tool_name: str, user_input: str) -> Optional[str]:
+        """
+        Execute a forced tool call based on intent detection.
+
+        Args:
+            tool_name: The tool to execute
+            user_input: The user's input
+
+        Returns:
+            Tool result, or None if unable to execute
+        """
+        logger.info(f"Forcing tool call: {tool_name}")
+
+        if tool_name == "write_file":
+            # Extract filename from user input
+            # Patterns: "write to X", "save to X", "create X"
+            filename_patterns = [
+                r'(?:write|save|create|put|store).*?(?:to|as|in)\s+([^\s]+\.(?:py|md|txt|json|yaml|yml|sh|js|ts|html|css|ini|conf|cfg))',
+                r'(?:file|the)?\s+([^\s]+\.(?:py|md|txt|json|yaml|yml|sh|js|ts|html|css|ini|conf|cfg))',
+            ]
+
+            filename = None
+            for pattern in filename_patterns:
+                match = re.search(pattern, user_input, re.IGNORECASE)
+                if match:
+                    filename = match.group(1)
+                    break
+
+            if not filename:
+                logger.warning("Could not extract filename from user input")
+                return None
+
+            # Use last specialist output as content
+            if not self.last_specialist_output:
+                logger.warning("No specialist output available for write_file")
+                return None
+
+            logger.info(f"Forcing write_file: {filename} ({len(self.last_specialist_output)} chars)")
+
+            # Execute write_file directly
+            arguments = {
+                "path": filename,
+                "content": self.last_specialist_output
+            }
+
+            result = self.tool_executor.execute(tool_name, arguments)
+            return result
+
+        elif tool_name == "read_file":
+            # Extract filename from user input
+            # Patterns: "read X", "show X", "view X", "content of X"
+            filename_patterns = [
+                r'(?:read|show|view|display|see|open|cat).*?(?:file|the)?\s+([^\s]+\.(?:py|md|txt|json|yaml|yml|sh|js|ts|html|css|ini|conf|cfg))',
+                r'(?:content|contents)\s+(?:of|from)\s+(?:file|the)?\s*([^\s]+\.(?:py|md|txt|json|yaml|yml|sh|js|ts|html|css|ini|conf|cfg))',
+                r'(?:file|the)\s+([^\s]+\.(?:py|md|txt|json|yaml|yml|sh|js|ts|html|css|ini|conf|cfg))',
+            ]
+
+            filename = None
+            for pattern in filename_patterns:
+                match = re.search(pattern, user_input, re.IGNORECASE)
+                if match:
+                    filename = match.group(1)
+                    break
+
+            if not filename:
+                logger.warning("Could not extract filename from user input for read_file")
+                return None
+
+            logger.info(f"Forcing read_file: {filename}")
+
+            # Execute read_file directly
+            arguments = {
+                "path": filename
+            }
+
+            result = self.tool_executor.execute(tool_name, arguments)
+            return result
+
+        elif tool_name == "list_files":
+            # Extract directory path from user input
+            # Patterns: "list files in X", "show files in X", "ls X"
+            dir_patterns = [
+                r'(?:list|show|display|see)\s+(?:files|contents|directory)\s+(?:in|of|from)\s+([^\s]+)',
+                r'(?:ls|dir)\s+([^\s]+)',
+                r'(?:what.*?in|files.*?in)\s+([^\s]+)',
+            ]
+
+            directory = None
+            for pattern in dir_patterns:
+                match = re.search(pattern, user_input, re.IGNORECASE)
+                if match:
+                    directory = match.group(1)
+                    break
+
+            # If no directory specified, use current directory
+            if not directory:
+                # Check if user just wants to list current directory
+                if re.search(r'\b(?:list|show)\s+(?:files|directory|contents)\b', user_input, re.IGNORECASE):
+                    directory = "."
+                else:
+                    logger.warning("Could not extract directory from user input for list_files")
+                    return None
+
+            logger.info(f"Forcing list_files: {directory}")
+
+            # Execute list_files directly
+            arguments = {
+                "path": directory
+            }
+
+            result = self.tool_executor.execute(tool_name, arguments)
+            return result
+
+        return None
 
     def _inject_context(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -209,10 +393,55 @@ class TurnProcessor:
         # Clear recent tool outputs for this turn
         self.recent_tool_outputs = []
 
+        # Start timing
+        total_start_time = time.time()
+
+        # Intent detection: Check if we should use fast intent detector
+        if self._should_use_intent_detection(user_input):
+            logger.info("Using intent detection for this request")
+
+            # Build recent context summary
+            recent_context = ""
+            if self.last_specialist_output:
+                # Include summary of last specialist output
+                summary = self.last_specialist_output[:200] + "..." if len(self.last_specialist_output) > 200 else self.last_specialist_output
+                recent_context = f"Previous specialist output: {summary}"
+
+            # Call intent detector
+            try:
+                intent_result = self.tool_executor.execute("use_intent_detector", {
+                    "user_input": user_input,
+                    "recent_context": recent_context
+                })
+
+                # Parse JSON response
+                intent_data = json.loads(intent_result)
+                detected_tool = intent_data.get("tool")
+                confidence = intent_data.get("confidence")
+                reasoning = intent_data.get("reasoning", "")
+
+                logger.info(f"Intent detected: {detected_tool} (confidence: {confidence}) - {reasoning}")
+
+                # If high confidence file operation, execute directly
+                file_operations = ["write_file", "read_file", "list_files"]
+                if detected_tool in file_operations and confidence == "high":
+                    forced_result = self._execute_forced_tool_call(detected_tool, user_input)
+                    logger.info(f"Forced execution result: {forced_result[:200] if forced_result else 'None'}...")
+                    if forced_result:
+                        # Add forced tool call to conversation for context
+                        self.conversation.add_assistant_message(content=f"{forced_result}")
+                        logger.info(f"Returning forced result early ({len(forced_result)} chars)")
+                        return forced_result, time.time() - total_start_time
+                    else:
+                        logger.warning(f"Forced execution returned None, falling back to orchestrator")
+
+            except Exception as e:
+                logger.warning(f"Intent detection failed, falling back to normal flow: {e}")
+                # Fall through to normal orchestrator flow
+
         max_iterations = 10  # Prevent infinite loops
         iteration = 0
         tools_provided = tools_available
-        total_start_time = time.time()
 
         # Track recent tool calls for loop detection
         recent_tool_calls = []  # List of (function_name, arguments_json)

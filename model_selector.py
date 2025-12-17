@@ -29,6 +29,7 @@ class ModelSelector:
             "codestral": config.SPECIALIZED_MODELS["codestral"]["model"],
             "reasoning": config.SPECIALIZED_MODELS["reasoning"]["model"],
             "search": config.SPECIALIZED_MODELS["search"]["model"],
+            "intent_detector": config.SPECIALIZED_MODELS["intent_detector"]["model"],
             "energy_analyst_endpoint": config.ENERGY_ANALYST["endpoint"],
             "energy_analyst_enabled": config.ENERGY_ANALYST["enabled"],
         }
@@ -45,6 +46,7 @@ class ModelSelector:
             f"[cyan]Code Generation:[/cyan] {current['codestral']}",
             f"[cyan]Reasoning/Planning:[/cyan] {current['reasoning']}",
             f"[cyan]Search/Research:[/cyan] {current['search']}",
+            f"[cyan]Intent Detection:[/cyan] {current['intent_detector']}",
             f"[cyan]EnergyAnalyst:[/cyan] {current.get('energy_analyst_endpoint', 'http://localhost:8000')} ({energy_status})",
         ])
         self.ui.console.print(Panel(config_text, title="Current Configuration", border_style="blue"))
@@ -153,7 +155,7 @@ class ModelSelector:
                 )
 
             # Update specialized models
-            for role in ["codestral", "reasoning", "search"]:
+            for role in ["codestral", "reasoning", "search", "intent_detector"]:
                 if role in updates:
                     # Find the role's config block and update the model line
                     pattern = rf'"{role}":\s*\{{\s*"model":\s*"[^"]*"'
@@ -203,6 +205,7 @@ class ModelSelector:
             ("codestral", "Code Generation"),
             ("reasoning", "Reasoning/Planning"),
             ("search", "Search/Research"),
+            ("intent_detector", "Intent Detection (fast routing)"),
         ]
 
         for role_key, role_name in roles:

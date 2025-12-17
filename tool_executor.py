@@ -31,6 +31,9 @@ class ToolExecutor:
         if tool_func is None:
             return f"Error: Unknown tool '{tool_name}'"
 
+        # Fix common parameter name mistakes from orchestrator
+        arguments = self._fix_parameter_names(tool_name, arguments)
+
         try:
             result = tool_func(**arguments)
             return self._truncate_result(result, tool_name)
@@ -38,6 +41,41 @@ class ToolExecutor:
             return f"Error: Invalid arguments for tool '{tool_name}': {e}"
         except Exception as e:
             return f"Error executing tool '{tool_name}': {e}"
+
+    def _fix_parameter_names(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Fix common parameter name mistakes made by orchestrator models.
+
+        Args:
+            tool_name: Name of the tool being called
+            arguments: Original arguments dict
+
+        Returns:
+            Fixed arguments dict with correct parameter names
+        """
+        # Common parameter name mappings
+        fixes = {
+            "read_file": {"task": "path", "file": "path", "filename": "path"},
+            "write_file": {"task": "path", "file": "path", "filename": "path"},
+            "list_files": {"task": "path", "dir": "path", "directory": "path"},
+            "use_codestral": {"task": "code_context", "prompt": "code_context"},
+            "use_reasoning_model": {"prompt": "task", "question": "task"},
+            "use_search_model": {"task": "query", "question": "query", "search": "query"},
+        }
+
+        if tool_name not in fixes:
+            return arguments
+
+        fixed = arguments.copy()
+        mappings = fixes[tool_name]
+
+        for wrong_name, correct_name in mappings.items():
+            if wrong_name in fixed and correct_name not in fixed:
+                fixed[correct_name] = fixed.pop(wrong_name)
+                import logging
+                logging.getLogger(__name__).info(f"Fixed parameter name: {wrong_name} → {correct_name} for {tool_name}")
+
+        return fixed
 
     def _truncate_result(self, result: str, tool_name: str) -> str:
         """

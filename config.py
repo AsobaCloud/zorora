@@ -4,7 +4,7 @@ from pathlib import Path
 
 # LM Studio API Configuration (OpenAI-compatible)
 API_URL = "http://localhost:1234/v1/chat/completions"
-MODEL = "qwen/qwen3-4b-2507"  # Regular model - fast and decisive
+MODEL = "qwen/qwen3-vl-8b"  # Regular model - fast and decisive
 MAX_TOKENS = 2048  # Increased from 1000 for longer responses
 TIMEOUT = 60  # Increased from 30s for complex tool operations
 TEMPERATURE = 0.2
@@ -12,7 +12,7 @@ TEMPERATURE = 0.2
 # Specialized Model Configuration
 SPECIALIZED_MODELS = {
     "codestral": {
-        "model": "essentialai/rnj-1",
+        "model": "qwen/qwen3-vl-8b",
         "max_tokens": 4096,
         "temperature": 0.3,
         "timeout": 90,
@@ -28,6 +28,12 @@ SPECIALIZED_MODELS = {
         "max_tokens": 2048,
         "temperature": 0.5,
         "timeout": 60,
+    },
+    "intent_detector": {
+        "model": "qwen/qwen3-4b-2507",  # Use same model as orchestrator (non-thinking)
+        "max_tokens": 256,  # Only need short JSON output
+        "temperature": 0.1,  # Low temp for consistent structured output
+        "timeout": 30,  # Fast response needed
     }
 }
 
