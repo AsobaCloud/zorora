@@ -176,11 +176,15 @@ class TurnProcessor:
         Returns:
             True if intent detection should be used
         """
-        # Always use intent detection if we have previous specialist output (user might reference it)
-        if self.last_specialist_output:
-            return True
+        # Always use intent detection - it's fast (small model) and helps prevent
+        # orchestrator from making bad tool choices. The intent detector is specifically
+        # trained to route requests to the right tool.
 
-        # Check for file operation keywords
+        # Log if we have previous specialist output (useful for debugging)
+        if self.last_specialist_output:
+            logger.info("Previous specialist output exists - using intent detection")
+
+        # Check for file operation keywords (useful for debugging)
         file_keywords = [
             r'\bwrite\b.*\bfile\b',
             r'\bsave\b.*\bto\b',
@@ -197,9 +201,9 @@ class TurnProcessor:
         for pattern in file_keywords:
             if re.search(pattern, user_input, re.IGNORECASE):
                 logger.info(f"File operation keyword detected: {pattern}")
-                return True
+                break  # Just for logging, we return True anyway
 
-        return False
+        return True  # Always use intent detection
 
     def _execute_forced_tool_call(self, tool_name: str, user_input: str) -> Optional[str]:
         """
@@ -492,6 +496,11 @@ class TurnProcessor:
                     forced_result = self._execute_forced_tool_call(detected_tool, user_input)
                     logger.info(f"Forced execution result: {forced_result[:200] if forced_result else 'None'}...")
                     if forced_result:
+                        # Update last_specialist_output if this was a specialist tool
+                        if detected_tool in forceable_specialists:
+                            self.last_specialist_output = forced_result
+                            logger.info(f"Updated last_specialist_output ({len(forced_result)} chars)")
+
                         # Add forced tool call to conversation for context
                         self.conversation.add_assistant_message(content=f"{forced_result}")
                         logger.info(f"Returning forced result early ({len(forced_result)} chars)")
