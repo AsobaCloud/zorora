@@ -314,6 +314,66 @@ class TurnProcessor:
             result = self.tool_executor.execute(tool_name, arguments)
             return result
 
+        elif tool_name == "analyze_image":
+            # Extract image filename from user input
+            image_patterns = [
+                r'([^\s]+\.(?:png|jpg|jpeg|gif|bmp|tiff|tif|webp))',
+            ]
+
+            filename = None
+            for pattern in image_patterns:
+                match = re.search(pattern, user_input, re.IGNORECASE)
+                if match:
+                    filename = match.group(1)
+                    break
+
+            if not filename:
+                logger.warning("Could not extract image filename from user input")
+                return None
+
+            logger.info(f"Forcing analyze_image: {filename}")
+
+            # Execute analyze_image directly
+            arguments = {
+                "path": filename,
+                "task": user_input  # Pass full user input as task context
+            }
+
+            result = self.tool_executor.execute(tool_name, arguments)
+            return result
+
+        # Handle specialist tools by passing user input as parameter
+        elif tool_name in ["use_codestral", "use_reasoning_model", "use_search_model", "use_energy_analyst", "web_search"]:
+            logger.info(f"Forcing specialist tool: {tool_name}")
+
+            # Determine the parameter name for each specialist tool
+            param_mapping = {
+                "use_codestral": "code_context",
+                "use_reasoning_model": "task",
+                "use_search_model": "query",
+                "use_energy_analyst": "query",
+                "web_search": "query",
+            }
+
+            param_name = param_mapping.get(tool_name)
+            if not param_name:
+                logger.warning(f"No parameter mapping for specialist tool: {tool_name}")
+                return None
+
+            # For codestral, if we have recent context about files, include it
+            if tool_name == "use_codestral":
+                context_parts = [user_input]
+                if self.last_specialist_output and len(self.last_specialist_output) > 0:
+                    # Add reference to last output for context
+                    context_parts.append(f"\n\nContext from previous operation:\n{self.last_specialist_output[:500]}")
+                user_input_with_context = "\n".join(context_parts)
+                arguments = {param_name: user_input_with_context}
+            else:
+                arguments = {param_name: user_input}
+
+            result = self.tool_executor.execute(tool_name, arguments)
+            return result
+
         return None
 
     def _inject_context(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -422,9 +482,13 @@ class TurnProcessor:
 
                 logger.info(f"Intent detected: {detected_tool} (confidence: {confidence}) - {reasoning}")
 
-                # If high confidence file operation, execute directly
-                file_operations = ["write_file", "read_file", "list_files"]
-                if detected_tool in file_operations and confidence == "high":
+                # If high confidence for forceable tools, execute directly
+                # Include file operations AND specialist tools to prevent orchestrator confusion
+                forceable_tools = ["write_file", "read_file", "list_files", "analyze_image"]
+                forceable_specialists = ["use_codestral", "use_reasoning_model", "use_search_model", "use_energy_analyst", "web_search"]
+
+                if detected_tool in (forceable_tools + forceable_specialists) and confidence == "high":
+                    logger.info(f"Forcing tool call: {detected_tool}")
                     forced_result = self._execute_forced_tool_call(detected_tool, user_input)
                     logger.info(f"Forced execution result: {forced_result[:200] if forced_result else 'None'}...")
                     if forced_result:
