@@ -71,6 +71,8 @@ class ZororaUI:
         right_text.append("\n")
         right_text.append("• Filesystem", style="green")
         right_text.append(" - read, write, list, shell\n", style="dim")
+        right_text.append("• Vision", style="green")
+        right_text.append("     - Image OCR & analysis\n", style="dim")
         right_text.append("• Code Gen", style="green")
         right_text.append("   - Codestral specialist\n", style="dim")
         right_text.append("• Web Search", style="green")
