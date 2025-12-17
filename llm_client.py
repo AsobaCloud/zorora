@@ -7,7 +7,7 @@ from config import API_URL, MODEL, MAX_TOKENS, TIMEOUT, TEMPERATURE, TOOL_CHOICE
 
 
 class LLMClient:
-    """Client for interacting with LM Studio API (OpenAI-compatible)."""
+    """Client for interacting with LM Studio API or HuggingFace endpoints (OpenAI-compatible)."""
 
     def __init__(
         self,
@@ -18,6 +18,7 @@ class LLMClient:
         temperature: float = TEMPERATURE,
         tool_choice: str = TOOL_CHOICE,
         parallel_tool_calls: bool = PARALLEL_TOOL_CALLS,
+        auth_token: Optional[str] = None,
     ):
         self.api_url = api_url
         self.model = model
@@ -26,6 +27,7 @@ class LLMClient:
         self.temperature = temperature
         self.tool_choice = tool_choice
         self.parallel_tool_calls = parallel_tool_calls
+        self.auth_token = auth_token
 
     def chat_complete(
         self,
@@ -62,11 +64,17 @@ class LLMClient:
         max_retries = 3
         retry_delay = 1  # seconds
 
+        # Prepare headers
+        headers = {}
+        if self.auth_token:
+            headers["Authorization"] = f"Bearer {self.auth_token}"
+
         for attempt in range(max_retries):
             try:
                 response = requests.post(
                     self.api_url,
                     json=payload,
+                    headers=headers,
                     timeout=self.timeout,
                 )
                 response.raise_for_status()
@@ -220,10 +228,16 @@ class LLMClient:
             payload["tool_choice"] = self.tool_choice
             payload["parallel_tool_calls"] = self.parallel_tool_calls
 
+        # Prepare headers
+        headers = {}
+        if self.auth_token:
+            headers["Authorization"] = f"Bearer {self.auth_token}"
+
         try:
             response = requests.post(
                 self.api_url,
                 json=payload,
+                headers=headers,
                 timeout=self.timeout,
                 stream=True,
             )
@@ -269,7 +283,7 @@ class LLMClient:
 
     def list_models(self) -> List[str]:
         """
-        List available models from LM Studio.
+        List available models from LM Studio or HF endpoint.
 
         Returns:
             List of model IDs
@@ -280,8 +294,13 @@ class LLMClient:
         # Convert chat/completions URL to models endpoint
         models_url = self.api_url.replace("/chat/completions", "/models")
 
+        # Prepare headers
+        headers = {}
+        if self.auth_token:
+            headers["Authorization"] = f"Bearer {self.auth_token}"
+
         try:
-            response = requests.get(models_url, timeout=10)
+            response = requests.get(models_url, headers=headers, timeout=10)
             response.raise_for_status()
             data = response.json()
 
@@ -292,4 +311,4 @@ class LLMClient:
             return []
 
         except requests.RequestException as e:
-            raise RuntimeError(f"Failed to fetch models from LM Studio: {e}") from e
+            raise RuntimeError(f"Failed to fetch models: {e}") from e

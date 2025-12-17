@@ -1,10 +1,14 @@
-"""Configuration constants and settings."""
+"""Configuration constants and settings.
+
+IMPORTANT: Copy this file to config.py and update with your actual values.
+DO NOT commit config.py to git (it contains API tokens).
+"""
 
 from pathlib import Path
 
 # LM Studio API Configuration (OpenAI-compatible)
 API_URL = "http://localhost:1234/v1/chat/completions"
-MODEL = "qwen/qwen3-vl-8b"  # Regular model - fast and decisive
+MODEL = "your-model-name"  # Regular model - fast and decisive
 MAX_TOKENS = 2048  # Increased from 1000 for longer responses
 TIMEOUT = 60  # Increased from 30s for complex tool operations
 TEMPERATURE = 0.2
@@ -12,25 +16,25 @@ TEMPERATURE = 0.2
 # Specialized Model Configuration
 SPECIALIZED_MODELS = {
     "codestral": {
-        "model": "qwen/qwen3-vl-8b",
+        "model": "your-model-name",
         "max_tokens": 4096,
         "temperature": 0.3,
         "timeout": 90,
     },
     "reasoning": {
-        "model": "qwen/qwen3-4b-thinking-2507",
+        "model": "your-model-name",
         "max_tokens": 3072,
         "temperature": 0.4,
         "timeout": 90,
     },
     "search": {
-        "model": "qwen/qwen3-4b-thinking-2507",
+        "model": "your-model-name",
         "max_tokens": 2048,
         "temperature": 0.5,
         "timeout": 60,
     },
     "intent_detector": {
-        "model": "qwen/qwen3-4b-2507",  # Use same model as orchestrator (non-thinking)
+        "model": "your-model-name",  # Use fast non-thinking model
         "max_tokens": 256,  # Only need short JSON output
         "temperature": 0.1,  # Low temp for consistent structured output
         "timeout": 30,  # Fast response needed
@@ -46,6 +50,28 @@ ENERGY_ANALYST = {
 # Available endpoints:
 # - Local: http://localhost:8000
 # - Production: https://energyanalystragservice-production.up.railway.app
+
+# Hugging Face Inference Endpoints
+HF_TOKEN = "hf_YOUR_TOKEN_HERE"  # Replace with your Hugging Face API token
+HF_ENDPOINTS = {
+    "qwen-coder-32b": {
+        "url": "https://your-endpoint.hf.space/v1/chat/completions",
+        "model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+        "timeout": 120,
+        "enabled": True,
+    },
+    # Add more HF endpoints here as needed
+}
+
+# Model Endpoint Mapping (which endpoint each role uses)
+# Values: "local" for LM Studio, or HF endpoint key (e.g., "qwen-coder-32b")
+MODEL_ENDPOINTS = {
+    "orchestrator": "local",
+    "codestral": "local",
+    "reasoning": "local",
+    "search": "local",
+    "intent_detector": "local",
+}
 
 # Context Management
 MAX_CONTEXT_MESSAGES = 50  # Changed from None (unlimited) to prevent context overflow
@@ -84,5 +110,3 @@ Rules:
 - After a tool result is provided, respond naturally to the user's question.
 - Be concise and direct in your responses.
 """
-
-

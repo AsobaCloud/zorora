@@ -18,6 +18,58 @@ SPECIALIST_TOOLS = [
 ]
 
 
+def _create_specialist_client(role: str, model_config: Dict[str, Any]):
+    """
+    Create an LLMClient for a specialist role, using either local or remote endpoint.
+
+    Args:
+        role: Role name (e.g., "codestral", "reasoning", "search", "intent_detector")
+        model_config: Model configuration dict from SPECIALIZED_MODELS
+
+    Returns:
+        LLMClient instance configured for the role
+    """
+    from llm_client import LLMClient
+    import config
+
+    # Check if we have endpoint mappings
+    endpoint_key = "local"
+    if hasattr(config, 'MODEL_ENDPOINTS') and role in config.MODEL_ENDPOINTS:
+        endpoint_key = config.MODEL_ENDPOINTS[role]
+
+    # If local, use LM Studio
+    if endpoint_key == "local":
+        return LLMClient(
+            api_url=config.API_URL,
+            model=model_config["model"],
+            max_tokens=model_config["max_tokens"],
+            temperature=model_config["temperature"],
+            timeout=model_config["timeout"]
+        )
+
+    # Otherwise, use HF endpoint
+    if hasattr(config, 'HF_ENDPOINTS') and endpoint_key in config.HF_ENDPOINTS:
+        hf_config = config.HF_ENDPOINTS[endpoint_key]
+        return LLMClient(
+            api_url=hf_config["url"],
+            model=hf_config["model_name"],
+            max_tokens=model_config["max_tokens"],
+            temperature=model_config["temperature"],
+            timeout=hf_config.get("timeout", model_config["timeout"]),
+            auth_token=config.HF_TOKEN if hasattr(config, 'HF_TOKEN') else None
+        )
+
+    # Fallback to local if endpoint not found
+    logger.warning(f"Endpoint '{endpoint_key}' not found for role '{role}', falling back to local")
+    return LLMClient(
+        api_url=config.API_URL,
+        model=model_config["model"],
+        max_tokens=model_config["max_tokens"],
+        temperature=model_config["temperature"],
+        timeout=model_config["timeout"]
+    )
+
+
 # Tool function implementations
 def _validate_path(path: str) -> tuple[bool, str]:
     """
@@ -197,19 +249,12 @@ def use_codestral(code_context: str) -> str:
         return "Error: code_context too long (max 8000 characters)"
 
     try:
-        from llm_client import LLMClient
         import config
 
         logger.info(f"Delegating to Codestral: {code_context[:100]}...")
 
         model_config = config.SPECIALIZED_MODELS["codestral"]
-        client = LLMClient(
-            api_url=config.API_URL,
-            model=model_config["model"],
-            max_tokens=model_config["max_tokens"],
-            temperature=model_config["temperature"],
-            timeout=model_config["timeout"]
-        )
+        client = _create_specialist_client("codestral", model_config)
 
         messages = [
             {
@@ -260,19 +305,12 @@ def use_reasoning_model(task: str) -> str:
         return "Error: task too long (max 8000 characters)"
 
     try:
-        from llm_client import LLMClient
         import config
 
         logger.info(f"Delegating to Reasoning model: {task[:100]}...")
 
         model_config = config.SPECIALIZED_MODELS["reasoning"]
-        client = LLMClient(
-            api_url=config.API_URL,
-            model=model_config["model"],
-            max_tokens=model_config["max_tokens"],
-            temperature=model_config["temperature"],
-            timeout=model_config["timeout"]
-        )
+        client = _create_specialist_client("reasoning", model_config)
 
         messages = [
             {
@@ -323,19 +361,12 @@ def use_search_model(query: str) -> str:
         return "Error: query too long (max 8000 characters)"
 
     try:
-        from llm_client import LLMClient
         import config
 
         logger.info(f"Delegating to Search model: {query[:100]}...")
 
         model_config = config.SPECIALIZED_MODELS["search"]
-        client = LLMClient(
-            api_url=config.API_URL,
-            model=model_config["model"],
-            max_tokens=model_config["max_tokens"],
-            temperature=model_config["temperature"],
-            timeout=model_config["timeout"]
-        )
+        client = _create_specialist_client("search", model_config)
 
         response = client.chat_complete([
             {
@@ -378,20 +409,13 @@ def use_intent_detector(user_input: str, recent_context: str = "") -> str:
         return '{"tool": "none", "confidence": "low", "reasoning": "input too long"}'
 
     try:
-        from llm_client import LLMClient
         import config
         import json
 
         logger.info(f"Detecting intent for: {user_input[:100]}...")
 
         model_config = config.SPECIALIZED_MODELS["intent_detector"]
-        client = LLMClient(
-            api_url=config.API_URL,
-            model=model_config["model"],
-            max_tokens=model_config["max_tokens"],
-            temperature=model_config["temperature"],
-            timeout=model_config["timeout"]
-        )
+        client = _create_specialist_client("intent_detector", model_config)
 
         # Build context-aware prompt
         context_section = ""

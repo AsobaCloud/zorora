@@ -38,6 +38,9 @@ repl.log
 .env
 .env.local
 
+# Configuration (contains API tokens)
+config.py
+
 # OS
 .DS_Store
 Thumbs.db

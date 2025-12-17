@@ -22,7 +22,7 @@ class REPL:
         # Initialize components
         self.tool_registry = ToolRegistry()
         self.tool_executor = ToolExecutor(self.tool_registry)
-        self.llm_client = LLMClient()
+        self.llm_client = self._create_orchestrator_client()
         self.conversation = ConversationManager(load_system_prompt())
         self.turn_processor = TurnProcessor(
             self.conversation,
@@ -32,6 +32,34 @@ class REPL:
             ui=self.ui
         )
         self.model_selector = ModelSelector(self.llm_client, self.ui)
+
+    def _create_orchestrator_client(self):
+        """Create LLMClient for orchestrator, using local or remote endpoint."""
+        # Check if we have endpoint mappings
+        endpoint_key = "local"
+        if hasattr(config, 'MODEL_ENDPOINTS') and "orchestrator" in config.MODEL_ENDPOINTS:
+            endpoint_key = config.MODEL_ENDPOINTS["orchestrator"]
+
+        # If local, use LM Studio
+        if endpoint_key == "local":
+            return LLMClient()
+
+        # Otherwise, use HF endpoint
+        if hasattr(config, 'HF_ENDPOINTS') and endpoint_key in config.HF_ENDPOINTS:
+            hf_config = config.HF_ENDPOINTS[endpoint_key]
+            return LLMClient(
+                api_url=hf_config["url"],
+                model=hf_config["model_name"],
+                max_tokens=config.MAX_TOKENS,
+                timeout=hf_config.get("timeout", config.TIMEOUT),
+                temperature=config.TEMPERATURE,
+                auth_token=config.HF_TOKEN if hasattr(config, 'HF_TOKEN') else None
+            )
+
+        # Fallback to local if endpoint not found
+        import logging
+        logging.getLogger(__name__).warning(f"Endpoint '{endpoint_key}' not found for orchestrator, falling back to local")
+        return LLMClient()
 
     def _handle_slash_command(self, command: str):
         """Handle slash commands."""
