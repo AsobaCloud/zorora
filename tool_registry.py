@@ -139,13 +139,14 @@ def make_directory(path: str) -> str:
     # Expand ~ to home directory
     expanded_path = str(Path(path).expanduser())
 
-    # Validate path security
-    is_valid, error = _validate_path(expanded_path)
-    if not is_valid:
-        return error
-
     try:
-        dir_path = Path(expanded_path)
+        dir_path = Path(expanded_path).resolve()
+        home_dir = Path.home().resolve()
+
+        # Security: Only allow creating directories within home directory
+        if not str(dir_path).startswith(str(home_dir)):
+            return f"Error: Can only create directories within home directory ({home_dir})"
+
         if dir_path.exists():
             if dir_path.is_dir():
                 return f"OK: Directory '{expanded_path}' already exists"
@@ -154,6 +155,8 @@ def make_directory(path: str) -> str:
 
         dir_path.mkdir(parents=True, exist_ok=True)
         return f"OK: Created directory '{expanded_path}'"
+    except PermissionError:
+        return f"Error: Permission denied to create directory '{expanded_path}'"
     except Exception as e:
         return f"Error creating directory: {e}"
 
