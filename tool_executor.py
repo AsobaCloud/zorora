@@ -20,6 +20,9 @@ class ToolExecutor:
     def __init__(self, registry: ToolRegistry, ui=None):
         self.registry = registry
         self.ui = ui
+        # Track current working directory for stateful navigation
+        from pathlib import Path
+        self.working_directory = Path.cwd()
 
     def execute(self, tool_name: str, arguments: Dict[str, Any]) -> str:
         """
@@ -44,12 +47,66 @@ class ToolExecutor:
             if tool_name == "use_codestral" and self.ui is not None:
                 arguments['ui'] = self.ui
 
+            # Pass working directory to file operations
+            file_ops = ["read_file", "write_file", "edit_file", "list_files", "make_directory"]
+            if tool_name in file_ops:
+                arguments['working_directory'] = self.working_directory
+
             result = tool_func(**arguments)
+
+            # Detect cd command and update working directory
+            if tool_name == "run_shell":
+                self._handle_cd_command(arguments.get("command", ""), result)
+
             return self._truncate_result(result, tool_name)
         except TypeError as e:
             return f"Error: Invalid arguments for tool '{tool_name}': {e}"
         except Exception as e:
             return f"Error executing tool '{tool_name}': {e}"
+
+    def _handle_cd_command(self, command: str, result: str):
+        """
+        Detect cd commands and update working directory state.
+
+        Args:
+            command: The shell command that was executed
+            result: The result from running the command
+        """
+        import re
+        from pathlib import Path
+
+        # Check if this is a cd command
+        cd_match = re.match(r'^cd\s+(.+?)(?:\s*&&|\s*;|\s*$)', command.strip())
+        if not cd_match:
+            return
+
+        # Check if command succeeded (no "No such file or directory" in stderr)
+        if "No such file or directory" in result or "[exit:" in result:
+            # Command failed, don't update directory
+            return
+
+        # Extract target directory
+        target = cd_match.group(1).strip().strip('"').strip("'")
+
+        try:
+            # Expand ~ and resolve path
+            target_path = Path(target).expanduser()
+
+            # If relative path, resolve against current working directory
+            if not target_path.is_absolute():
+                target_path = (self.working_directory / target_path).resolve()
+            else:
+                target_path = target_path.resolve()
+
+            # Verify directory exists before updating
+            if target_path.exists() and target_path.is_dir():
+                self.working_directory = target_path
+                logger.info(f"Updated working directory to: {self.working_directory}")
+            else:
+                logger.warning(f"cd target does not exist or is not a directory: {target_path}")
+
+        except Exception as e:
+            logger.warning(f"Failed to update working directory: {e}")
 
     def _fix_parameter_names(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """

@@ -75,6 +75,34 @@ def _create_specialist_client(role: str, model_config: Dict[str, Any]):
 
 
 # Tool function implementations
+def _resolve_path(path: str, working_directory=None):
+    """
+    Resolve a path against the working directory.
+
+    Args:
+        path: Path to resolve (can be relative, absolute, or use ~)
+        working_directory: Current working directory (Path object or None)
+
+    Returns:
+        Resolved Path object
+    """
+    from pathlib import Path
+
+    # Expand ~ to home directory
+    path_obj = Path(path).expanduser()
+
+    # If absolute, use as-is
+    if path_obj.is_absolute():
+        return path_obj
+
+    # If relative and working_directory provided, resolve against it
+    if working_directory is not None:
+        return (working_directory / path_obj).resolve()
+
+    # Otherwise use current working directory
+    return path_obj.resolve()
+
+
 def _validate_path(path: str) -> tuple[bool, str]:
     """
     Validate file path for security.
@@ -95,14 +123,17 @@ def _validate_path(path: str) -> tuple[bool, str]:
         return False, f"Error: Invalid path '{path}': {e}"
 
 
-def read_file(path: str) -> str:
+def read_file(path: str, working_directory=None) -> str:
     """Read contents of a file."""
+    # Resolve path against working directory if provided
+    resolved_path = _resolve_path(path, working_directory)
+
     # Validate path security
-    is_valid, error = _validate_path(path)
+    is_valid, error = _validate_path(str(resolved_path))
     if not is_valid:
         return error
 
-    file_path = Path(path)
+    file_path = Path(resolved_path)
     if not file_path.exists():
         return f"Error: File '{path}' does not exist."
     if not file_path.is_file():
@@ -120,27 +151,30 @@ def read_file(path: str) -> str:
         return f"Error reading file: {e}"
 
 
-def write_file(path: str, content: str) -> str:
+def write_file(path: str, content: str, working_directory=None) -> str:
     """Write content to a file (creates or overwrites)."""
+    # Resolve path against working directory if provided
+    resolved_path = _resolve_path(path, working_directory)
+
     # Validate path security
-    is_valid, error = _validate_path(path)
+    is_valid, error = _validate_path(str(resolved_path))
     if not is_valid:
         return error
 
     try:
-        Path(path).write_text(content)
-        return f"OK: Written {len(content)} characters to '{path}'"
+        Path(resolved_path).write_text(content)
+        return f"OK: Written {len(content)} characters to '{resolved_path}'"
     except Exception as e:
         return f"Error writing file: {e}"
 
 
-def make_directory(path: str) -> str:
+def make_directory(path: str, working_directory=None) -> str:
     """Create a new directory (including parent directories if needed)."""
-    # Expand ~ to home directory
-    expanded_path = str(Path(path).expanduser())
+    # Resolve path against working directory if provided
+    resolved_path = _resolve_path(path, working_directory)
 
     try:
-        dir_path = Path(expanded_path).resolve()
+        dir_path = Path(resolved_path).resolve()
         home_dir = Path.home().resolve()
 
         # Security: Only allow creating directories within home directory
@@ -149,19 +183,19 @@ def make_directory(path: str) -> str:
 
         if dir_path.exists():
             if dir_path.is_dir():
-                return f"OK: Directory '{expanded_path}' already exists"
+                return f"OK: Directory '{resolved_path}' already exists"
             else:
-                return f"Error: '{expanded_path}' exists but is not a directory"
+                return f"Error: '{resolved_path}' exists but is not a directory"
 
         dir_path.mkdir(parents=True, exist_ok=True)
-        return f"OK: Created directory '{expanded_path}'"
+        return f"OK: Created directory '{resolved_path}'"
     except PermissionError:
-        return f"Error: Permission denied to create directory '{expanded_path}'"
+        return f"Error: Permission denied to create directory '{resolved_path}'"
     except Exception as e:
         return f"Error creating directory: {e}"
 
 
-def edit_file(path: str, old_string: str, new_string: str) -> str:
+def edit_file(path: str, old_string: str, new_string: str, working_directory=None) -> str:
     """
     Edit a file by replacing exact string match.
 
@@ -169,16 +203,20 @@ def edit_file(path: str, old_string: str, new_string: str) -> str:
         path: Path to the file to edit
         old_string: Exact string to find and replace
         new_string: String to replace with
+        working_directory: Optional working directory for path resolution
 
     Returns:
         Success or error message
     """
+    # Resolve path against working directory if provided
+    resolved_path = _resolve_path(path, working_directory)
+
     # Validate path security
-    is_valid, error = _validate_path(path)
+    is_valid, error = _validate_path(str(resolved_path))
     if not is_valid:
         return error
 
-    file_path = Path(path)
+    file_path = Path(resolved_path)
     if not file_path.exists():
         return f"Error: File '{path}' does not exist."
     if not file_path.is_file():
@@ -201,22 +239,25 @@ def edit_file(path: str, old_string: str, new_string: str) -> str:
         new_content = content.replace(old_string, new_string, 1)
         file_path.write_text(new_content)
 
-        return f"OK: Replaced 1 occurrence in '{path}'"
+        return f"OK: Replaced 1 occurrence in '{resolved_path}'"
     except UnicodeDecodeError:
         return f"Error: File '{path}' is not a text file"
     except Exception as e:
         return f"Error editing file: {e}"
 
 
-def list_files(path: str = ".") -> str:
+def list_files(path: str = ".", working_directory=None) -> str:
     """List files and directories in a path."""
+    # Resolve path against working directory if provided
+    resolved_path = _resolve_path(path, working_directory)
+
     # Validate path security
-    is_valid, error = _validate_path(path)
+    is_valid, error = _validate_path(str(resolved_path))
     if not is_valid:
         return error
 
     try:
-        dir_path = Path(path)
+        dir_path = Path(resolved_path)
         if not dir_path.exists():
             return f"Error: Path '{path}' does not exist."
         if not dir_path.is_dir():
