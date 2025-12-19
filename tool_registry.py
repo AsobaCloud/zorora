@@ -136,21 +136,24 @@ def write_file(path: str, content: str) -> str:
 
 def make_directory(path: str) -> str:
     """Create a new directory (including parent directories if needed)."""
+    # Expand ~ to home directory
+    expanded_path = str(Path(path).expanduser())
+
     # Validate path security
-    is_valid, error = _validate_path(path)
+    is_valid, error = _validate_path(expanded_path)
     if not is_valid:
         return error
 
     try:
-        dir_path = Path(path)
+        dir_path = Path(expanded_path)
         if dir_path.exists():
             if dir_path.is_dir():
-                return f"OK: Directory '{path}' already exists"
+                return f"OK: Directory '{expanded_path}' already exists"
             else:
-                return f"Error: '{path}' exists but is not a directory"
+                return f"Error: '{expanded_path}' exists but is not a directory"
 
         dir_path.mkdir(parents=True, exist_ok=True)
-        return f"OK: Created directory '{path}'"
+        return f"OK: Created directory '{expanded_path}'"
     except Exception as e:
         return f"Error creating directory: {e}"
 
