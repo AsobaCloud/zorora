@@ -436,7 +436,8 @@ def run_shell(command: str) -> str:
 
     # Whitelist approach - only allow safe commands
     safe = ["ls", "pwd", "echo", "cat", "grep", "find", "wc", "head", "tail",
-            "python", "python3", "node", "npm", "git", "pytest", "black", "flake8"]
+            "python", "python3", "node", "npm", "git", "pytest", "black", "flake8",
+            "mkdir", "cd", "touch", "mv", "cp"]
     first_word = command.split()[0] if command.split() else ""
     if first_word not in safe:
         return f"Error: Command '{first_word}' not in whitelist. Allowed: {', '.join(safe)}"

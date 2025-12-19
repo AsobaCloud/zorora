@@ -27,6 +27,8 @@ Available tools:
 - use_energy_analyst: Energy policy, FERC, ISO, NEM, regulations
 - read_file: Read file contents
 - write_file: Save content to a file
+- edit_file: Modify part of an existing file
+- make_directory: Create a new directory
 - list_files: List directory contents
 - run_shell: Execute shell commands
 - generate_image: Create images from text descriptions
@@ -63,6 +65,14 @@ Output:
 [
   {{"tool": "read_file", "input": "gold_deep_dive.md", "reason": "Read file content"}},
   {{"tool": "use_reasoning_model", "input": "Provide a summary of this document", "reason": "Summarize the content"}}
+]
+
+Example 4:
+User: "Create a new directory ~/projects/myapp and add a README file"
+Output:
+[
+  {{"tool": "make_directory", "input": "~/projects/myapp", "reason": "Create project directory"}},
+  {{"tool": "write_file", "input": "~/projects/myapp/README.md", "reason": "Create README in new directory"}}
 ]
 
 User request: {user_input}
@@ -266,6 +276,8 @@ Remember: Output ONLY the JSON array, nothing else."""
                 "use_energy_analyst": "query",
                 "read_file": "path",
                 "write_file": "content",  # Special case
+                "edit_file": "path",  # Will need old_string and new_string from planner
+                "make_directory": "path",
                 "list_files": "path",
                 "run_shell": "command",
                 "generate_image": "prompt",
