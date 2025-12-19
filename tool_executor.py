@@ -17,8 +17,9 @@ MAX_TOOL_RESULT_SIZE = 10000  # characters
 class ToolExecutor:
     """Executes tools and formats results."""
 
-    def __init__(self, registry: ToolRegistry):
+    def __init__(self, registry: ToolRegistry, ui=None):
         self.registry = registry
+        self.ui = ui
 
     def execute(self, tool_name: str, arguments: Dict[str, Any]) -> str:
         """
@@ -39,6 +40,10 @@ class ToolExecutor:
         arguments = self._fix_parameter_names(tool_name, arguments)
 
         try:
+            # Special handling for use_codestral - pass UI for interactive planning
+            if tool_name == "use_codestral" and self.ui is not None:
+                arguments['ui'] = self.ui
+
             result = tool_func(**arguments)
             return self._truncate_result(result, tool_name)
         except TypeError as e:

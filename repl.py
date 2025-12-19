@@ -25,7 +25,7 @@ class REPL:
 
         # Initialize components
         self.tool_registry = ToolRegistry()
-        self.tool_executor = ToolExecutor(self.tool_registry)
+        self.tool_executor = ToolExecutor(self.tool_registry, ui=self.ui)
         self.llm_client = self._create_orchestrator_client()
         self.conversation = ConversationManager(
             system_prompt=load_system_prompt(),
