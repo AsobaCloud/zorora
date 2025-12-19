@@ -1,3 +1,0 @@
-```markdown
-![](gdp.png)
-```
