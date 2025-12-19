@@ -76,6 +76,8 @@ class REPL:
 
         if cmd == "/models":
             self.model_selector.run()
+        elif cmd == "/config":
+            self._handle_config_command()
         elif cmd == "/help":
             self._show_help()
         elif cmd == "/clear":
@@ -106,12 +108,141 @@ class REPL:
             self.ui.console.print(f"[red]Unknown command: {command}[/red]")
             self.ui.console.print("[dim]Type /help for available commands[/dim]")
 
+    def _handle_config_command(self):
+        """Interactive configuration editor for routing settings."""
+        from rich.panel import Panel
+        from rich.table import Table
+        from rich.prompt import Confirm, FloatPrompt
+
+        while True:
+            # Display current configuration
+            self.ui.console.print("\n")
+            table = Table(title="Routing Configuration", show_header=True, header_style="bold magenta")
+            table.add_column("Setting", style="cyan", no_wrap=True)
+            table.add_column("Value", style="white")
+            table.add_column("Description", style="dim")
+
+            # Add rows with current values
+            table.add_row(
+                "1. USE_JSON_ROUTING",
+                f"[green]{config.USE_JSON_ROUTING}[/green]" if config.USE_JSON_ROUTING else f"[red]{config.USE_JSON_ROUTING}[/red]",
+                "Use JSON-based routing system"
+            )
+            table.add_row(
+                "2. USE_HEURISTIC_ROUTER",
+                f"[green]{config.USE_HEURISTIC_ROUTER}[/green]" if config.USE_HEURISTIC_ROUTER else f"[red]{config.USE_HEURISTIC_ROUTER}[/red]",
+                "Enable fast keyword-based routing"
+            )
+            table.add_row(
+                "3. ENABLE_CONFIDENCE_FALLBACK",
+                f"[green]{config.ENABLE_CONFIDENCE_FALLBACK}[/green]" if config.ENABLE_CONFIDENCE_FALLBACK else f"[red]{config.ENABLE_CONFIDENCE_FALLBACK}[/red]",
+                "Fallback to 8B model for low confidence"
+            )
+            table.add_row(
+                "4. CONFIDENCE_THRESHOLD_HIGH",
+                f"[yellow]{config.CONFIDENCE_THRESHOLD_HIGH}[/yellow]",
+                "Execute immediately if >= this (0.0-1.0)"
+            )
+            table.add_row(
+                "5. CONFIDENCE_THRESHOLD_LOW",
+                f"[yellow]{config.CONFIDENCE_THRESHOLD_LOW}[/yellow]",
+                "Fallback to 8B if < this (0.0-1.0)"
+            )
+
+            self.ui.console.print(table)
+            self.ui.console.print("\n[dim]Enter option number to toggle/edit, 's' to save, or 'q' to quit without saving[/dim]")
+
+            # Get user choice
+            choice = input("Choice: ").strip().lower()
+
+            if choice == 'q':
+                self.ui.console.print("[yellow]Configuration unchanged[/yellow]")
+                break
+            elif choice == 's':
+                self._save_config_changes()
+                self.ui.console.print("[green]✓[/green] Configuration saved!")
+                break
+            elif choice == '1':
+                config.USE_JSON_ROUTING = not config.USE_JSON_ROUTING
+                self.ui.console.print(f"[green]✓[/green] USE_JSON_ROUTING set to {config.USE_JSON_ROUTING}")
+            elif choice == '2':
+                config.USE_HEURISTIC_ROUTER = not config.USE_HEURISTIC_ROUTER
+                self.ui.console.print(f"[green]✓[/green] USE_HEURISTIC_ROUTER set to {config.USE_HEURISTIC_ROUTER}")
+            elif choice == '3':
+                config.ENABLE_CONFIDENCE_FALLBACK = not config.ENABLE_CONFIDENCE_FALLBACK
+                self.ui.console.print(f"[green]✓[/green] ENABLE_CONFIDENCE_FALLBACK set to {config.ENABLE_CONFIDENCE_FALLBACK}")
+            elif choice == '4':
+                try:
+                    new_value = FloatPrompt.ask(
+                        "Enter new CONFIDENCE_THRESHOLD_HIGH (0.0-1.0)",
+                        default=config.CONFIDENCE_THRESHOLD_HIGH,
+                        console=self.ui.console
+                    )
+                    if 0.0 <= new_value <= 1.0:
+                        config.CONFIDENCE_THRESHOLD_HIGH = new_value
+                        self.ui.console.print(f"[green]✓[/green] CONFIDENCE_THRESHOLD_HIGH set to {new_value}")
+                    else:
+                        self.ui.console.print("[red]Value must be between 0.0 and 1.0[/red]")
+                except Exception as e:
+                    self.ui.console.print(f"[red]Invalid input: {e}[/red]")
+            elif choice == '5':
+                try:
+                    new_value = FloatPrompt.ask(
+                        "Enter new CONFIDENCE_THRESHOLD_LOW (0.0-1.0)",
+                        default=config.CONFIDENCE_THRESHOLD_LOW,
+                        console=self.ui.console
+                    )
+                    if 0.0 <= new_value <= 1.0:
+                        config.CONFIDENCE_THRESHOLD_LOW = new_value
+                        self.ui.console.print(f"[green]✓[/green] CONFIDENCE_THRESHOLD_LOW set to {new_value}")
+                    else:
+                        self.ui.console.print("[red]Value must be between 0.0 and 1.0[/red]")
+                except Exception as e:
+                    self.ui.console.print(f"[red]Invalid input: {e}[/red]")
+            else:
+                self.ui.console.print("[red]Invalid choice[/red]")
+
+    def _save_config_changes(self):
+        """Save configuration changes to config.py."""
+        import re
+        from pathlib import Path
+
+        config_file = Path(__file__).parent / "config.py"
+
+        try:
+            # Read current config file
+            with open(config_file, 'r') as f:
+                content = f.read()
+
+            # Update routing configuration section
+            replacements = {
+                r'USE_JSON_ROUTING = \w+': f'USE_JSON_ROUTING = {config.USE_JSON_ROUTING}',
+                r'USE_HEURISTIC_ROUTER = \w+': f'USE_HEURISTIC_ROUTER = {config.USE_HEURISTIC_ROUTER}',
+                r'ENABLE_CONFIDENCE_FALLBACK = \w+': f'ENABLE_CONFIDENCE_FALLBACK = {config.ENABLE_CONFIDENCE_FALLBACK}',
+                r'CONFIDENCE_THRESHOLD_HIGH = [\d.]+': f'CONFIDENCE_THRESHOLD_HIGH = {config.CONFIDENCE_THRESHOLD_HIGH}',
+                r'CONFIDENCE_THRESHOLD_LOW = [\d.]+': f'CONFIDENCE_THRESHOLD_LOW = {config.CONFIDENCE_THRESHOLD_LOW}',
+            }
+
+            for pattern, replacement in replacements.items():
+                content = re.sub(pattern, replacement, content)
+
+            # Write back to file
+            with open(config_file, 'w') as f:
+                f.write(content)
+
+            return True
+
+        except Exception as e:
+            self.ui.console.print(f"[red]Error saving config: {e}[/red]")
+            return False
+
     def _show_help(self):
         """Display help information."""
         help_text = """
 [bold cyan]Available Commands:[/bold cyan]
 
   [cyan]/models[/cyan]                  - Select models for orchestrator and specialist tools
+  [cyan]/config[/cyan]                  - Configure routing settings (JSON, heuristic, confidence)
   [cyan]/save <filename>[/cyan]        - Save last specialist output to file (e.g., /save plan.md)
   [cyan]/history[/cyan]                 - List all saved conversation sessions
   [cyan]/resume <session_id>[/cyan]    - Resume a previous conversation session

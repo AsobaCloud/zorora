@@ -10,6 +10,9 @@ from conversation import ConversationManager
 from llm_client import LLMClient
 from tool_executor import ToolExecutor
 from tool_registry import ToolRegistry, SPECIALIST_TOOLS
+from router import HeuristicRouter
+from planner import TaskPlanner
+import config
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +33,12 @@ class TurnProcessor:
         self.tool_executor = tool_executor
         self.tool_registry = tool_registry
         self.ui = ui  # Optional UI for feedback
+
+        # Initialize heuristic router
+        self.heuristic_router = HeuristicRouter()
+
+        # Initialize task planner
+        self.planner = TaskPlanner(llm_client, tool_executor)
 
         # Track last specialist tool output for reference resolution
         self.last_specialist_output: Optional[str] = None
@@ -299,28 +308,33 @@ class TurnProcessor:
 
         elif tool_name == "list_files":
             # Extract directory path from user input
-            # Patterns: "list files in X", "show files in X", "ls X"
-            dir_patterns = [
-                r'(?:list|show|display|see)\s+(?:files|contents|directory)\s+(?:in|of|from)\s+([^\s]+)',
-                r'(?:ls|dir)\s+([^\s]+)',
-                r'(?:what.*?in|files.*?in)\s+([^\s]+)',
-            ]
+            # Check for "current directory" or similar phrases first
+            if re.search(r'\b(?:current|this|here)\b.*\b(?:directory|folder|dir)\b', user_input, re.IGNORECASE):
+                directory = "."
+            elif re.search(r'\b(?:list|show)\s+(?:files|directory|contents)\b(?:\s+(?:in|of|from))?\s*$', user_input, re.IGNORECASE):
+                # No specific directory mentioned, use current
+                directory = "."
+            else:
+                # Patterns: "list files in X", "show files in X", "ls X"
+                dir_patterns = [
+                    r'(?:list|show|display|see)\s+(?:files|contents|directory)\s+(?:in|of|from)\s+([^\s]+)',
+                    r'(?:ls|dir)\s+([^\s]+)',
+                    r'(?:what.*?in|files.*?in)\s+([^\s]+)',
+                ]
 
-            directory = None
-            for pattern in dir_patterns:
-                match = re.search(pattern, user_input, re.IGNORECASE)
-                if match:
-                    directory = match.group(1)
-                    break
+                directory = None
+                for pattern in dir_patterns:
+                    match = re.search(pattern, user_input, re.IGNORECASE)
+                    if match:
+                        potential_dir = match.group(1)
+                        # Filter out common words that aren't directories
+                        if potential_dir.lower() not in ['the', 'a', 'an', 'current', 'this']:
+                            directory = potential_dir
+                            break
 
-            # If no directory specified, use current directory
-            if not directory:
-                # Check if user just wants to list current directory
-                if re.search(r'\b(?:list|show)\s+(?:files|directory|contents)\b', user_input, re.IGNORECASE):
+                # If still no directory, default to current
+                if not directory:
                     directory = "."
-                else:
-                    logger.warning("Could not extract directory from user input for list_files")
-                    return None
 
             logger.info(f"Forcing list_files: {directory}")
 
@@ -393,6 +407,111 @@ class TurnProcessor:
             return result
 
         return None
+
+    def _create_fallback_client(self) -> Optional[LLMClient]:
+        """
+        Create LLM client for fallback model (8B).
+
+        Returns:
+            LLMClient instance for fallback model, or None if not configured
+        """
+        if not config.ENABLE_CONFIDENCE_FALLBACK:
+            return None
+
+        endpoint_key = config.FALLBACK_MODEL_ENDPOINT
+
+        # If same as orchestrator, just return main client
+        orchestrator_endpoint = config.MODEL_ENDPOINTS.get("orchestrator", "local")
+        if endpoint_key == orchestrator_endpoint:
+            logger.info("Fallback endpoint same as orchestrator, reusing client")
+            return self.llm_client
+
+        # If local, use LM Studio
+        if endpoint_key == "local":
+            return LLMClient()
+
+        # Otherwise, use HF endpoint
+        if hasattr(config, 'HF_ENDPOINTS') and endpoint_key in config.HF_ENDPOINTS:
+            hf_config = config.HF_ENDPOINTS[endpoint_key]
+            return LLMClient(
+                api_url=hf_config["url"],
+                model=hf_config["model_name"],
+                max_tokens=config.MAX_TOKENS,
+                timeout=hf_config.get("timeout", config.TIMEOUT),
+                temperature=config.TEMPERATURE,
+                auth_token=config.HF_TOKEN if hasattr(config, 'HF_TOKEN') else None
+            )
+
+        logger.warning(f"Fallback endpoint '{endpoint_key}' not found in config")
+        return None
+
+    def _route_with_fallback(self, user_input: str) -> Optional[Dict[str, Any]]:
+        """
+        Route user input with confidence-based fallback.
+
+        Flow:
+        1. Try primary orchestrator (4B)
+        2. If confidence < threshold, fallback to larger model (8B)
+        3. Return routing decision
+
+        Args:
+            user_input: User's input to route
+
+        Returns:
+            Dict with 'tool', 'arguments', 'confidence' or None
+        """
+        # Build routing prompt
+        routing_messages = [{"role": "user", "content": user_input}]
+
+        # Try primary orchestrator
+        logger.info("Calling primary orchestrator for routing")
+        response = self.llm_client.chat_complete(routing_messages, tools=None)
+        content = self.llm_client.extract_content(response)
+
+        # Parse JSON routing decision
+        routing_decision = self.tool_executor.parse_json_tool_call(content)
+
+        if not routing_decision:
+            logger.warning("Failed to parse routing decision from primary orchestrator")
+            return None
+
+        confidence = routing_decision.get("confidence", 0.5)
+        tool = routing_decision.get("tool")
+
+        # High confidence → execute
+        if confidence >= config.CONFIDENCE_THRESHOLD_HIGH:
+            logger.info(f"High confidence ({confidence:.2f}) for {tool}, executing")
+            return routing_decision
+
+        # Low confidence → try fallback
+        if confidence < config.CONFIDENCE_THRESHOLD_LOW and config.ENABLE_CONFIDENCE_FALLBACK:
+            logger.info(f"Low confidence ({confidence:.2f}) for {tool}, attempting fallback to 8B")
+
+            fallback_client = self._create_fallback_client()
+            if fallback_client:
+                try:
+                    response = fallback_client.chat_complete(routing_messages, tools=None)
+                    content = fallback_client.extract_content(response)
+                    fallback_decision = self.tool_executor.parse_json_tool_call(content)
+
+                    if fallback_decision:
+                        fallback_confidence = fallback_decision.get("confidence", 0.5)
+                        fallback_tool = fallback_decision.get("tool")
+                        logger.info(f"8B fallback decision: {fallback_tool} (confidence: {fallback_confidence:.2f})")
+
+                        # Use fallback decision if it has higher confidence
+                        if fallback_confidence > confidence:
+                            logger.info(f"Using fallback decision (higher confidence: {fallback_confidence:.2f} > {confidence:.2f})")
+                            return fallback_decision
+                        else:
+                            logger.info(f"Keeping original decision (fallback confidence not higher: {fallback_confidence:.2f} <= {confidence:.2f})")
+
+                except Exception as e:
+                    logger.warning(f"Fallback routing failed: {e}")
+
+        # Medium confidence or fallback didn't help → use original decision
+        logger.info(f"Using original routing decision: {tool} (confidence: {confidence:.2f})")
+        return routing_decision
 
     def _inject_context(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -474,7 +593,51 @@ class TurnProcessor:
         # Start timing
         total_start_time = time.time()
 
-        # Intent detection: Check if we should use fast intent detector
+        # PHASE 0: Check for multi-step planning needs
+        if self.planner.should_plan(user_input):
+            logger.info("Multi-step planning detected")
+            plan = self.planner.create_plan(user_input)
+            if plan and len(plan) > 0:
+                logger.info(f"Executing plan with {len(plan)} steps")
+                result = self.planner.execute_plan(plan, ui=self.ui)
+
+                # Update last_specialist_output if result is from a specialist tool
+                if result and not result.startswith("Error:"):
+                    # Check if last step was a specialist tool
+                    last_step_tool = plan[-1]["tool"] if plan else None
+                    if last_step_tool in SPECIALIST_TOOLS:
+                        self.last_specialist_output = result
+                        logger.info(f"Updated last_specialist_output from planner ({len(result)} chars)")
+
+                # Add to conversation
+                self.conversation.add_assistant_message(content=result)
+                return result, time.time() - total_start_time
+            else:
+                logger.warning("Planning failed or returned empty plan, falling back to normal routing")
+
+        # PHASE 1: Try heuristic routing (fastest - keyword-based)
+        if config.USE_HEURISTIC_ROUTER:
+            heuristic_result = self.heuristic_router.route(user_input)
+            if heuristic_result and heuristic_result["confidence"] >= config.CONFIDENCE_THRESHOLD_HIGH:
+                logger.info(f"Heuristic router matched: {heuristic_result['tool']} (confidence: {heuristic_result['confidence']})")
+                forced_result = self._execute_forced_tool_call(
+                    heuristic_result["tool"],
+                    user_input
+                )
+                if forced_result:
+                    # Update last_specialist_output if this was a specialist tool
+                    if heuristic_result["tool"] in SPECIALIST_TOOLS:
+                        self.last_specialist_output = forced_result
+                        logger.info(f"Updated last_specialist_output from heuristic route ({len(forced_result)} chars)")
+
+                    # Add forced tool call to conversation for context
+                    self.conversation.add_assistant_message(content=f"{forced_result}")
+                    logger.info(f"Returning heuristic result early ({len(forced_result)} chars)")
+                    return forced_result, time.time() - total_start_time
+                else:
+                    logger.warning(f"Heuristic execution returned None, falling back to intent detection")
+
+        # PHASE 2: Intent detection (current system)
         if self._should_use_intent_detection(user_input):
             logger.info("Using intent detection for this request")
 

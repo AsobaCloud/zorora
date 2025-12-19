@@ -2,8 +2,12 @@
 
 from typing import Dict, Any, Optional
 import json
+import re
+import logging
 
 from tool_registry import ToolRegistry, SPECIALIST_TOOLS
+
+logger = logging.getLogger(__name__)
 
 
 # Maximum size for tool results (to prevent context bloat)
@@ -119,3 +123,82 @@ class ToolExecutor:
             arguments = {}
 
         return function_name, arguments
+
+    def parse_json_tool_call(self, response_text: str) -> Optional[Dict[str, Any]]:
+        """
+        Parse JSON tool call from orchestrator response.
+
+        Expected format:
+        {
+          "tool": "tool_name",
+          "input": "user input",
+          "confidence": 0.85
+        }
+
+        Args:
+            response_text: Text response from orchestrator
+
+        Returns:
+            Dict with 'tool', 'arguments', 'confidence' or None if invalid
+        """
+        try:
+            # Extract JSON from response (handle markdown code blocks)
+            # First try to extract from code blocks
+            code_block_match = re.search(r'```(?:json)?\s*(\{[^`]+\})\s*```', response_text, re.DOTALL)
+            if code_block_match:
+                json_str = code_block_match.group(1)
+            else:
+                # Try to find JSON object directly
+                json_match = re.search(r'\{[^{}]*"tool"[^{}]*\}', response_text, re.DOTALL)
+                if not json_match:
+                    return None
+                json_str = json_match.group(0)
+
+            data = json.loads(json_str)
+
+            # Validate required fields
+            if "tool" not in data or "input" not in data:
+                logger.warning(f"Invalid JSON tool call: missing 'tool' or 'input' fields")
+                return None
+
+            tool_name = data["tool"]
+            user_input = data["input"]
+            confidence = data.get("confidence", 0.5)
+
+            # Map input to correct parameter name for each tool
+            param_mapping = {
+                "web_search": "query",
+                "use_codestral": "code_context",
+                "use_reasoning_model": "task",
+                "use_search_model": "query",
+                "use_energy_analyst": "query",
+                "get_newsroom_headlines": None,  # No parameters
+                "read_file": "path",
+                "write_file": "content",  # Special case: needs path extraction
+                "list_files": "path",
+                "run_shell": "command",
+                "apply_patch": "patch",
+                "generate_image": "prompt",
+                "analyze_image": "path",
+            }
+
+            param_name = param_mapping.get(tool_name)
+
+            # Handle tools with no parameters
+            if param_name is None:
+                arguments = {}
+            else:
+                arguments = {param_name: user_input}
+
+            return {
+                "tool": tool_name,
+                "arguments": arguments,
+                "confidence": confidence
+            }
+
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse JSON tool call: {e}")
+            return None
+        except Exception as e:
+            logger.warning(f"Error parsing JSON tool call: {e}")
+            return None

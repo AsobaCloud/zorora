@@ -447,8 +447,8 @@ def use_codestral(code_context: str) -> str:
     if not code_context or not isinstance(code_context, str):
         return "Error: code_context must be a non-empty string"
 
-    if len(code_context) > 8000:
-        return "Error: code_context too long (max 8000 characters)"
+    if len(code_context) > 30000:
+        return "Error: code_context too long (max 30000 characters)"
 
     try:
         import config
@@ -503,8 +503,8 @@ def use_reasoning_model(task: str) -> str:
     if not task or not isinstance(task, str):
         return "Error: task must be a non-empty string"
 
-    if len(task) > 8000:
-        return "Error: task too long (max 8000 characters)"
+    if len(task) > 30000:
+        return "Error: task too long (max 30000 characters)"
 
     try:
         import config
@@ -559,8 +559,8 @@ def use_search_model(query: str) -> str:
     if not query or not isinstance(query, str):
         return "Error: query must be a non-empty string"
 
-    if len(query) > 8000:
-        return "Error: query too long (max 8000 characters)"
+    if len(query) > 30000:
+        return "Error: query too long (max 30000 characters)"
 
     try:
         import config

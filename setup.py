@@ -27,6 +27,8 @@ setup(
         "turn_processor",
         "model_selector",
         "ui",
+        "router",
+        "planner",
     ],
     entry_points={
         "console_scripts": [

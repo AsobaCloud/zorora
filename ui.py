@@ -59,6 +59,8 @@ class ZororaUI:
         # Slash commands
         right_text.append("/models", style="cyan")
         right_text.append("  - Configure models\n", style="dim")
+        right_text.append("/config", style="cyan")
+        right_text.append("  - Routing settings\n", style="dim")
         right_text.append("/history", style="cyan")
         right_text.append(" - View saved sessions\n", style="dim")
         right_text.append("/help", style="cyan")
