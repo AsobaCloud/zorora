@@ -112,11 +112,12 @@ def _validate_path(path: str) -> tuple[bool, str]:
     """
     try:
         file_path = Path(path).resolve()
-        cwd = Path.cwd().resolve()
+        home_dir = Path.home().resolve()
 
-        # Prevent path traversal outside current directory
-        if not str(file_path).startswith(str(cwd)):
-            return False, f"Error: Path '{path}' is outside current directory"
+        # Prevent path traversal outside home directory
+        # (More permissive than CWD to allow stateful navigation)
+        if not str(file_path).startswith(str(home_dir)):
+            return False, f"Error: Path must be within home directory ({home_dir})"
 
         return True, ""
     except Exception as e:
