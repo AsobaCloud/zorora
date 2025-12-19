@@ -39,6 +39,7 @@ setup(
         "requests>=2.28.0",
         "rich>=13.0.0",
         "ddgs>=9.0.0",
+        "beautifulsoup4>=4.11.0",
     ],
     python_requires=">=3.8",
     classifiers=[

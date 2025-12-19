@@ -51,6 +51,52 @@ ENERGY_ANALYST = {
 # - Local: http://localhost:8000
 # - Production: https://energyanalystragservice-production.up.railway.app
 
+# Brave Search API Configuration
+# Get your free API key at: https://brave.com/search/api/
+# Free tier: 2000 queries/month (~66/day)
+BRAVE_SEARCH = {
+    "api_key": "YOUR_BRAVE_API_KEY_HERE",
+    "endpoint": "https://api.search.brave.com/res/v1/web/search",
+    "news_endpoint": "https://api.search.brave.com/res/v1/news/search",
+    "image_endpoint": "https://api.search.brave.com/res/v1/images/search",
+    "timeout": 10,
+    "enabled": True,  # Set to False to force DuckDuckGo
+}
+
+# Web Search Enhancement Configuration
+WEB_SEARCH = {
+    # Caching
+    "cache_enabled": True,
+    "cache_ttl_hours": 1,  # General queries
+    "cache_ttl_stable_hours": 24,  # Stable queries (e.g., "Python documentation")
+    "cache_max_entries": 100,
+    
+    # Query Optimization
+    "query_optimization": True,
+    "intent_detection": True,
+    
+    # Multi-Source (Sprint 2)
+    "parallel_enabled": False,  # Will enable in Sprint 2
+    "max_domain_results": 2,  # Max results per domain
+    
+    # Content Extraction (Sprint 3 - opt-in)
+    "extract_content": False,  # Set to True to enable
+    "extract_top_n": 2,  # Extract from top N results
+    
+    # Synthesis (Sprint 3 - opt-in)
+    "synthesize_results": False,  # Use LLM to synthesize
+    "synthesize_threshold": 5,  # Min results to synthesize
+    
+    # Specialized Search (Sprint 4)
+    "news_enabled": True,
+    "image_enabled": False,
+    
+    # Rate Limiting (Sprint 5)
+    "rate_limit_enabled": False,  # Will enable in Sprint 5
+    "brave_rate_limit": 66,  # queries per day (free tier: 2000/month)
+    "ddg_rate_limit": 100,  # queries per hour (estimated)
+}
+
 # Hugging Face Inference Endpoints
 HF_TOKEN = "hf_YOUR_TOKEN_HERE"  # Replace with your Hugging Face API token
 HF_ENDPOINTS = {

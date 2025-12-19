@@ -23,7 +23,7 @@ Orchestrator Model (fast, lightweight)
     ├─→ Codestral (code generation - local or HF endpoint)
     ├─→ Reasoning Model (planning, complex analysis)
     ├─→ Search Model (AI knowledge retrieval)
-    ├─→ Web Search (DuckDuckGo - current information)
+    ├─→ Web Search (Brave Search API + DuckDuckGo fallback - current information)
     └─→ EnergyAnalyst (energy policy RAG)
     ↓
 Final Response (synthesized from tools/models)
@@ -49,7 +49,7 @@ Final Response (synthesized from tools/models)
 - ✅ **Code generation** - Dedicated models for coding tasks
 - ✅ **Context summarization** - Intelligent conversation compression for VRAM
 - ✅ **Conversation persistence** - Auto-save, resume, history browser
-- ✅ **Web search** - Real-time information from DuckDuckGo
+- ✅ **Web search** - Real-time information via Brave Search API with DuckDuckGo fallback, query caching, parallel search, and result optimization
 - ✅ **Energy policy analysis** - RAG-powered insights from 485+ documents
 - ✅ **Model selection** - Interactive `/models` command with HF endpoint management
 - ✅ **Retry logic** - Automatic retries for transient failures
@@ -193,7 +193,17 @@ The orchestrator automatically routes queries to the appropriate tools!
   - Use for: General knowledge, explanations, research
 
 ### External Tools
-- `web_search(query, max_results=5)` - DuckDuckGo web search
+- `web_search(query, max_results=5)` - Enhanced web search
+  - **Primary**: Brave Search API (requires API key)
+  - **Fallback**: DuckDuckGo (automatic if Brave unavailable)
+  - **Features**:
+    - Query caching (1-24 hour TTL, configurable)
+    - Query optimization and intent detection
+    - Parallel search (Brave + DuckDuckGo simultaneously)
+    - Result deduplication, ranking, and domain diversity
+    - Automatic news search routing
+    - Content extraction (optional)
+    - Result synthesis via LLM (optional)
   - Returns: Current information, news, real-time data
   - Automatic retries with exponential backoff
   - Graceful handling of rate limits
@@ -474,9 +484,34 @@ Error: EnergyAnalyst API request timed out...
 
 ### Web Search SSL Errors
 ```
-Web search attempt failed: Unsupported protocol version
-```
-**Solution:** Rate limiting - automatic retry with backoff. Successive searches may be temporarily blocked by DuckDuckGo.
+### Web Search Configuration
+
+**Brave Search API** (recommended):
+- Get free API key at: https://brave.com/search/api/
+- Free tier: 2000 queries/month (~66/day)
+- Configure in `config.py`:
+  ```python
+  BRAVE_SEARCH = {
+      "api_key": "YOUR_API_KEY",
+      "enabled": True,
+      "endpoint": "https://api.search.brave.com/res/v1/web/search",
+      "timeout": 10,
+  }
+  ```
+
+**DuckDuckGo Fallback**:
+- Automatically used if Brave Search is unavailable or fails
+- No API key required
+- Rate limiting: Automatic retry with exponential backoff
+
+**Web Search Features** (configurable in `config.py`):
+- Query caching (reduce API calls, 1-24 hour TTL)
+- Query optimization (remove meta-language, detect intent)
+- Parallel search (search both engines simultaneously)
+- Result processing (deduplication, ranking, domain diversity)
+- Content extraction (fetch full page content, optional)
+- Result synthesis (LLM-powered summaries, optional)
+- News search (automatic routing for news queries)
 
 ### Model Not Calling Tools / Stuck in Loops
 ```

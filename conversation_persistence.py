@@ -18,9 +18,26 @@ class ConversationPersistence:
 
         Args:
             storage_dir: Directory to store conversation files
+                        - If absolute path: use as-is
+                        - If relative path starting with ~: resolve to home directory
+                        - If relative path: resolve relative to project root (where code is)
         """
-        self.storage_dir = Path(storage_dir)
+        storage_path = Path(storage_dir)
+        
+        if storage_path.is_absolute():
+            # Already absolute, use as-is
+            self.storage_dir = storage_path
+        elif storage_dir.startswith("~"):
+            # Home directory relative path
+            self.storage_dir = Path(storage_dir).expanduser().resolve()
+        else:
+            # Relative path - resolve relative to project root (where this file is located)
+            # This ensures conversations are stored in a consistent location regardless of CWD
+            project_root = Path(__file__).parent.resolve()
+            self.storage_dir = (project_root / storage_path).resolve()
+        
         self.storage_dir.mkdir(parents=True, exist_ok=True)
+        logger.debug(f"Conversation storage directory: {self.storage_dir}")
 
     def save_conversation(
         self,

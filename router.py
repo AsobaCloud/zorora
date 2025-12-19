@@ -13,9 +13,14 @@ class HeuristicRouter:
     # Keyword patterns mapped to tools
     # Patterns are tried in order - first match wins
     PATTERNS = {
+        "get_working_directory": [
+            r'\b(what is|what\'s|show me|tell me)\b.*\b(current|working)\s+(directory|folder|path|dir)\b',
+            r'\b(current|working)\s+(directory|folder|path|dir)\b',
+            r'\bpwd\b',
+        ],
         "web_search": [
             r'\b(search|google|find|lookup|latest|current|news|today|now)\b.*\b(news|information|article|update|today)\b',
-            r'\b(what\'s|what is|whats)\b.*\b(latest|current|new|happening|today)\b',
+            r'\b(what\'s|what is|whats)\b.*\b(latest|current|new|happening|today)\b.*\b(news|information|article|update)\b',
             r'\b(search for|look up|find out)\b',
         ],
         "use_codestral": [
