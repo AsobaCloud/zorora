@@ -269,6 +269,14 @@ def list_files(path: str = ".", working_directory=None) -> str:
         return f"Error listing files: {e}"
 
 
+def get_working_directory(working_directory=None) -> str:
+    """Get the current working directory."""
+    if working_directory is not None:
+        return f"Current working directory: {working_directory}"
+    else:
+        return f"Current working directory: {Path.cwd()}"
+
+
 def analyze_image(path: str, task: str = "Convert this image to markdown format, preserving all text, tables, charts, and structure. Use OCR to extract any text.") -> str:
     """
     Analyze an image using a vision-language model (VL model) for OCR and content extraction.
@@ -1294,6 +1302,7 @@ TOOL_FUNCTIONS: Dict[str, Callable[..., str]] = {
     "edit_file": edit_file,
     "make_directory": make_directory,
     "list_files": list_files,
+    "get_working_directory": get_working_directory,
     "analyze_image": analyze_image,
     "generate_image": generate_image,
     "run_shell": run_shell,
@@ -1308,6 +1317,7 @@ TOOL_FUNCTIONS: Dict[str, Callable[..., str]] = {
     "search": use_search_model,  # Simple alias
     "generate_code": use_codestral,  # Simple alias
     "plan": use_reasoning_model,  # Simple alias
+    "pwd": get_working_directory,  # Shell alias
 }
 
 # Tool aliases

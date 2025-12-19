@@ -47,8 +47,8 @@ class ToolExecutor:
             if tool_name == "use_codestral" and self.ui is not None:
                 arguments['ui'] = self.ui
 
-            # Pass working directory to file operations
-            file_ops = ["read_file", "write_file", "edit_file", "list_files", "make_directory"]
+            # Pass working directory to file operations and navigation tools
+            file_ops = ["read_file", "write_file", "edit_file", "list_files", "make_directory", "get_working_directory", "pwd"]
             if tool_name in file_ops:
                 arguments['working_directory'] = self.working_directory
 
