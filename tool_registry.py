@@ -134,6 +134,74 @@ def write_file(path: str, content: str) -> str:
         return f"Error writing file: {e}"
 
 
+def make_directory(path: str) -> str:
+    """Create a new directory (including parent directories if needed)."""
+    # Validate path security
+    is_valid, error = _validate_path(path)
+    if not is_valid:
+        return error
+
+    try:
+        dir_path = Path(path)
+        if dir_path.exists():
+            if dir_path.is_dir():
+                return f"OK: Directory '{path}' already exists"
+            else:
+                return f"Error: '{path}' exists but is not a directory"
+
+        dir_path.mkdir(parents=True, exist_ok=True)
+        return f"OK: Created directory '{path}'"
+    except Exception as e:
+        return f"Error creating directory: {e}"
+
+
+def edit_file(path: str, old_string: str, new_string: str) -> str:
+    """
+    Edit a file by replacing exact string match.
+
+    Args:
+        path: Path to the file to edit
+        old_string: Exact string to find and replace
+        new_string: String to replace with
+
+    Returns:
+        Success or error message
+    """
+    # Validate path security
+    is_valid, error = _validate_path(path)
+    if not is_valid:
+        return error
+
+    file_path = Path(path)
+    if not file_path.exists():
+        return f"Error: File '{path}' does not exist."
+    if not file_path.is_file():
+        return f"Error: '{path}' is not a file."
+
+    try:
+        # Read current content
+        content = file_path.read_text()
+
+        # Check if old_string exists
+        if old_string not in content:
+            return f"Error: String not found in file. Make sure the old_string matches exactly (including whitespace)."
+
+        # Count occurrences
+        occurrences = content.count(old_string)
+        if occurrences > 1:
+            return f"Error: String appears {occurrences} times in file. Use write_file for multiple replacements or be more specific."
+
+        # Perform replacement
+        new_content = content.replace(old_string, new_string, 1)
+        file_path.write_text(new_content)
+
+        return f"OK: Replaced 1 occurrence in '{path}'"
+    except UnicodeDecodeError:
+        return f"Error: File '{path}' is not a text file"
+    except Exception as e:
+        return f"Error editing file: {e}"
+
+
 def list_files(path: str = ".") -> str:
     """List files and directories in a path."""
     # Validate path security
@@ -1029,6 +1097,8 @@ def web_search(query: str, max_results: int = 5) -> str:
 TOOL_FUNCTIONS: Dict[str, Callable[..., str]] = {
     "read_file": read_file,
     "write_file": write_file,
+    "edit_file": edit_file,
+    "make_directory": make_directory,
     "list_files": list_files,
     "analyze_image": analyze_image,
     "generate_image": generate_image,
@@ -1156,6 +1226,48 @@ TOOLS_DEFINITION: List[DictType[str, Any]] = [
                     }
                 },
                 "required": ["path", "content"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "edit_file",
+            "description": "Edit an existing file by replacing an exact string match. Use this when you need to modify part of a file without rewriting the entire file. The old_string must match exactly (including whitespace).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file to edit"
+                    },
+                    "old_string": {
+                        "type": "string",
+                        "description": "Exact string to find and replace (must match exactly including whitespace)"
+                    },
+                    "new_string": {
+                        "type": "string",
+                        "description": "String to replace with"
+                    }
+                },
+                "required": ["path", "old_string", "new_string"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "make_directory",
+            "description": "Create a new directory. Creates parent directories if they don't exist (like 'mkdir -p'). Safe to call even if directory already exists.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path of the directory to create"
+                    }
+                },
+                "required": ["path"]
             }
         }
     },

@@ -39,6 +39,15 @@ class HeuristicRouter:
             r'\b(write|save|store|create|put)\b.*\b(to|in|as)\b.*\.(py|js|md|txt|json|yaml|yml|sh|ts|html|css|rs|go|java)',
             r'\b(save this|write this|create file)\b',
         ],
+        "edit_file": [
+            r'\b(edit|modify|change|update|replace|fix)\b.*\b(in|the)\b.*\.(py|js|md|txt|json|yaml|yml|sh|ts|html|css|rs|go|java)',
+            r'\b(change|replace|update)\b.*\b(to|with|from)\b',
+            r'\b(fix|correct)\b.*\b(typo|error|mistake)\b',
+        ],
+        "make_directory": [
+            r'\b(make|create|mkdir)\b.*\b(directory|folder|dir)\b',
+            r'\b(create|make)\b.*\b(folder|directory)\b',
+        ],
         "list_files": [
             r'\b(list|ls|dir|show)\b.*\b(files|directory|folder|contents)\b',
             r'\b(what files|show files|see files)\b',

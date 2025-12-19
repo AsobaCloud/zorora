@@ -42,19 +42,27 @@ Available Tools (with signatures):
    Use when: User wants to save content to a file
    Examples: "save this to report.md", "write to output.txt", "create config.json"
 
-9. list_files(path: str) -> List[str]
-   Use when: User wants to see directory contents
-   Examples: "list files", "show directory structure", "what files are here"
+9. edit_file(path: str, old_string: str, new_string: str) -> str
+   Use when: User wants to modify part of an existing file
+   Examples: "change X to Y in config.py", "update the version number", "fix the typo"
 
-10. run_shell(command: str) -> str
+10. make_directory(path: str) -> str
+    Use when: User wants to create a new directory
+    Examples: "create a folder", "make directory", "mkdir data/output"
+
+11. list_files(path: str) -> List[str]
+    Use when: User wants to see directory contents
+    Examples: "list files", "show directory structure", "what files are here"
+
+12. run_shell(command: str) -> str
     Use when: Execute shell commands (git, npm, tests, etc.)
     Examples: "run tests", "git status", "npm install", "check version"
 
-11. apply_patch(patch: str) -> str
+13. apply_patch(patch: str) -> str
     Use when: Apply code diffs/patches to files
     Examples: "apply this patch", "apply diff"
 
-12. generate_image(prompt: str) -> str
+14. generate_image(prompt: str) -> str
     Use when: Create images from text descriptions
     Examples: "generate an image of", "create a picture of", "make an illustration"
 
