@@ -15,6 +15,7 @@ setup(
     long_description_content_type="text/markdown",
     author="Asoba",
     url="https://github.com/AsobaCloud/zorora",
+    packages=["workflows"],  # Include workflows package
     py_modules=[
         "main",
         "repl",
