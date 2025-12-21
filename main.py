@@ -34,6 +34,9 @@ def main():
     repl = REPL()
     repl.run()
 
+    # Explicit clean exit
+    sys.exit(0)
+
 
 if __name__ == "__main__":
     try:
