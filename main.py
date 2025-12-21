@@ -34,6 +34,9 @@ def main():
     repl = REPL()
     repl.run()
 
+    # Clean up logging handlers before exit
+    logging.shutdown()
+
     # Explicit clean exit
     sys.exit(0)
 
