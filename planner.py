@@ -13,14 +13,23 @@ class TaskPlanner:
 
     PLANNER_PROMPT = """You are a task planner. Break down the user's request into a sequence of tool calls.
 
-Output ONLY valid JSON array (no markdown, no explanation):
-[
-  {{"tool": "tool_name", "input": "what to pass", "reason": "why this step"}},
-  {{"tool": "tool_name", "input": "what to pass", "reason": "why this step"}}
-]
+Output ONLY valid JSON object (no markdown, no explanation):
+{{
+  "steps": [
+    {{"id": 1, "tool": "tool_name", "input": "what to pass", "reason": "why this step"}},
+    {{"id": 2, "tool": "tool_name", "input": "what to pass", "reason": "why this step", "depends_on": [1]}}
+  ]
+}}
+
+CRITICAL:
+- Each step MUST have: id (integer), tool (string), input (string), reason (string)
+- Optional: depends_on (array of step IDs that must complete first)
+- Step IDs must be sequential starting from 1
+- Output ONLY the JSON object, no markdown code blocks, no explanations
 
 Available tools:
 - web_search: Search the internet for current information
+- get_newsroom_headlines: Fetch today's compiled articles from Asoba newsroom (no input required)
 - use_codestral: Generate or modify code (ANY code task)
 - use_reasoning_model: Complex reasoning, analysis, planning
 - use_search_model: Research using AI knowledge (not web)
@@ -41,39 +50,42 @@ Guidelines:
 - CRITICAL: For file analysis/summary requests, ALWAYS use 2 steps:
   Step 1: read_file (to get content)
   Step 2: use_reasoning_model (to analyze/summarize content)
+- CRITICAL: For multi-source queries (mentions newsroom AND web search), ALWAYS:
+  Step 1: get_newsroom_headlines (to fetch newsroom data)
+  Step 2: web_search (to fetch web data)
+  Step 3: use_reasoning_model (to synthesize both sources)
 
 Example 1:
 User: "Research React hooks and create a custom hook for form handling"
 Output:
-[
-  {{"tool": "web_search", "input": "React hooks best practices 2025", "reason": "Get current patterns"}},
-  {{"tool": "use_search_model", "input": "Explain custom React hooks for forms", "reason": "Understand concept"}},
-  {{"tool": "use_codestral", "input": "Create a custom React hook for form handling with validation", "reason": "Generate implementation"}}
-]
+{{
+  "steps": [
+    {{"id": 1, "tool": "web_search", "input": "React hooks best practices 2025", "reason": "Get current patterns"}},
+    {{"id": 2, "tool": "use_search_model", "input": "Explain custom React hooks for forms", "reason": "Understand concept"}},
+    {{"id": 3, "tool": "use_codestral", "input": "Create a custom React hook for form handling with validation", "reason": "Generate implementation", "depends_on": [1, 2]}}
+  ]
+}}
 
 Example 2:
 User: "Analyze the config file and suggest improvements"
 Output:
-[
-  {{"tool": "read_file", "input": "config.py", "reason": "Read current config"}},
-  {{"tool": "use_reasoning_model", "input": "Analyze this config file and suggest improvements", "reason": "Generate recommendations"}}
-]
+{{
+  "steps": [
+    {{"id": 1, "tool": "read_file", "input": "config.py", "reason": "Read current config"}},
+    {{"id": 2, "tool": "use_reasoning_model", "input": "Analyze this config file and suggest improvements", "reason": "Generate recommendations", "depends_on": [1]}}
+  ]
+}}
 
 Example 3:
-User: "Provide a summary of the file gold_deep_dive.md"
+User: "Based on the newsroom as well as web search, what are the major themes of 2025 in Africa?"
 Output:
-[
-  {{"tool": "read_file", "input": "gold_deep_dive.md", "reason": "Read file content"}},
-  {{"tool": "use_reasoning_model", "input": "Provide a summary of this document", "reason": "Summarize the content"}}
-]
-
-Example 4:
-User: "Create a new directory ~/projects/myapp and add a README file"
-Output:
-[
-  {{"tool": "make_directory", "input": "~/projects/myapp", "reason": "Create project directory"}},
-  {{"tool": "write_file", "input": "~/projects/myapp/README.md", "reason": "Create README in new directory"}}
-]
+{{
+  "steps": [
+    {{"id": 1, "tool": "get_newsroom_headlines", "input": "", "reason": "Fetch compiled newsroom articles"}},
+    {{"id": 2, "tool": "web_search", "input": "2025 Africa major themes AI energy geopolitics", "reason": "Get web search results"}},
+    {{"id": 3, "tool": "use_reasoning_model", "input": "Based on newsroom and web results, identify 5-6 major themes of 2025 in Africa across AI, energy, and geopolitics", "reason": "Synthesize multi-source analysis", "depends_on": [1, 2]}}
+  ]
+}}
 
 User request: {user_input}
 
@@ -115,6 +127,12 @@ Remember: Output ONLY the JSON array, nothing else."""
             r'\bresearch.*and.*(?:create|implement|build|write)\b',
             r'\b(?:analyze|review|check).*and.*(?:create|implement|suggest|improve)\b',
             r'\b(?:read|show).*and.*(?:create|implement|modify|update|suggest|improve)\b',
+            # Multi-source queries: mentions multiple data sources
+            r'\b(?:based on|using|from|with)\b.*\b(?:and|as well as|with|plus)\b.*\b(?:newsroom|web search|search)\b',
+            r'\b(?:newsroom|headlines).*\b(?:and|as well as|with|plus)\b.*\bweb search\b',
+            r'\bweb search.*\b(?:and|as well as|with|plus)\b.*\b(?:newsroom|headlines)\b',
+            # Multiple tool mentions in one query
+            r'\b(?:search|newsroom).*\b(?:and|as well as).*\b(?:analyze|summarize|identify|find)\b',
             # Implicit multi-step: file analysis operations
             r'\b(?:summarize|analyze|review|explain|break down|evaluate)\b.*\b(?:file|document)\b',
             r'\bprovide\b.*\b(?:summary|analysis|overview)\b.*\b(?:of|for)\b.*\b(?:file|document)\b',
@@ -129,72 +147,166 @@ Remember: Output ONLY the JSON array, nothing else."""
 
         return False
 
-    def create_plan(self, user_input: str) -> List[Dict[str, Any]]:
+    def create_plan(self, user_input: str, max_retries: int = 3) -> List[Dict[str, Any]]:
         """
-        Create execution plan for user request.
+        Create execution plan for user request with strict schema validation.
 
         Args:
             user_input: User's request
+            max_retries: Maximum retry attempts for invalid JSON
 
         Returns:
-            List of steps: [{{"tool": "...", "input": "...", "reason": "..."}}]
+            List of steps with enforced schema
+
+        Raises:
+            ValueError: If unable to generate valid plan after retries
         """
         prompt = self.PLANNER_PROMPT.format(user_input=user_input)
 
-        try:
-            response = self.llm_client.chat_complete(
-                [{"role": "user", "content": prompt}],
-                tools=None
-            )
+        for attempt in range(max_retries):
+            try:
+                response = self.llm_client.chat_complete(
+                    [{"role": "user", "content": prompt}],
+                    tools=None
+                )
 
-            content = self.llm_client.extract_content(response)
+                content = self.llm_client.extract_content(response)
 
-            # Parse JSON plan
-            # Extract JSON array (handle markdown code blocks)
-            code_block_match = re.search(r'```(?:json)?\s*(\[.*?\])\s*```', content, re.DOTALL)
-            if code_block_match:
-                json_str = code_block_match.group(1)
-            else:
-                # Try to find JSON array directly
-                json_match = re.search(r'\[.*\]', content, re.DOTALL)
-                if not json_match:
-                    logger.warning("No JSON array found in planner output")
+                # Extract JSON (handle markdown code blocks)
+                json_str = self._extract_json(content)
+
+                if not json_str:
+                    logger.warning(f"Attempt {attempt + 1}: No JSON found in output")
+                    if attempt < max_retries - 1:
+                        prompt = "Output ONLY valid JSON. No markdown, no explanation:\n" + prompt
+                        continue
                     return []
-                json_str = json_match.group(0)
 
-            plan = json.loads(json_str)
+                # Parse JSON
+                plan_obj = json.loads(json_str)
 
-            # Validate plan structure
-            if not isinstance(plan, list):
-                logger.warning("Plan is not a list")
+                # Validate schema
+                steps = self._validate_plan_schema(plan_obj)
+
+                if not steps:
+                    logger.warning(f"Attempt {attempt + 1}: Schema validation failed")
+                    if attempt < max_retries - 1:
+                        prompt = "You must output valid JSON with 'steps' array. Each step needs id, tool, input, reason:\n" + prompt
+                        continue
+                    return []
+
+                logger.info(f"Created valid plan with {len(steps)} steps")
+                return steps
+
+            except json.JSONDecodeError as e:
+                logger.warning(f"Attempt {attempt + 1}: JSON parse error: {e}")
+                if attempt < max_retries - 1:
+                    prompt = "Invalid JSON. Output ONLY valid JSON object:\n" + prompt
+                    continue
                 return []
 
-            if len(plan) == 0:
-                logger.warning("Plan is empty")
+            except Exception as e:
+                logger.error(f"Attempt {attempt + 1}: Unexpected error: {e}")
+                if attempt < max_retries - 1:
+                    continue
                 return []
 
-            # Validate each step
-            for i, step in enumerate(plan):
-                if not isinstance(step, dict):
-                    logger.warning(f"Step {i} is not a dict: {step}")
-                    return []
-                if not all(k in step for k in ["tool", "input"]):
-                    logger.warning(f"Step {i} missing required fields: {step}")
-                    return []
+        logger.error("Failed to generate valid plan after all retries")
+        return []
 
-            logger.info(f"Created plan with {len(plan)} steps")
+    def _extract_json(self, content: str) -> Optional[str]:
+        """Extract JSON from response content."""
+        # Try markdown code block first
+        code_block_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', content, re.DOTALL)
+        if code_block_match:
+            return code_block_match.group(1)
 
-            # Validate and fix incomplete plans for file analysis
-            plan = self._validate_and_fix_plan(user_input, plan)
+        # Try finding JSON object directly
+        json_match = re.search(r'\{[^{}]*"steps"[^{}]*\[.*?\]\s*\}', content, re.DOTALL)
+        if json_match:
+            return json_match.group(0)
 
-            return plan
+        # Last resort: try to find any JSON object
+        json_match = re.search(r'\{.*\}', content, re.DOTALL)
+        if json_match:
+            return json_match.group(0)
 
-        except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse plan JSON: {e}")
+        return None
+
+    def _validate_plan_schema(self, plan_obj: Any) -> List[Dict[str, Any]]:
+        """
+        Validate plan schema and return steps list.
+
+        Expected schema:
+        {
+          "steps": [
+            {"id": 1, "tool": "...", "input": "...", "reason": "...", "depends_on": [...]}
+          ]
+        }
+
+        Args:
+            plan_obj: Parsed JSON object
+
+        Returns:
+            List of validated steps, or empty list if invalid
+        """
+        # Check top-level structure
+        if not isinstance(plan_obj, dict):
+            logger.warning("Plan is not a dict")
             return []
-        except Exception as e:
-            logger.warning(f"Error creating plan: {e}")
+
+        if "steps" not in plan_obj:
+            logger.warning("Plan missing 'steps' key")
             return []
+
+        steps = plan_obj["steps"]
+
+        if not isinstance(steps, list):
+            logger.warning("'steps' is not a list")
+            return []
+
+        if len(steps) == 0:
+            logger.warning("'steps' is empty")
+            return []
+
+        # Validate each step
+        valid_tools = [
+            "web_search", "get_newsroom_headlines", "use_codestral",
+            "use_reasoning_model", "use_search_model", "use_energy_analyst",
+            "read_file", "write_file", "edit_file", "make_directory",
+            "list_files", "run_shell", "generate_image"
+        ]
+
+        validated_steps = []
+        for i, step in enumerate(steps):
+            if not isinstance(step, dict):
+                logger.warning(f"Step {i} is not a dict: {step}")
+                return []
+
+            # Check required fields
+            required_fields = ["tool", "input"]
+            if not all(k in step for k in required_fields):
+                logger.warning(f"Step {i} missing required fields: {step}")
+                return []
+
+            # Validate tool name
+            if step["tool"] not in valid_tools:
+                logger.warning(f"Step {i} has invalid tool: {step['tool']}")
+                return []
+
+            # Add missing fields with defaults
+            if "id" not in step:
+                step["id"] = i + 1
+
+            if "reason" not in step:
+                step["reason"] = f"Execute {step['tool']}"
+
+            if "depends_on" not in step:
+                step["depends_on"] = []
+
+            validated_steps.append(step)
+
+        return validated_steps
 
     def _validate_and_fix_plan(self, user_input: str, plan: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -270,6 +382,7 @@ Remember: Output ONLY the JSON array, nothing else."""
             # Map tool to parameter name
             param_mapping = {
                 "web_search": "query",
+                "get_newsroom_headlines": None,  # Takes no parameters
                 "use_codestral": "code_context",
                 "use_reasoning_model": "task",
                 "use_search_model": "query",
@@ -285,14 +398,18 @@ Remember: Output ONLY the JSON array, nothing else."""
 
             param_name = param_mapping.get(tool, "input")
 
-            # For reasoning and codestral, inject accumulated context
-            if tool in ["use_reasoning_model", "use_codestral"] and accumulated_context:
-                # Clear formatting for the specialist model
-                enhanced_input = f"{accumulated_context}\n\n---\n\nBased on the content above, {user_input}"
+            # Handle tools that take no parameters
+            if param_name is None:
+                arguments = {}
             else:
-                enhanced_input = user_input
+                # For reasoning and codestral, inject accumulated context
+                if tool in ["use_reasoning_model", "use_codestral"] and accumulated_context:
+                    # Clear formatting for the specialist model
+                    enhanced_input = f"{accumulated_context}\n\n---\n\nBased on the content above, {user_input}"
+                else:
+                    enhanced_input = user_input
 
-            arguments = {param_name: enhanced_input}
+                arguments = {param_name: enhanced_input}
 
             # Execute tool
             try:

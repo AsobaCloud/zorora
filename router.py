@@ -18,6 +18,12 @@ class HeuristicRouter:
             r'\b(current|working)\s+(directory|folder|path|dir)\b',
             r'\bpwd\b',
         ],
+        "get_newsroom_headlines": [
+            r'\b(newsroom|Asoba)\b',
+            r'\b(today\'?s|todays)\s+(news|headlines?|articles?)\b',
+            r'\b(from|in|on|based on|using)\s+(?:the\s+)?newsroom\b',
+            r'\b(newsroom|headlines?)\s+(and|as well as|with)\s+(web\s+)?search\b',
+        ],
         "web_search": [
             r'\b(search|google|find|lookup|latest|current|news|today|now)\b.*\b(news|information|article|update|today)\b',
             r'\b(what\'s|what is|whats)\b.*\b(latest|current|new|happening|today)\b.*\b(news|information|article|update)\b',

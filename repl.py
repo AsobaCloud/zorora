@@ -70,6 +70,57 @@ class REPL:
         logging.getLogger(__name__).warning(f"Endpoint '{endpoint_key}' not found for orchestrator, falling back to local")
         return LLMClient()
 
+    def _handle_workflow_command(self, command: str):
+        """
+        Handle workflow-forcing slash commands.
+
+        Returns tuple of (response, execution_time) if handled, None otherwise.
+        """
+        cmd_lower = command.lower().strip()
+
+        # /search <query> - Force research workflow
+        if cmd_lower.startswith("/search "):
+            query = command[8:].strip()  # Remove "/search "
+            if not query:
+                self.ui.console.print("[red]Usage: /search <query>[/red]")
+                self.ui.console.print("[dim]Example: /search gold vs bitcoin prices[/dim]")
+                return None
+            self.ui.console.print(f"[cyan]Forcing research workflow...[/cyan]")
+            return self.turn_processor.process(query, forced_workflow="research")
+
+        # /ask <query> - Force conversational response (no search)
+        elif cmd_lower.startswith("/ask "):
+            query = command[5:].strip()  # Remove "/ask "
+            if not query:
+                self.ui.console.print("[red]Usage: /ask <query>[/red]")
+                self.ui.console.print("[dim]Example: /ask can you explain that more simply?[/dim]")
+                return None
+            self.ui.console.print(f"[cyan]Using conversational mode (no search)...[/cyan]")
+            return self.turn_processor.process(query, forced_workflow="qa")
+
+        # /code <prompt> - Force code generation
+        elif cmd_lower.startswith("/code "):
+            prompt = command[6:].strip()  # Remove "/code "
+            if not prompt:
+                self.ui.console.print("[red]Usage: /code <prompt>[/red]")
+                self.ui.console.print("[dim]Example: /code write a function to parse JSON[/dim]")
+                return None
+            self.ui.console.print(f"[cyan]Forcing code generation...[/cyan]")
+            return self.turn_processor.process(prompt, forced_workflow="code")
+
+        # /analyst <query> - Force EnergyAnalyst RAG query
+        elif cmd_lower.startswith("/analyst "):
+            query = command[9:].strip()  # Remove "/analyst "
+            if not query:
+                self.ui.console.print("[red]Usage: /analyst <query>[/red]")
+                self.ui.console.print("[dim]Example: /analyst FERC Order 2222 requirements[/dim]")
+                return None
+            self.ui.console.print(f"[cyan]Querying EnergyAnalyst RAG...[/cyan]")
+            return self.turn_processor.process(query, forced_workflow="energy")
+
+        # Not a workflow command
+        return None
+
     def _handle_slash_command(self, command: str):
         """Handle slash commands."""
         cmd = command.lower().strip()
@@ -239,17 +290,26 @@ class REPL:
     def _show_help(self):
         """Display help information."""
         help_text = """
-[bold cyan]Available Commands:[/bold cyan]
+[bold cyan]Workflow Commands:[/bold cyan]
+
+  [cyan]/search <query>[/cyan]         - Force research workflow (newsroom + web + synthesis)
+  [cyan]/ask <query>[/cyan]            - Force conversational mode (no web search)
+  [cyan]/code <prompt>[/cyan]          - Force code generation with Codestral
+  [cyan]/analyst <query>[/cyan]        - Query EnergyAnalyst RAG (energy policy documents)
+
+[bold cyan]System Commands:[/bold cyan]
 
   [cyan]/models[/cyan]                  - Select models for orchestrator and specialist tools
-  [cyan]/config[/cyan]                  - Configure routing settings (JSON, heuristic, confidence)
-  [cyan]/save <filename>[/cyan]        - Save last specialist output to file (e.g., /save plan.md)
+  [cyan]/config[/cyan]                  - Configure routing settings
+  [cyan]/save <filename>[/cyan]        - Save last specialist output to file
   [cyan]/history[/cyan]                 - List all saved conversation sessions
   [cyan]/resume <session_id>[/cyan]    - Resume a previous conversation session
-  [cyan]/clear[/cyan]                   - Clear conversation context (reset to fresh state)
+  [cyan]/clear[/cyan]                   - Clear conversation context
   [cyan]/visualize[/cyan]               - Show context usage statistics
   [cyan]/help[/cyan]                    - Show this help message
   [cyan]exit[/cyan]                     - Exit the REPL
+
+[dim]Note: By default, all queries trigger web search. Use /ask for follow-ups without search.[/dim]
         """
         self.ui.console.print(help_text)
 
@@ -403,16 +463,21 @@ class REPL:
 
                 # Handle slash commands
                 if user_input.startswith("/"):
-                    self._handle_slash_command(user_input)
-                    turn_count -= 1  # Don't count slash commands
+                    # Check if it's a workflow-forcing command
+                    workflow_result = self._handle_workflow_command(user_input)
+                    if workflow_result is not None:
+                        # Workflow command processed - display result
+                        response, execution_time = workflow_result
+                        self.ui.display_response(response, execution_time)
+                    else:
+                        # System command (help, models, etc.) - handled internally
+                        self._handle_slash_command(user_input)
+                        turn_count -= 1  # Don't count system commands
                     continue
-
-                # Determine if tools should be available
-                tools_available = self.turn_processor.should_provide_tools(user_input)
 
                 # Process turn
                 try:
-                    response, execution_time = self.turn_processor.process(user_input, tools_available)
+                    response, execution_time = self.turn_processor.process(user_input)
                     self.ui.display_response(response, execution_time)
                 except KeyboardInterrupt:
                     self.ui.console.print("\n\n[yellow]⚠ Query interrupted[/yellow]")

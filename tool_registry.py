@@ -1106,82 +1106,201 @@ def use_energy_analyst(query: str) -> str:
         return f"Error: Failed to call EnergyAnalyst: {str(e)}"
 
 
-def get_newsroom_headlines() -> str:
+def _filter_newsroom_by_relevance(headlines: List[Dict], query: str, max_results: int) -> List[Dict]:
     """
-    Fetch today's compiled articles from Asoba newsroom via AWS S3.
+    Filter and rank newsroom articles by relevance to query.
+
+    Args:
+        headlines: List of article dicts with title, tags, source
+        query: Search query
+        max_results: Max results to return
 
     Returns:
-        List of today's article headlines with sources and URLs
+        Filtered and ranked list of most relevant articles
     """
-    from datetime import datetime
+    import re
+
+    # Extract keywords from query
+    query_lower = query.lower()
+    # Remove common stop words
+    stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'is', 'are', 'what', 'how', 'why', 'when', 'where'}
+    query_words = [w for w in re.findall(r'\b\w+\b', query_lower) if w not in stop_words and len(w) > 2]
+
+    # Score each article
+    scored_headlines = []
+    for h in headlines:
+        score = 0
+        title_lower = h['title'].lower()
+        source_lower = h['source'].lower()
+
+        # Title matches (highest weight)
+        for word in query_words:
+            if word in title_lower:
+                score += 10
+
+        # Tag matches (medium weight)
+        if h.get('tags') and isinstance(h['tags'], dict):
+            core_topics = h['tags'].get('core_topics', [])
+            for topic in core_topics:
+                topic_lower = str(topic).lower()
+                for word in query_words:
+                    if word in topic_lower:
+                        score += 5
+
+        # Source matches (low weight)
+        for word in query_words:
+            if word in source_lower:
+                score += 2
+
+        # Exact phrase match (bonus)
+        if query_lower in title_lower:
+            score += 20
+
+        if score > 0:
+            h['relevance_score'] = score
+            scored_headlines.append(h)
+
+    # Sort by relevance score (highest first) and return top N
+    scored_headlines.sort(key=lambda x: x['relevance_score'], reverse=True)
+    return scored_headlines[:max_results]
+
+
+def get_newsroom_headlines(query: str = None, days_back: int = None, max_results: int = None) -> str:
+    """
+    Fetch recent compiled articles from Asoba newsroom via AWS S3.
+    Searches across multiple days and filters by relevance to query.
+
+    Args:
+        query: Search query to filter articles by relevance (optional)
+        days_back: Number of days to search back (default from config)
+        max_results: Max relevant articles to return (default from config)
+
+    Returns:
+        List of relevant article headlines with sources and URLs
+    """
+    from datetime import datetime, timedelta
     import json
     import subprocess
     import tempfile
     from pathlib import Path
+    import config
+
+    # Get configuration
+    if days_back is None:
+        days_back = getattr(config, 'NEWSROOM_DAYS_BACK', 90)
+    if max_results is None:
+        max_results = getattr(config, 'NEWSROOM_MAX_RELEVANT', 25)
 
     try:
-        # Get today's date folder
-        today = datetime.now().strftime("%Y-%m-%d")
         bucket = "news-collection-website"
-        date_prefix = f"news/{today}/"
 
-        logger.info(f"Fetching newsroom headlines for {today}...")
+        # Calculate date range
+        today = datetime.now()
+        start_date = today - timedelta(days=days_back - 1)
 
-        # Use persistent cache to avoid re-downloading same day's articles
-        import os
-        cache_dir = Path(tempfile.gettempdir()) / "newsroom_cache" / today
+        logger.info(f"Fetching newsroom articles from last {days_back} days (filtered by relevance)...")
 
-        if cache_dir.exists():
-            logger.info(f"Using cached articles from {cache_dir}")
-            metadata_files = list(cache_dir.rglob("*.json"))
-        else:
-            # Download to cache directory
-            cache_dir.mkdir(parents=True, exist_ok=True)
+        # Use persistent cache for all days
+        base_cache_dir = Path(tempfile.gettempdir()) / "newsroom_cache"
+        base_cache_dir.mkdir(parents=True, exist_ok=True)
 
-            sync_cmd = [
-                "aws", "s3", "sync",
-                f"s3://{bucket}/{date_prefix}",
-                str(cache_dir),
-                "--exclude", "*",
-                "--include", "*/metadata/*.json",
-                "--quiet"
-            ]
+        # Generate list of dates to fetch
+        dates_to_fetch = []
+        current_date = start_date
+        while current_date <= today:
+            dates_to_fetch.append(current_date)
+            current_date += timedelta(days=1)
 
-            result = subprocess.run(
-                sync_cmd,
-                capture_output=True,
-                text=True,
-                timeout=60
-            )
+        # Function to download a single day
+        def download_day(date_obj):
+            date_str = date_obj.strftime("%Y-%m-%d")
+            day_cache_dir = base_cache_dir / date_str
+            date_prefix = f"news/{date_str}/"
 
-            if result.returncode != 0:
-                return f"Error: AWS S3 sync failed: {result.stderr}"
+            if day_cache_dir.exists():
+                # Use cached articles for this day
+                day_files = list(day_cache_dir.rglob("*.json"))
+                if day_files:
+                    logger.debug(f"Using {len(day_files)} cached articles from {date_str}")
+                    return day_files
+                return []
+            else:
+                # Download this day's articles
+                day_cache_dir.mkdir(parents=True, exist_ok=True)
 
-            metadata_files = list(cache_dir.rglob("*.json"))
-            logger.info(f"Downloaded and cached {len(metadata_files)} articles")
+                sync_cmd = [
+                    "aws", "s3", "sync",
+                    f"s3://{bucket}/{date_prefix}",
+                    str(day_cache_dir),
+                    "--exclude", "*",
+                    "--include", "*/metadata/*.json",
+                    "--quiet"
+                ]
 
-        if not metadata_files:
-            return f"No articles found in newsroom for {today}"
+                result = subprocess.run(
+                    sync_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=120
+                )
 
-        logger.info(f"Processing {len(metadata_files)} metadata files")
+                if result.returncode == 0:
+                    day_files = list(day_cache_dir.rglob("*.json"))
+                    if day_files:
+                        logger.info(f"Downloaded {len(day_files)} articles for {date_str}")
+                        return day_files
+                else:
+                    logger.warning(f"Failed to sync {date_str}: {result.stderr}")
+                return []
 
-        headlines = []
-        for file_path in metadata_files:  # Process all articles
+        # Download days in parallel (max 15 workers to avoid overwhelming S3)
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        all_metadata_files = []
+
+        with ThreadPoolExecutor(max_workers=15) as executor:
+            future_to_date = {executor.submit(download_day, date): date for date in dates_to_fetch}
+
+            for future in as_completed(future_to_date):
                 try:
-                    with open(file_path, 'r') as f:
-                        metadata = json.load(f)
-                        headline = {
-                            "title": metadata.get("title", "No title"),
-                            "source": metadata.get("source", "Unknown"),
-                            "url": metadata.get("url", ""),
-                            "tags": metadata.get("tags", []),
-                        }
-                        headlines.append(headline)
-                except (json.JSONDecodeError, IOError):
-                    continue
+                    day_files = future.result()
+                    all_metadata_files.extend(day_files)
+                except Exception as e:
+                    date = future_to_date[future]
+                    logger.error(f"Error downloading {date.strftime('%Y-%m-%d')}: {e}")
+
+        if not all_metadata_files:
+            return f"No articles found in newsroom for last {days_back} days"
+
+        logger.info(f"Processing {len(all_metadata_files)} articles from {days_back} days")
+
+        # Parse all articles
+        headlines = []
+        for file_path in all_metadata_files:
+            try:
+                with open(file_path, 'r') as f:
+                    metadata = json.load(f)
+                    headline = {
+                        "title": metadata.get("title", "No title"),
+                        "source": metadata.get("source", "Unknown"),
+                        "url": metadata.get("url", ""),
+                        "tags": metadata.get("tags", []),
+                        "date": file_path.parent.parent.parent.name,  # Extract date from path
+                    }
+                    headlines.append(headline)
+            except (json.JSONDecodeError, IOError):
+                continue
 
         if not headlines:
-            return f"Found {len(metadata_files)} files but couldn't parse any metadata"
+            return f"Found {len(all_metadata_files)} files but couldn't parse any metadata"
+
+        # Filter by relevance if query provided
+        if query:
+            headlines = _filter_newsroom_by_relevance(headlines, query, max_results)
+            logger.info(f"Filtered to {len(headlines)} most relevant articles for query: {query[:60]}...")
+        else:
+            # No query - return most recent articles up to max_results
+            headlines = sorted(headlines, key=lambda x: x.get('date', ''), reverse=True)[:max_results]
+            logger.info(f"No query provided - returning {len(headlines)} most recent articles")
 
         # Calculate tag distribution for overview
         from collections import Counter
@@ -1215,17 +1334,28 @@ def get_newsroom_headlines() -> str:
                         by_topic[primary_topic].append(h)
 
             # Show ALL headlines grouped by topic (not just samples)
-            formatted.append("\nAll Headlines by Topic:\n")
+            formatted.append("\nRelevant Headlines by Topic:\n")
             for topic, count in topic_counts.most_common():
                 if topic in by_topic:
                     formatted.append(f"\n{topic.upper()} ({count} articles):")
                     for h in by_topic[topic]:
-                        formatted.append(f"  • {h['title']}")
+                        date_str = h.get('date', 'Unknown date')
+                        formatted.append(f"  • {h['title']} [{date_str}]")
+                        if h.get('url'):
+                            formatted.append(f"    URL: {h['url']}")
+                        formatted.append(f"    Source: {h['source']}")
+                        if h.get('relevance_score'):
+                            formatted.append(f"    Relevance: {h['relevance_score']}")
         else:
             # Fallback: just list all headlines if no topics
             for idx, h in enumerate(headlines, 1):
-                formatted.append(f"\n{idx}. {h['title']}")
+                date_str = h.get('date', 'Unknown date')
+                formatted.append(f"\n{idx}. {h['title']} [{date_str}]")
                 formatted.append(f"   Source: {h['source']}")
+                if h.get('url'):
+                    formatted.append(f"   URL: {h['url']}")
+                if h.get('relevance_score'):
+                    formatted.append(f"   Relevance: {h['relevance_score']}")
 
         return "\n".join(formatted)
 

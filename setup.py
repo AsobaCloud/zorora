@@ -27,8 +27,9 @@ setup(
         "turn_processor",
         "model_selector",
         "ui",
-        "router",
-        "planner",
+        "simplified_router",
+        "research_workflow",
+        "research_persistence",
     ],
     entry_points={
         "console_scripts": [
