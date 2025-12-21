@@ -128,13 +128,13 @@ class REPL:
             self.ui.console.print(f"[cyan]Generating image with FLUX...[/cyan]")
             return self.turn_processor.process(prompt, forced_workflow="image")
 
-        # /analyze <path> [task] - Force image analysis
-        elif cmd_lower.startswith("/analyze "):
-            args = command[9:].strip()  # Remove "/analyze "
+        # /vision <path> [task] - Force image analysis
+        elif cmd_lower.startswith("/vision "):
+            args = command[8:].strip()  # Remove "/vision "
             if not args:
-                self.ui.console.print("[red]Usage: /analyze <image_path> [optional task][/red]")
-                self.ui.console.print("[dim]Example: /analyze screenshot.png[/dim]")
-                self.ui.console.print("[dim]Example: /analyze chart.png describe this chart[/dim]")
+                self.ui.console.print("[red]Usage: /vision <image_path> [optional task][/red]")
+                self.ui.console.print("[dim]Example: /vision screenshot.png[/dim]")
+                self.ui.console.print("[dim]Example: /vision chart.png describe this chart[/dim]")
                 return None
             self.ui.console.print(f"[cyan]Analyzing image with vision model...[/cyan]")
             return self.turn_processor.process(args, forced_workflow="vision")
@@ -318,6 +318,7 @@ class REPL:
   [cyan]/code <prompt>[/cyan]          - Force code generation with Codestral
   [cyan]/analyst <query>[/cyan]        - Query EnergyAnalyst RAG (energy policy documents)
   [cyan]/image <prompt>[/cyan]         - Generate image with FLUX (text-to-image)
+  [cyan]/vision <path> [task][/cyan]   - Analyze image with vision model
 
 [bold cyan]System Commands:[/bold cyan]
 
