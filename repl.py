@@ -139,6 +139,32 @@ class REPL:
             self.ui.console.print(f"[cyan]Analyzing image with vision model...[/cyan]")
             return self.turn_processor.process(args, forced_workflow="vision")
 
+        # /develop <request> - Multi-step code development workflow
+        elif cmd_lower.startswith("/develop "):
+            request = command[9:].strip()  # Remove "/develop "
+            if not request:
+                self.ui.console.print("[red]Usage: /develop <development request>[/red]")
+                self.ui.console.print("[dim]Example: /develop add a REST API endpoint for user authentication[/dim]")
+                self.ui.console.print("[dim]Example: /develop refactor the database connection to use connection pooling[/dim]")
+                return None
+
+            # Import and run develop workflow
+            import os
+            from workflows.develop_workflow import DevelopWorkflow
+
+            self.ui.console.print(f"[cyan]Starting development workflow...[/cyan]")
+            workflow = DevelopWorkflow(
+                tool_executor=self.turn_processor.tool_executor,
+                llm_client=self.turn_processor.llm_client,
+                ui=self.ui
+            )
+
+            # Execute workflow (this handles all phases internally)
+            result = workflow.execute(request, os.getcwd())
+
+            # Return as tuple for consistency with other commands
+            return (result, 0.0)  # Time not tracked separately for multi-phase workflow
+
         # Not a workflow command
         return None
 
@@ -319,6 +345,7 @@ class REPL:
   [cyan]/analyst <query>[/cyan]        - Query EnergyAnalyst RAG (energy policy documents)
   [cyan]/image <prompt>[/cyan]         - Generate image with FLUX (text-to-image)
   [cyan]/vision <path> [task][/cyan]   - Analyze image with vision model
+  [cyan]/develop <request>[/cyan]      - Multi-step code development (explore, plan, execute, lint)
 
 [bold cyan]System Commands:[/bold cyan]
 
