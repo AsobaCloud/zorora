@@ -754,24 +754,39 @@ class TurnProcessor:
         tool = routing.get("tool")
 
         if action == "list_files":
-            # List research files
-            research_files = self.research_persistence.list_all()
-            if not research_files:
-                return "No saved research found."
+            # Check if this is a filesystem list or research list
+            # If user mentions "current directory", "pwd", "here", "this directory" -> filesystem
+            # Otherwise, assume research files
+            user_lower = user_input.lower()
+            is_filesystem = any(keyword in user_lower for keyword in [
+                "current directory", "this directory", "pwd", "here", "cwd",
+                "working directory", "local", "folder"
+            ])
 
-            result = "Saved Research:\n\n"
-            for i, file_info in enumerate(research_files, 1):
-                topic = file_info["topic"]
-                timestamp = file_info.get("timestamp", "Unknown")
-                query = file_info.get("query", "")
+            if is_filesystem or tool == "list_files":
+                # List actual filesystem files using the list_files tool
+                logger.info("Listing filesystem files")
+                result = self.tool_executor.execute("list_files", {"path": "."})
+                return result
+            else:
+                # List research files
+                research_files = self.research_persistence.list_all()
+                if not research_files:
+                    return "No saved research found."
 
-                result += f"{i}. **{topic}**\n"
-                result += f"   Saved: {timestamp[:10]}\n"
-                if query:
-                    result += f"   Query: {query[:80]}...\n" if len(query) > 80 else f"   Query: {query}\n"
-                result += "\n"
+                result = "Saved Research:\n\n"
+                for i, file_info in enumerate(research_files, 1):
+                    topic = file_info["topic"]
+                    timestamp = file_info.get("timestamp", "Unknown")
+                    query = file_info.get("query", "")
 
-            return result
+                    result += f"{i}. **{topic}**\n"
+                    result += f"   Saved: {timestamp[:10]}\n"
+                    if query:
+                        result += f"   Query: {query[:80]}...\n" if len(query) > 80 else f"   Query: {query}\n"
+                    result += "\n"
+
+                return result
 
         elif action == "read_file":
             # Extract topic/filename from user input
