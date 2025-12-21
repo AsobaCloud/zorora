@@ -118,6 +118,27 @@ class REPL:
             self.ui.console.print(f"[cyan]Querying EnergyAnalyst RAG...[/cyan]")
             return self.turn_processor.process(query, forced_workflow="energy")
 
+        # /image <prompt> - Force image generation
+        elif cmd_lower.startswith("/image "):
+            prompt = command[7:].strip()  # Remove "/image "
+            if not prompt:
+                self.ui.console.print("[red]Usage: /image <prompt>[/red]")
+                self.ui.console.print("[dim]Example: /image a futuristic solar panel installation[/dim]")
+                return None
+            self.ui.console.print(f"[cyan]Generating image with FLUX...[/cyan]")
+            return self.turn_processor.process(prompt, forced_workflow="image")
+
+        # /analyze <path> [task] - Force image analysis
+        elif cmd_lower.startswith("/analyze "):
+            args = command[9:].strip()  # Remove "/analyze "
+            if not args:
+                self.ui.console.print("[red]Usage: /analyze <image_path> [optional task][/red]")
+                self.ui.console.print("[dim]Example: /analyze screenshot.png[/dim]")
+                self.ui.console.print("[dim]Example: /analyze chart.png describe this chart[/dim]")
+                return None
+            self.ui.console.print(f"[cyan]Analyzing image with vision model...[/cyan]")
+            return self.turn_processor.process(args, forced_workflow="vision")
+
         # Not a workflow command
         return None
 
@@ -296,6 +317,7 @@ class REPL:
   [cyan]/ask <query>[/cyan]            - Force conversational mode (no web search)
   [cyan]/code <prompt>[/cyan]          - Force code generation with Codestral
   [cyan]/analyst <query>[/cyan]        - Query EnergyAnalyst RAG (energy policy documents)
+  [cyan]/image <prompt>[/cyan]         - Generate image with FLUX (text-to-image)
 
 [bold cyan]System Commands:[/bold cyan]
 

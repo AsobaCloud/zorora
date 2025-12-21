@@ -35,13 +35,29 @@ class ZororaUI:
         from rich.columns import Columns
         from rich.table import Table
 
-        # Left column: Welcome and model info
+        # Left column: ASCII logo and welcome
         left_text = Text()
+        left_text.append("\n")
+        # Magnifying glass ASCII art
+        left_text.append("          ████████\n", style="cyan")
+        left_text.append("        ████    ████\n", style="cyan")
+        left_text.append("       ███        ███\n", style="cyan")
+        left_text.append("      ███          ███\n", style="cyan")
+        left_text.append("       ███        ███\n", style="cyan")
+        left_text.append("        ████    ████\n", style="cyan")
+        left_text.append("          ████████\n", style="cyan")
+        left_text.append("               ███\n", style="cyan")
+        left_text.append("                ███\n", style="cyan")
+        left_text.append("                 ███\n", style="cyan")
         left_text.append("\n")
         left_text.append("       Welcome to Zorora!", style="bold cyan")
         left_text.append("\n\n")
         left_text.append("       Orchestrator: ", style="dim")
         left_text.append(f"{model}", style="cyan")
+        left_text.append("\n")
+        left_text.append("       Directory: ", style="dim")
+        import os
+        left_text.append(f"{os.getcwd()}", style="cyan")
         left_text.append("\n\n")
         left_text.append("       Type ", style="dim")
         left_text.append("exit", style="yellow")
@@ -65,6 +81,10 @@ class ZororaUI:
         right_text.append("    - Generate code\n", style="dim")
         right_text.append(" /analyst", style="cyan")
         right_text.append(" - Query policy RAG\n", style="dim")
+        right_text.append(" /image", style="cyan")
+        right_text.append("   - Generate image\n", style="dim")
+        right_text.append(" /analyze", style="cyan")
+        right_text.append(" - Analyze image\n", style="dim")
         right_text.append("\n")
 
         # System commands

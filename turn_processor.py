@@ -712,6 +712,26 @@ class TurnProcessor:
             self.conversation.add_assistant_message(content=result)
             return result, time.time() - total_start_time
 
+        elif workflow == "image":
+            # Image generation with FLUX
+            # Only accessible via /image slash command
+            logger.info("Generating image with FLUX")
+            result = self.tool_executor.execute("generate_image", {"prompt": user_input})
+            self.conversation.add_assistant_message(content=result)
+            return result, time.time() - total_start_time
+
+        elif workflow == "vision":
+            # Image analysis with vision model
+            # Only accessible via /analyze slash command
+            logger.info("Analyzing image with vision model")
+            # Parse path and optional task from user_input
+            parts = user_input.split(maxsplit=1)
+            path = parts[0]
+            task = parts[1] if len(parts) > 1 else "Analyze this image and describe what you see"
+            result = self.tool_executor.execute("analyze_image", {"path": path, "task": task})
+            self.conversation.add_assistant_message(content=result)
+            return result, time.time() - total_start_time
+
         else:
             # Unknown workflow - default to research (web search)
             logger.warning(f"Unknown workflow: {workflow}, defaulting to research")
