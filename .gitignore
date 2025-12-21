@@ -50,3 +50,6 @@ Thumbs.db
 
 # Test files
 test_ui.py
+
+# Deprecated files
+deprecated/
