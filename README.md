@@ -19,20 +19,30 @@ Zorora is a **focused research assistant** that helps you gather, synthesize, an
 ### Simplified Routing
 
 ```
-User Query
+User Query / Slash Command
     ↓
 Deterministic Decision Tree (pattern matching)
     ↓
     ├─→ RESEARCH WORKFLOW (newsroom + web + synthesis)
     │   └─→ Save to ~/.zorora/research/
     │
+    ├─→ DEVELOPMENT WORKFLOW (/develop - multi-step code dev)
+    │   ├─→ Phase 1: Explore codebase
+    │   ├─→ Phase 2: Plan changes (with approval)
+    │   ├─→ Phase 3: Execute with Codestral
+    │   └─→ Phase 4: Lint & validate
+    │
     ├─→ CODE WORKFLOW (code generation)
     │   └─→ Codestral specialist model
     │
     ├─→ FILE OPERATIONS (save/load/list)
-    │   └─→ Research persistence system
+    │   └─→ Research or filesystem operations
     │
-    └─→ SIMPLE Q&A (fallback)
+    ├─→ IMAGE WORKFLOWS (generate/analyze)
+    │   ├─→ FLUX for image generation
+    │   └─→ Vision model for analysis
+    │
+    └─→ SIMPLE Q&A (/ask - no search)
         └─→ Direct model response
 ```
 
@@ -46,14 +56,17 @@ Deterministic Decision Tree (pattern matching)
 
 ## Features
 
-- ✅ **Multi-source research** - Automatic newsroom + web search + synthesis
-- ✅ **Research persistence** - Save/load findings with metadata and citations
+- ✅ **Multi-step code development** - `/develop` workflow: explore → plan → approve → execute → lint
+- ✅ **Multi-source research** - Automatic newsroom + web search + synthesis with citations
+- ✅ **Research persistence** - Save/load findings with metadata to `~/.zorora/research/`
+- ✅ **Slash commands** - Force workflows: `/search`, `/ask`, `/code`, `/analyst`, `/image`, `/vision`, `/develop`
 - ✅ **Deterministic routing** - Pattern-based decision tree (no LLM routing failures)
 - ✅ **Code generation** - Dedicated Codestral model for coding tasks
+- ✅ **Image generation** - FLUX Schnell for text-to-image generation
+- ✅ **Vision/OCR** - Image analysis and content extraction with VL models
 - ✅ **Hybrid deployment** - Local 4B orchestrator + remote 32B specialists
-- ✅ **Vision/OCR** - Image analysis with VL models (optional)
 - ✅ **Web search** - Real-time information via Brave Search API + DuckDuckGo fallback
-- ✅ **Energy policy analysis** - Optional RAG system with 485+ policy documents
+- ✅ **Energy policy analysis** - Optional RAG system with policy documents
 - ✅ **Rich UI** - Colored output, progress indicators, execution times
 - ✅ **RAM-efficient** - Runs on MacBook Air M3 with 4B model
 
@@ -277,29 +290,62 @@ All research is saved to `~/.zorora/research/` with:
 
 ## Slash Commands
 
-### Model Configuration
-- `/models` - Interactive model selector
+### Workflow Commands (Force Specific Behavior)
+
+- **`/search <query>`** - Force research workflow (newsroom + web + synthesis)
+  - Bypasses auto-routing to ensure web search is used
+  - Example: `/search latest developments in solar energy`
+
+- **`/ask <query>`** - Force conversational mode (no web search)
+  - For follow-up questions about previous responses
+  - Example: `/ask can you explain that more simply?`
+
+- **`/code <prompt>`** - Force code generation with Codestral
+  - Example: `/code write a function to parse JSON files`
+
+- **`/analyst <query>`** - Query EnergyAnalyst RAG (energy policy documents)
+  - Example: `/analyst FERC Order 2222 requirements`
+
+- **`/image <prompt>`** - Generate image with FLUX (text-to-image)
+  - Example: `/image a futuristic solar farm at sunset`
+
+- **`/vision <path> [task]`** - Analyze image with vision model
+  - Example: `/vision screenshot.png extract all text`
+  - Example: `/vision chart.png describe this chart`
+
+- **`/develop <request>`** - Multi-step code development workflow
+  - Explores codebase, creates plan, gets approval, executes changes, lints
+  - **Requires git repository**
+  - Example: `/develop add REST API endpoint for user authentication`
+  - Example: `/develop refactor database connection to use pooling`
+
+### System Commands
+
+- **`/models`** - Interactive model selector
   - Choose orchestrator model (4B recommended)
   - Configure Codestral endpoint (local or HuggingFace)
   - Add/manage HuggingFace inference endpoints
   - Update HF token
-  - Changes saved to `config.py`
 
-### Conversation Management
-- `/history` - Browse saved conversation sessions
-  - Shows session ID, message count, start time
-  - Conversations auto-saved to `.zorora/conversations/`
-
-- `/config` - Show current routing configuration
+- **`/config`** - Show current routing configuration
   - Display active workflow patterns
   - Show configured models and endpoints
 
-- `/clear` - Clear conversation context
+- **`/history`** - Browse saved conversation sessions
+  - Shows session ID, message count, start time
+  - Conversations auto-saved to `.zorora/conversations/`
+
+- **`/save <filename>`** - Save last specialist output to file
+  - Saves most recent code generation or research output
+
+- **`/clear`** - Clear conversation context
   - Resets to fresh state
 
-### Other
-- `/help` - Show available commands
-- `exit`, `quit`, `q`, `Ctrl+C` - Exit the REPL
+- **`/help`** - Show available commands
+
+- **`exit`, `quit`, `q`, `Ctrl+C`** - Exit the REPL
+
+For detailed documentation of each command, see [COMMANDS.md](COMMANDS.md).
 
 ## Usage Examples
 
@@ -536,7 +582,6 @@ zorora/
 ├── main.py                      # Entry point
 ├── repl.py                      # REPL loop and slash commands
 ├── config.py                    # Configuration and model settings
-├── config.example.py            # Template (safe to commit)
 │
 ├── conversation.py              # Conversation manager
 ├── conversation_persistence.py  # Save/load conversations
@@ -550,7 +595,15 @@ zorora/
 ├── turn_processor.py           # Main workflow orchestration
 ├── tool_executor.py            # Tool execution engine
 ├── tool_registry.py            # Tool definitions and functions
-└── model_selector.py           # Interactive model configuration
+├── model_selector.py           # Interactive model configuration
+│
+└── workflows/                  # Multi-step development workflows
+    ├── __init__.py
+    ├── develop_workflow.py     # /develop orchestrator
+    ├── codebase_explorer.py    # Phase 1: Code exploration
+    ├── code_planner.py         # Phase 2: Planning with approval
+    ├── code_executor.py        # Phase 4: Code execution
+    └── code_tools.py           # File operations and linting
 ```
 
 ## How It Works
@@ -786,5 +839,6 @@ See LICENSE file.
 
 **Repository:** https://github.com/AsobaCloud/zorora
 **EnergyAnalyst:** https://huggingface.co/asoba/EnergyAnalyst-v0.1
+**Documentation:** See [COMMANDS.md](COMMANDS.md) for detailed command reference
 **Version:** 1.0.0
-**Last Updated:** 2025-12-20
+**Last Updated:** 2025-12-21
