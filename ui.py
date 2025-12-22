@@ -128,7 +128,7 @@ class ZororaUI:
             columns,
             title=f"Zorora REPL v{version}",
             title_align="center",
-            border_style="blue",
+            border_style="#D2B48C",  # tan color
             padding=(1, 2)
         )
 

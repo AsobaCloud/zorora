@@ -1655,6 +1655,7 @@ def web_search(query: str, max_results: int = 5) -> str:
     
     # Get raw results for processing
     raw_results = None
+    academic_max_results = config.WEB_SEARCH.get("academic_max_results", 3)
     
     if parallel_enabled and brave_available:
         # Parallel search: search both Brave and DuckDuckGo simultaneously
@@ -1685,6 +1686,37 @@ def web_search(query: str, max_results: int = 5) -> str:
             except Exception as e:
                 logger.error(f"DuckDuckGo search failed: {e}")
                 return f"Error: Web search failed: {e}. Try again or rephrase query."
+    
+    # Always include academic sources (Scholar + PubMed)
+    academic_results = []
+    academic_sources_used = []
+    try:
+        logger.info(f"Searching academic sources (Scholar + PubMed) for: {optimized_query[:60]}...")
+        scholar_results = _scholar_search_raw(optimized_query, academic_max_results)
+        if scholar_results:
+            academic_results.extend(scholar_results)
+            academic_sources_used.append("Scholar")
+    except Exception as e:
+        logger.warning(f"Scholar search failed: {e}, continuing without Scholar results")
+    
+    try:
+        pubmed_results = _pubmed_search_raw(optimized_query, academic_max_results)
+        if pubmed_results:
+            academic_results.extend(pubmed_results)
+            academic_sources_used.append("PubMed")
+    except Exception as e:
+        logger.warning(f"PubMed search failed: {e}, continuing without PubMed results")
+    
+    # Merge web and academic results
+    if academic_results:
+        if raw_results:
+            # Combine results for processing
+            raw_results = raw_results + academic_results
+            logger.info(f"Merged {len(academic_results)} academic results with {len(raw_results) - len(academic_results)} web results")
+        else:
+            # Only academic results available
+            raw_results = academic_results
+            logger.info(f"Using {len(academic_results)} academic results only")
     
     if not raw_results:
         # Log which search sources were attempted
@@ -1763,8 +1795,20 @@ def web_search(query: str, max_results: int = 5) -> str:
         except Exception as e:
             logger.warning(f"Result synthesis failed: {e}, using regular formatting")
     
-    # Format results
-    sources_str = "Brave + DuckDuckGo" if (parallel_enabled and brave_available) else ("Brave" if brave_available else "DuckDuckGo")
+    # Format results with academic sources included
+    sources_parts = []
+    if parallel_enabled and brave_available:
+        sources_parts.append("Brave + DuckDuckGo")
+    elif brave_available:
+        sources_parts.append("Brave")
+    else:
+        sources_parts.append("DuckDuckGo")
+    
+    # Add academic sources if we have academic results
+    if academic_sources_used:
+        sources_parts.append(" + ".join(academic_sources_used))
+    
+    sources_str = " + ".join(sources_parts)
     result = _format_search_results(query, processed_results, sources_str, query_metadata, extract_content)
     
     # Cache result if cache is available
@@ -2241,6 +2285,56 @@ def _duckduckgo_search_raw(query: str, max_results: int = 5) -> List[Dict[str, A
             if attempt < max_retries - 1:
                 continue
             raise
+
+
+def _scholar_search_raw(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
+    """
+    Search Google Scholar using DuckDuckGo with site: filter.
+    
+    Args:
+        query: Search query
+        max_results: Number of results
+        
+    Returns:
+        List of result dictionaries with [Scholar] tag in description
+    """
+    scholar_query = f"site:scholar.google.com {query}"
+    results = _duckduckgo_search_raw(scholar_query, max_results)
+    
+    # Tag results as Scholar
+    for result in results:
+        if "description" in result:
+            result["description"] = f"[Scholar] {result['description']}"
+        else:
+            result["description"] = "[Scholar] Academic paper"
+    
+    logger.info(f"Scholar search returned {len(results)} results for: {query[:60]}...")
+    return results
+
+
+def _pubmed_search_raw(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
+    """
+    Search PubMed using DuckDuckGo with site: filter.
+    
+    Args:
+        query: Search query
+        max_results: Number of results
+        
+    Returns:
+        List of result dictionaries with [PubMed] tag in description
+    """
+    pubmed_query = f"site:pubmed.ncbi.nlm.nih.gov {query}"
+    results = _duckduckgo_search_raw(pubmed_query, max_results)
+    
+    # Tag results as PubMed
+    for result in results:
+        if "description" in result:
+            result["description"] = f"[PubMed] {result['description']}"
+        else:
+            result["description"] = "[PubMed] Research article"
+    
+    logger.info(f"PubMed search returned {len(results)} results for: {query[:60]}...")
+    return results
 
 
 def _brave_search(query: str, max_results: int = 5, query_metadata: dict = None) -> str:

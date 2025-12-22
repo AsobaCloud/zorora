@@ -90,6 +90,7 @@ WEB_SEARCH = {
     # Specialized Search (Sprint 4)
     "news_enabled": True,
     "image_enabled": False,
+    "academic_max_results": 3,  # Max Scholar/PubMed results each (always included in web search)
     
     # Rate Limiting (Sprint 5)
     "rate_limit_enabled": False,  # Will enable in Sprint 5
