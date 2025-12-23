@@ -2,6 +2,8 @@
 
 A lightweight research REPL optimized for knowledge acquisition, multi-source synthesis, and persistent storage. Built for macOS (Apple Silicon) with minimal RAM footprint.
 
+![Zorora Screenshot](docs/screenshot.png)
+
 ## Quick Start
 
 ### Prerequisites
