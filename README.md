@@ -28,7 +28,7 @@ zorora
 
 ## Features
 
-- **Multi-source research** - Automatic newsroom + web search + synthesis with citations
+- **Multi-source research** - Automatic [newsroom](https://github.com/AsobaCloud/newsroom) + web search + synthesis with citations
 - **Research persistence** - Save/load findings with metadata to `~/.zorora/research/`
 - **Code generation** - Dedicated Codestral model for coding tasks
 - **Multi-step development** - `/develop` workflow: explore → plan → approve → execute → lint
