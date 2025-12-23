@@ -175,6 +175,16 @@ class REPL:
                 return None
             self.ui.console.print(f"[cyan]Searching academic sources (Scholar, PubMed, CORE, arXiv, bioRxiv, medRxiv, PMC) + Sci-Hub...[/cyan]")
             result = self.tool_executor.execute("academic_search", {"query": query})
+            if result:
+                # Store result for other tools to access
+                self.turn_processor.last_specialist_output = result
+                # Add to recent tool outputs for context injection
+                self.turn_processor.recent_tool_outputs.append(("academic_search", result))
+                # Keep only last N tool outputs
+                if len(self.turn_processor.recent_tool_outputs) > self.turn_processor.max_context_tools:
+                    self.turn_processor.recent_tool_outputs.pop(0)
+                # Add to conversation history
+                self.conversation.add_assistant_message(content=result)
             return (result, 0.0) if result else None
 
         # Not a workflow command
@@ -522,6 +532,8 @@ class REPL:
                     continue
                 if user_input.lower() in ("exit", "quit", "q"):
                     self.ui.console.print("\n[dim]Exiting.[/dim]")
+                    # Restore terminal state before exit
+                    self.ui.cleanup()
                     break
 
                 # Handle slash commands
@@ -551,5 +563,7 @@ class REPL:
 
         except KeyboardInterrupt:
             self.ui.console.print("\n\n[dim]Exiting.[/dim]")
+            # Restore terminal state before exit
+            self.ui.cleanup()
         except Exception as e:
             self.ui.display_error('error', f"Fatal error: {e}")

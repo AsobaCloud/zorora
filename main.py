@@ -1,6 +1,7 @@
 """Entry point for Claude Code-like REPL."""
 
 import sys
+import os
 import logging
 from repl import REPL
 from config import LOGGING_LEVEL, LOGGING_FORMAT, LOG_FILE
@@ -32,12 +33,16 @@ def main():
 
     # Initialize and run REPL
     repl = REPL()
-    repl.run()
-
+    try:
+        repl.run()
+    finally:
+        # Ensure terminal is restored even if there's an error
+        repl.ui.cleanup()
+    
     # Clean up logging handlers before exit
     logging.shutdown()
-
-    # Explicit clean exit
+    
+    # Explicit clean exit (use sys.exit to allow proper cleanup)
     sys.exit(0)
 
 

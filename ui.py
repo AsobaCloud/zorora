@@ -28,6 +28,19 @@ class ZororaUI:
             force_terminal=sys.stdout.isatty() and not self.no_color,
             no_color=self.no_color
         )
+    
+    def cleanup(self):
+        """Restore terminal to normal state before exit."""
+        try:
+            # Ensure cursor is visible
+            self.console.show_cursor(True)
+            # Flush all output
+            sys.stdout.flush()
+            sys.stderr.flush()
+            # Print a newline to ensure we're on a fresh line
+            print()
+        except:
+            pass
 
     def display_welcome(self, model: str, version: str = "1.0.0"):
         """Display welcome banner."""

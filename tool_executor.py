@@ -59,6 +59,9 @@ class ToolExecutor:
                 self._handle_cd_command(arguments.get("command", ""), result)
 
             return self._truncate_result(result, tool_name)
+        except KeyboardInterrupt:
+            # Allow KeyboardInterrupt to propagate so it can be handled by the REPL
+            raise
         except TypeError as e:
             return f"Error: Invalid arguments for tool '{tool_name}': {e}"
         except Exception as e:

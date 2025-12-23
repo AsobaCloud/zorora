@@ -2647,26 +2647,36 @@ def academic_search(query: str, max_results: int = 10) -> str:
     # Search all sources in parallel
     all_results = []
     
-    with ThreadPoolExecutor(max_workers=7) as executor:
-        futures = {
-            executor.submit(_scholar_search_raw, query, max_results // 2): "Scholar",
-            executor.submit(_pubmed_search_raw, query, max_results // 2): "PubMed",
-            executor.submit(_core_api_search, query, max_results // 2): "CORE",
-            executor.submit(_arxiv_search_raw, query, max_results // 4): "arXiv",
-            executor.submit(_biorxiv_search_raw, query, max_results // 6): "bioRxiv",
-            executor.submit(_medrxiv_search_raw, query, max_results // 6): "medRxiv",
-            executor.submit(_pmc_search_raw, query, max_results // 4): "PMC"
-        }
-        
-        for future in as_completed(futures):
-            source = futures[future]
-            try:
-                results = future.result()
-                if results:
-                    all_results.extend(results)
-                    logger.info(f"Academic search: {source} returned {len(results)} results")
-            except Exception as e:
-                logger.warning(f"Academic search: {source} failed: {e}")
+    try:
+        with ThreadPoolExecutor(max_workers=7) as executor:
+            futures = {
+                executor.submit(_scholar_search_raw, query, max_results // 2): "Scholar",
+                executor.submit(_pubmed_search_raw, query, max_results // 2): "PubMed",
+                executor.submit(_core_api_search, query, max_results // 2): "CORE",
+                executor.submit(_arxiv_search_raw, query, max_results // 4): "arXiv",
+                executor.submit(_biorxiv_search_raw, query, max_results // 6): "bioRxiv",
+                executor.submit(_medrxiv_search_raw, query, max_results // 6): "medRxiv",
+                executor.submit(_pmc_search_raw, query, max_results // 4): "PMC"
+            }
+            
+            for future in as_completed(futures):
+                source = futures[future]
+                try:
+                    results = future.result(timeout=None)  # Allow interrupt during wait
+                    if results:
+                        all_results.extend(results)
+                        logger.info(f"Academic search: {source} returned {len(results)} results")
+                except KeyboardInterrupt:
+                    # Cancel remaining futures and re-raise
+                    logger.info(f"Academic search interrupted, cancelling remaining searches...")
+                    for f in futures:
+                        f.cancel()
+                    raise
+                except Exception as e:
+                    logger.warning(f"Academic search: {source} failed: {e}")
+    except KeyboardInterrupt:
+        logger.info("Academic search interrupted by user")
+        raise
     
     if not all_results:
         return f"No academic results found for: {query}\n\nTry:\n- Using more specific keywords\n- Checking spelling\n- Using academic terminology"
@@ -2692,8 +2702,21 @@ def academic_search(query: str, max_results: int = 10) -> str:
     
     # Check Sci-Hub in parallel (up to 10 concurrent checks)
     if all_results:
-        with ThreadPoolExecutor(max_workers=min(10, len(all_results))) as executor:
-            list(executor.map(check_scihub_for_result, all_results))
+        try:
+            with ThreadPoolExecutor(max_workers=min(10, len(all_results))) as executor:
+                futures = [executor.submit(check_scihub_for_result, result) for result in all_results]
+                for future in as_completed(futures):
+                    try:
+                        future.result(timeout=None)  # Allow interrupt during wait
+                    except KeyboardInterrupt:
+                        # Cancel remaining futures and re-raise
+                        logger.info("Sci-Hub checking interrupted, cancelling remaining checks...")
+                        for f in futures:
+                            f.cancel()
+                        raise
+        except KeyboardInterrupt:
+            logger.info("Sci-Hub checking interrupted by user")
+            raise
     
     # Deduplicate by title/DOI
     seen = set()

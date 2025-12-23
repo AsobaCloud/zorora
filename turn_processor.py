@@ -431,51 +431,7 @@ class TurnProcessor:
 
         # Handle specialist tools by passing user input as parameter
         elif tool_name in ["use_codestral", "use_reasoning_model", "use_search_model", "use_energy_analyst", "web_search"]:
-            logger.info(f"Forcing specialist tool: {tool_name}")
-
-            # Determine the parameter name for each specialist tool
-            param_mapping = {
-                "use_codestral": "code_context",
-                "use_reasoning_model": "task",
-                "use_search_model": "query",
-                "use_energy_analyst": "query",
-                "web_search": "query",
-            }
-
-            param_name = param_mapping.get(tool_name)
-            if not param_name:
-                logger.warning(f"No parameter mapping for specialist tool: {tool_name}")
-                return None
-
-            # For codestral, if we have recent context about files, include it
-            if tool_name == "use_codestral":
-                context_parts = [user_input]
-                if self.last_specialist_output and len(self.last_specialist_output) > 0:
-                    # Add reference to last output for context
-                    context_parts.append(f"\n\nContext from previous operation:\n{self.last_specialist_output[:500]}")
-                user_input_with_context = "\n".join(context_parts)
-                arguments = {param_name: user_input_with_context}
-            else:
-                arguments = {param_name: user_input}
-            
-            # Resolve references (e.g., "this topic" -> actual previous query)
-            arguments = self._resolve_references(tool_name, arguments)
-            
-            # Auto-inject context from previous tools (for specialist tools)
-            arguments = self._inject_context(tool_name, arguments)
-
-            result = self.tool_executor.execute(tool_name, arguments)
-            
-            # Track tool output for context injection (non-specialist tools only)
-            # This ensures results from forced tool calls are available for next tool
-            if tool_name not in SPECIALIST_TOOLS and result and not result.startswith("Error:"):
-                self.recent_tool_outputs.append((tool_name, result))
-                # Keep only last N tool outputs
-                if len(self.recent_tool_outputs) > self.max_context_tools:
-                    self.recent_tool_outputs.pop(0)
-                logger.info(f"Added {tool_name} result to recent_tool_outputs for context injection")
-            
-            return result
+            return self._execute_specialist_tool(tool_name, user_input)
 
         return None
 
@@ -584,12 +540,71 @@ class TurnProcessor:
         logger.info(f"Using original routing decision: {tool} (confidence: {confidence:.2f})")
         return routing_decision
 
+    def _execute_specialist_tool(self, tool_name: str, user_input: str) -> Optional[str]:
+        """
+        Execute a specialist tool with proper context injection and reference resolution.
+        
+        Args:
+            tool_name: Name of the specialist tool to execute
+            user_input: User's input to pass to the tool
+            
+        Returns:
+            Tool result string, or None if unable to execute
+        """
+        logger.info(f"Executing specialist tool: {tool_name}")
+
+        # Determine the parameter name for each specialist tool
+        param_mapping = {
+            "use_codestral": "code_context",
+            "use_reasoning_model": "task",
+            "use_search_model": "query",
+            "use_energy_analyst": "query",
+            "web_search": "query",
+            "generate_image": "prompt",
+        }
+
+        param_name = param_mapping.get(tool_name)
+        if not param_name:
+            logger.warning(f"No parameter mapping for specialist tool: {tool_name}")
+            return None
+
+        # For codestral, if we have recent context about files, include it
+        if tool_name == "use_codestral":
+            context_parts = [user_input]
+            if self.last_specialist_output and len(self.last_specialist_output) > 0:
+                # Add reference to last output for context
+                context_parts.append(f"\n\nContext from previous operation:\n{self.last_specialist_output[:500]}")
+            user_input_with_context = "\n".join(context_parts)
+            arguments = {param_name: user_input_with_context}
+        else:
+            arguments = {param_name: user_input}
+        
+        # Resolve references (e.g., "this topic" -> actual previous query)
+        arguments = self._resolve_references(tool_name, arguments)
+        
+        # Auto-inject context from previous tools (for specialist tools)
+        arguments = self._inject_context(tool_name, arguments)
+
+        result = self.tool_executor.execute(tool_name, arguments)
+        
+        # Track tool output for context injection (non-specialist tools only)
+        # This ensures results from forced tool calls are available for next tool
+        if tool_name not in SPECIALIST_TOOLS and result and not result.startswith("Error:"):
+            self.recent_tool_outputs.append((tool_name, result))
+            # Keep only last N tool outputs
+            if len(self.recent_tool_outputs) > self.max_context_tools:
+                self.recent_tool_outputs.pop(0)
+            logger.info(f"Added {tool_name} result to recent_tool_outputs for context injection")
+        
+        return result
+
     def _inject_context(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """
         Auto-inject previous tool results into specialist tool parameters.
 
         When a specialist tool is called, prepend recent tool outputs to provide context
-        without relying on orchestrator intelligence.
+        without relying on orchestrator intelligence. Also checks conversation history
+        for tool outputs when recent_tool_outputs is empty (e.g., after session resume).
 
         Args:
             tool_name: Name of the tool being called
@@ -602,10 +617,6 @@ class TurnProcessor:
         if tool_name not in SPECIALIST_TOOLS:
             return arguments
 
-        # Skip if no recent tool outputs to inject
-        if not self.recent_tool_outputs:
-            return arguments
-
         # Determine which parameter to inject into
         param_name = None
         if tool_name == "use_reasoning_model":
@@ -614,16 +625,54 @@ class TurnProcessor:
             param_name = "query"
         elif tool_name == "use_codestral":
             param_name = "code_context"
+        elif tool_name == "analyze_image":
+            param_name = "task"
 
         if not param_name or param_name not in arguments:
             return arguments
 
-        # Build context from recent tool outputs
+        # Collect context from recent_tool_outputs
         context_parts = []
-        for prev_tool_name, prev_result in self.recent_tool_outputs:
-            # Truncate very long results
-            truncated_result = prev_result[:2000] + "..." if len(prev_result) > 2000 else prev_result
-            context_parts.append(f"[Previous {prev_tool_name} output]:\n{truncated_result}")
+        if self.recent_tool_outputs:
+            for prev_tool_name, prev_result in self.recent_tool_outputs:
+                # Use larger limit for search/academic tools that need full context for summarization
+                if prev_tool_name in ["academic_search", "web_search"]:
+                    max_length = 10000  # Larger limit for search results
+                else:
+                    max_length = 2000  # Standard limit for other tools
+                
+                # Truncate very long results
+                truncated_result = prev_result[:max_length] + "..." if len(prev_result) > max_length else prev_result
+                context_parts.append(f"[Previous {prev_tool_name} output]:\n{truncated_result}")
+        
+        # If no recent tool outputs, check conversation history for tool outputs
+        # This helps when resuming sessions where recent_tool_outputs wasn't persisted
+        if not context_parts:
+            messages = self.conversation.get_messages()
+            # Look at recent assistant messages (last 5) for tool output patterns
+            for msg in reversed(messages[-5:]):
+                if msg.get("role") == "assistant":
+                    content = msg.get("content", "")
+                    # Check for tool output patterns
+                    if any(marker in content for marker in [
+                        "Academic search results for:",
+                        "Search results for:",
+                        "Found",
+                        "Summary: Found"
+                    ]):
+                        # Use larger limit for search/academic results
+                        # Determine if this is a search result by checking markers
+                        is_search_result = "Academic search results for:" in content or "Search results for:" in content
+                        max_length = 10000 if is_search_result else 2000
+                        
+                        # Truncate very long results
+                        truncated_result = content[:max_length] + "..." if len(content) > max_length else content
+                        context_parts.append(f"[Previous tool output from conversation]:\n{truncated_result}")
+                        logger.info("Found tool output in conversation history for context injection")
+                        break  # Only use the most recent tool output
+
+        if not context_parts:
+            return arguments
 
         context_str = "\n\n".join(context_parts)
 
@@ -632,7 +681,7 @@ class TurnProcessor:
         arguments = arguments.copy()
         arguments[param_name] = f"{context_str}\n\n---\nTask: {original_value}"
 
-        logger.info(f"Auto-injected context from {len(self.recent_tool_outputs)} previous tools into {tool_name}")
+        logger.info(f"Auto-injected context from {len(context_parts)} source(s) into {tool_name}")
         return arguments
 
     def process(self, user_input: str, forced_workflow: str = None) -> tuple[str, float]:
@@ -686,9 +735,10 @@ class TurnProcessor:
         elif workflow == "code":
             # Code generation with codestral
             tool = "use_codestral" if forced_workflow else routing.get("tool", "use_codestral")
-            result = self.tool_executor.execute(tool, {"code_context": user_input})
-            self.conversation.add_assistant_message(content=result)
-            return result, time.time() - total_start_time
+            result = self._execute_specialist_tool(tool, user_input)
+            if result:
+                self.conversation.add_assistant_message(content=result)
+            return (result or "Error executing code generation"), time.time() - total_start_time
 
         elif workflow == "file_op":
             # File operations (read, write, list)
@@ -700,25 +750,28 @@ class TurnProcessor:
             # Direct Q&A with reasoning model (no search)
             # Only accessible via /ask slash command - not used as routing fallback
             logger.info("Using reasoning model for conversational response (no web search)")
-            result = self.tool_executor.execute("use_reasoning_model", {"task": user_input})
-            self.conversation.add_assistant_message(content=result)
-            return result, time.time() - total_start_time
+            result = self._execute_specialist_tool("use_reasoning_model", user_input)
+            if result:
+                self.conversation.add_assistant_message(content=result)
+            return (result or "Error executing reasoning model"), time.time() - total_start_time
 
         elif workflow == "energy":
             # EnergyAnalyst RAG query for policy documents
             # Only accessible via /analyst slash command
             logger.info("Querying EnergyAnalyst RAG for policy documents")
-            result = self.tool_executor.execute("use_energy_analyst", {"query": user_input})
-            self.conversation.add_assistant_message(content=result)
-            return result, time.time() - total_start_time
+            result = self._execute_specialist_tool("use_energy_analyst", user_input)
+            if result:
+                self.conversation.add_assistant_message(content=result)
+            return (result or "Error executing EnergyAnalyst query"), time.time() - total_start_time
 
         elif workflow == "image":
             # Image generation with FLUX
             # Only accessible via /image slash command
             logger.info("Generating image with FLUX")
-            result = self.tool_executor.execute("generate_image", {"prompt": user_input})
-            self.conversation.add_assistant_message(content=result)
-            return result, time.time() - total_start_time
+            result = self._execute_specialist_tool("generate_image", user_input)
+            if result:
+                self.conversation.add_assistant_message(content=result)
+            return (result or "Error generating image"), time.time() - total_start_time
 
         elif workflow == "vision":
             # Image analysis with vision model
@@ -728,9 +781,13 @@ class TurnProcessor:
             parts = user_input.split(maxsplit=1)
             path = parts[0]
             task = parts[1] if len(parts) > 1 else "Analyze this image and describe what you see"
-            result = self.tool_executor.execute("analyze_image", {"path": path, "task": task})
-            self.conversation.add_assistant_message(content=result)
-            return result, time.time() - total_start_time
+            # Inject context into task parameter
+            arguments = {"path": path, "task": task}
+            arguments = self._inject_context("analyze_image", arguments)
+            result = self.tool_executor.execute("analyze_image", arguments)
+            if result:
+                self.conversation.add_assistant_message(content=result)
+            return (result or "Error analyzing image"), time.time() - total_start_time
 
         else:
             # Unknown workflow - default to research (web search)
