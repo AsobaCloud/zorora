@@ -1582,14 +1582,7 @@ def web_search(query: str, max_results: int = 5) -> str:
     cache = None
     if config.WEB_SEARCH.get("cache_enabled", True):
         try:
-            # Try importing from current directory first
-            import sys
-            from pathlib import Path
-            current_dir = Path(__file__).parent
-            if str(current_dir) not in sys.path:
-                sys.path.insert(0, str(current_dir))
-            
-            from _search_cache import SearchCache
+            from tools.utils._search_cache import SearchCache
             cache = SearchCache(
                 max_entries=config.WEB_SEARCH.get("cache_max_entries", 100),
                 default_ttl_hours=config.WEB_SEARCH.get("cache_ttl_hours", 1),
@@ -1610,14 +1603,7 @@ def web_search(query: str, max_results: int = 5) -> str:
     query_metadata = {}
     if config.WEB_SEARCH.get("query_optimization", True):
         try:
-            # Try importing from current directory first
-            import sys
-            from pathlib import Path
-            current_dir = Path(__file__).parent
-            if str(current_dir) not in sys.path:
-                sys.path.insert(0, str(current_dir))
-            
-            from _query_optimizer import QueryOptimizer
+            from tools.utils._query_optimizer import QueryOptimizer
             optimizer = QueryOptimizer(enabled=config.WEB_SEARCH.get("intent_detection", True))
             optimized_query, query_metadata = optimizer.optimize(query)
         except ImportError as e:
@@ -1741,13 +1727,7 @@ def web_search(query: str, max_results: int = 5) -> str:
     import config
     try:
         # Try importing from current directory first
-        import sys
-        from pathlib import Path
-        current_dir = Path(__file__).parent
-        if str(current_dir) not in sys.path:
-            sys.path.insert(0, str(current_dir))
-        
-        from _result_processor import ResultProcessor
+        from tools.utils._result_processor import ResultProcessor
         processor = ResultProcessor(
             max_domain_results=config.WEB_SEARCH.get("max_domain_results", 2)
         )
@@ -1765,13 +1745,7 @@ def web_search(query: str, max_results: int = 5) -> str:
     if extract_content:
         try:
             # Try importing from current directory first
-            import sys
-            from pathlib import Path
-            current_dir = Path(__file__).parent
-            if str(current_dir) not in sys.path:
-                sys.path.insert(0, str(current_dir))
-            
-            from _content_extractor import ContentExtractor
+            from tools.utils._content_extractor import ContentExtractor
             extractor = ContentExtractor(
                 enabled=True,
                 extract_top_n=config.WEB_SEARCH.get("extract_top_n", 2),
@@ -1882,13 +1856,7 @@ def _parallel_search_raw(query: str, max_results: int = 5) -> List[Dict[str, Any
     # Merge results
     try:
         # Try importing from current directory first
-        import sys
-        from pathlib import Path
-        current_dir = Path(__file__).parent
-        if str(current_dir) not in sys.path:
-            sys.path.insert(0, str(current_dir))
-        
-        from _result_processor import ResultProcessor
+        from tools.utils._result_processor import ResultProcessor
         processor = ResultProcessor(
             max_domain_results=config.WEB_SEARCH.get("max_domain_results", 2)
         )
@@ -1970,13 +1938,7 @@ def _parallel_search(query: str, max_results: int = 5, query_metadata: dict = No
     # Merge and process results
     try:
         # Try importing from current directory first
-        import sys
-        from pathlib import Path
-        current_dir = Path(__file__).parent
-        if str(current_dir) not in sys.path:
-            sys.path.insert(0, str(current_dir))
-        
-        from _result_processor import ResultProcessor
+        from tools.utils._result_processor import ResultProcessor
         processor = ResultProcessor(
             max_domain_results=config.WEB_SEARCH.get("max_domain_results", 2)
         )
@@ -2794,7 +2756,7 @@ def _brave_search(query: str, max_results: int = 5, query_metadata: dict = None)
         # Process results (deduplication, ranking, domain diversity)
         import config
         try:
-            from _result_processor import ResultProcessor
+            from tools.utils._result_processor import ResultProcessor
             processor = ResultProcessor(
                 max_domain_results=config.WEB_SEARCH.get("max_domain_results", 2)
             )
@@ -2837,13 +2799,7 @@ def _duckduckgo_search(query: str, max_results: int = 5, query_metadata: dict = 
         import config
         try:
             # Try importing from current directory first
-            import sys
-            from pathlib import Path
-            current_dir = Path(__file__).parent
-            if str(current_dir) not in sys.path:
-                sys.path.insert(0, str(current_dir))
-            
-            from _result_processor import ResultProcessor
+            from tools.utils._result_processor import ResultProcessor
             processor = ResultProcessor(
                 max_domain_results=config.WEB_SEARCH.get("max_domain_results", 2)
             )
