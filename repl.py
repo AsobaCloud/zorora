@@ -165,6 +165,18 @@ class REPL:
             # Return as tuple for consistency with other commands
             return (result, 0.0)  # Time not tracked separately for multi-phase workflow
 
+        # /academic <query> - Academic paper search with multiple sources + Sci-Hub
+        elif cmd_lower.startswith("/academic "):
+            query = command[10:].strip()  # Remove "/academic "
+            if not query:
+                self.ui.console.print("[red]Usage: /academic <query>[/red]")
+                self.ui.console.print("[dim]Example: /academic machine learning interpretability[/dim]")
+                self.ui.console.print("[dim]Example: /academic quantum computing 2024[/dim]")
+                return None
+            self.ui.console.print(f"[cyan]Searching academic sources (Scholar, PubMed, CORE, arXiv, bioRxiv, medRxiv, PMC) + Sci-Hub...[/cyan]")
+            result = self.tool_executor.execute("academic_search", {"query": query})
+            return (result, 0.0) if result else None
+
         # Not a workflow command
         return None
 
@@ -342,6 +354,7 @@ class REPL:
   [cyan]/search <query>[/cyan]         - Force research workflow (newsroom + web + synthesis)
   [cyan]/ask <query>[/cyan]            - Force conversational mode (no web search)
   [cyan]/code <prompt>[/cyan]          - Force code generation with Codestral
+  [cyan]/academic <query>[/cyan]       - Search academic papers (Scholar, PubMed, CORE, arXiv, bioRxiv, medRxiv, PMC + Sci-Hub)
   [cyan]/analyst <query>[/cyan]        - Query EnergyAnalyst RAG (energy policy documents)
   [cyan]/image <prompt>[/cyan]         - Generate image with FLUX (text-to-image)
   [cyan]/vision <path> [task][/cyan]   - Analyze image with vision model

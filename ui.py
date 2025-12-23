@@ -87,6 +87,8 @@ class ZororaUI:
         right_text.append("  - Analyze image\n", style="dim")
         right_text.append(" /develop", style="cyan")
         right_text.append(" - Code development\n", style="dim")
+        right_text.append(" /academic", style="cyan")
+        right_text.append(" - Academic papers\n", style="dim")
         right_text.append("\n")
 
         # System commands

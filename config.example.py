@@ -98,6 +98,17 @@ WEB_SEARCH = {
     "ddg_rate_limit": 100,  # queries per hour (estimated)
 }
 
+# Academic Search Configuration
+ACADEMIC_SEARCH = {
+    "default_max_results": 10,
+    "core_api_key": "bKT02ehoQ3GynrPZ7d4fwHFDVEsiXxl1",
+    "scihub_mirrors": [
+        "https://sci-hub.se",
+        "https://sci-hub.st",
+        "https://sci-hub.ru"
+    ]
+}
+
 # Hugging Face Inference Endpoints
 HF_TOKEN = "hf_YOUR_TOKEN_HERE"  # Replace with your Hugging Face API token
 HF_ENDPOINTS = {
