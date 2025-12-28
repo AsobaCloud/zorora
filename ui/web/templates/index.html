@@ -324,6 +324,308 @@
                 flex-direction: column;
             }
         }
+
+        /* Modal Styles */
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            animation: fadeIn 0.2s ease-out;
+        }
+
+        .modal-backdrop {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(4px);
+            animation: fadeIn 0.15s ease-out;
+        }
+
+        .modal-content {
+            position: relative;
+            background: var(--white);
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 600px;
+            width: 90%;
+            max-height: 90vh;
+            display: flex;
+            flex-direction: column;
+            z-index: 1001;
+            animation: slideUp 0.2s ease-out;
+        }
+
+        .modal-small {
+            max-width: 500px;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 24px 32px;
+            border-bottom: 1px solid var(--border-grey);
+        }
+
+        .modal-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--text-dark);
+            margin: 0;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 2rem;
+            color: var(--text-light);
+            cursor: pointer;
+            padding: 0;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+
+        .modal-close:hover {
+            background: var(--neutral-grey);
+            color: var(--text-dark);
+        }
+
+        .modal-body {
+            padding: 32px;
+            overflow-y: auto;
+            flex: 1;
+        }
+
+        .modal-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+            padding: 24px 32px;
+            border-top: 1px solid var(--border-grey);
+            background: var(--neutral-grey);
+            border-radius: 0 0 16px 16px;
+        }
+
+        /* Settings Form Styles */
+        .settings-section {
+            margin-bottom: 32px;
+        }
+
+        .settings-section:last-child {
+            margin-bottom: 0;
+        }
+
+        .settings-section-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--text-dark);
+            margin-bottom: 8px;
+        }
+
+        .settings-section-desc {
+            font-size: 0.9rem;
+            color: var(--text-light);
+            margin-bottom: 24px;
+        }
+
+        .tool-config {
+            margin-bottom: 24px;
+            padding: 16px;
+            background: var(--neutral-grey);
+            border-radius: 8px;
+        }
+
+        .tool-config-label {
+            display: block;
+            font-weight: 500;
+            color: var(--text-dark);
+            margin-bottom: 8px;
+            font-size: 0.95rem;
+        }
+
+        .tool-config-help {
+            font-size: 0.85rem;
+            color: var(--text-light);
+            margin-top: 4px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            font-weight: 500;
+            color: var(--text-dark);
+            margin-bottom: 8px;
+            font-size: 0.95rem;
+        }
+
+        .required {
+            color: #ef4444;
+        }
+
+        .form-input,
+        .form-select {
+            width: 100%;
+            padding: 12px 16px;
+            border: 1px solid var(--border-grey);
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-family: inherit;
+            color: var(--text-dark);
+            background: var(--white);
+            transition: all 0.2s;
+        }
+
+        .form-input:focus,
+        .form-select:focus {
+            outline: none;
+            border-color: var(--primary-purple);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+
+        .form-input::placeholder {
+            color: var(--text-light);
+        }
+
+        .form-help {
+            display: block;
+            font-size: 0.85rem;
+            color: var(--text-light);
+            margin-top: 6px;
+        }
+
+        .input-with-button {
+            display: flex;
+            gap: 8px;
+        }
+
+        .input-with-button .form-input {
+            flex: 1;
+        }
+
+        .btn-icon {
+            background: var(--neutral-grey);
+            border: 1px solid var(--border-grey);
+            border-radius: 8px;
+            padding: 12px;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: all 0.2s;
+            flex-shrink: 0;
+        }
+
+        .btn-icon:hover {
+            background: var(--card-hover);
+            border-color: var(--primary-purple);
+        }
+
+        .btn-primary,
+        .btn-secondary {
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-weight: 500;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: none;
+        }
+
+        .btn-primary {
+            background: var(--primary-purple);
+            color: var(--white);
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: var(--accent-purple);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: var(--white);
+            color: var(--text-dark);
+            border: 1px solid var(--border-grey);
+        }
+
+        .btn-secondary:hover {
+            background: var(--neutral-grey);
+        }
+
+        .settings-loading {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-light);
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid var(--border-grey);
+            border-top-color: var(--primary-purple);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto 16px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .modal-content {
+                width: 100%;
+                max-height: 100vh;
+                border-radius: 0;
+            }
+            
+            .modal-header,
+            .modal-body,
+            .modal-footer {
+                padding: 20px;
+            }
+            
+            .modal-footer {
+                flex-direction: column-reverse;
+            }
+            
+            .btn-primary,
+            .btn-secondary {
+                width: 100%;
+            }
+        }
     </style>
 </head>
 <body>
@@ -404,7 +706,7 @@
         }
 
         function openSettings() {
-            alert('Settings coming soon!');
+            // Will be implemented below
         }
 
         function usePrompt(element) {
@@ -517,6 +819,510 @@
             div.textContent = text;
             return div.innerHTML;
         }
+    </script>
+
+    <!-- Settings Modal -->
+    <div id="settingsModal" class="modal" style="display: none;">
+        <div class="modal-backdrop" onclick="closeSettings()"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">Settings</h2>
+                <button class="modal-close" onclick="closeSettings()" aria-label="Close">
+                    ×
+                </button>
+            </div>
+            
+            <div class="modal-body" id="settingsModalBody">
+                <!-- Loading state -->
+                <div id="settingsLoading" class="settings-loading">
+                    <div class="spinner"></div>
+                    <p>Loading settings...</p>
+                </div>
+                
+                <!-- Settings form (hidden until loaded) -->
+                <form id="settingsForm" style="display: none;">
+                    <div class="settings-section">
+                        <h3 class="settings-section-title">LLM Model Configuration</h3>
+                        <p class="settings-section-desc">Configure the LLM model for each tool.</p>
+                        
+                        <!-- Tool configurations will be inserted here by JavaScript -->
+                        <div id="toolConfigs"></div>
+                    </div>
+                    
+                    <div class="settings-section">
+                        <h3 class="settings-section-title">HuggingFace Token</h3>
+                        <div class="form-group">
+                            <label for="hfToken">API Token</label>
+                            <div class="input-with-button">
+                                <input 
+                                    type="password" 
+                                    id="hfToken" 
+                                    class="form-input"
+                                    placeholder="hf_xxxxxxxxxxxx"
+                                >
+                                <button type="button" class="btn-icon" onclick="toggleTokenVisibility('hfToken')" aria-label="Show/Hide token">
+                                    👁️
+                                </button>
+                            </div>
+                            <small class="form-help">Your HuggingFace API token for accessing HF endpoints</small>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            
+            <div class="modal-footer">
+                <button type="button" class="btn-secondary" onclick="closeSettings()">Cancel</button>
+                <button type="button" class="btn-primary" onclick="saveSettings()" id="saveSettingsBtn">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Endpoint Form Modal (nested) -->
+    <div id="endpointModal" class="modal" style="display: none;">
+        <div class="modal-backdrop" onclick="closeEndpointModal()"></div>
+        <div class="modal-content modal-small">
+            <div class="modal-header">
+                <h2 class="modal-title" id="endpointModalTitle">Add New Endpoint</h2>
+                <button class="modal-close" onclick="closeEndpointModal()" aria-label="Close">
+                    ×
+                </button>
+            </div>
+            
+            <div class="modal-body">
+                <form id="endpointForm">
+                    <input type="hidden" id="endpointKey" name="key">
+                    
+                    <div class="form-group">
+                        <label for="endpointKeyInput">Endpoint Key <span class="required">*</span></label>
+                        <input 
+                            type="text" 
+                            id="endpointKeyInput" 
+                            class="form-input"
+                            placeholder="e.g., llama-70b"
+                            pattern="[a-zA-Z_][a-zA-Z0-9_-]*"
+                            required
+                        >
+                        <small class="form-help">Short identifier (must be valid Python identifier)</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="endpointUrl">Endpoint URL <span class="required">*</span></label>
+                        <input 
+                            type="url" 
+                            id="endpointUrl" 
+                            class="form-input"
+                            placeholder="https://xyz.endpoints.huggingface.cloud/v1/chat/completions"
+                            required
+                        >
+                        <small class="form-help">Full URL to inference endpoint</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="endpointModelName">Model Name <span class="required">*</span></label>
+                        <input 
+                            type="text" 
+                            id="endpointModelName" 
+                            class="form-input"
+                            placeholder="meta-llama/Llama-3.1-70B-Instruct"
+                            required
+                        >
+                        <small class="form-help">Model identifier</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="endpointTimeout">Timeout (seconds)</label>
+                        <input 
+                            type="number" 
+                            id="endpointTimeout" 
+                            class="form-input"
+                            value="120"
+                            min="10"
+                            max="600"
+                        >
+                        <small class="form-help">Request timeout in seconds (default: 120)</small>
+                    </div>
+                </form>
+            </div>
+            
+            <div class="modal-footer">
+                <button type="button" class="btn-secondary" onclick="closeEndpointModal()">Cancel</button>
+                <button type="button" class="btn-primary" onclick="saveEndpoint()">Save Endpoint</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Settings Modal State
+        let settingsConfig = null;
+        let availableModels = [];
+        let currentEndpointKey = null; // For editing endpoints
+
+        // Open settings modal
+        async function openSettings() {
+            const modal = document.getElementById('settingsModal');
+            modal.style.display = 'flex';
+            document.body.style.overflow = 'hidden'; // Prevent background scroll
+            
+            // Load settings
+            await loadSettings();
+            
+            // Focus first input for accessibility
+            const firstInput = modal.querySelector('input, select');
+            if (firstInput) {
+                firstInput.focus();
+            }
+        }
+
+        // Close settings modal
+        function closeSettings() {
+            const modal = document.getElementById('settingsModal');
+            modal.style.display = 'none';
+            document.body.style.overflow = ''; // Restore scroll
+            
+            // Reset form
+            document.getElementById('settingsForm').style.display = 'none';
+            document.getElementById('settingsLoading').style.display = 'block';
+        }
+
+        // Close endpoint modal
+        function closeEndpointModal() {
+            const modal = document.getElementById('endpointModal');
+            modal.style.display = 'none';
+            document.getElementById('endpointForm').reset();
+            currentEndpointKey = null;
+        }
+
+        // Load settings from API
+        async function loadSettings() {
+            try {
+                // Show loading state
+                document.getElementById('settingsLoading').style.display = 'block';
+                document.getElementById('settingsForm').style.display = 'none';
+                
+                // Fetch config and models in parallel
+                const [configRes, modelsRes] = await Promise.all([
+                    fetch('/api/settings/config'),
+                    fetch('/api/settings/models')
+                ]);
+                
+                if (!configRes.ok || !modelsRes.ok) {
+                    throw new Error('Failed to load settings');
+                }
+                
+                settingsConfig = await configRes.json();
+                const modelsData = await modelsRes.json();
+                availableModels = modelsData.models;
+                
+                // Render form
+                renderSettingsForm();
+                
+                // Hide loading, show form
+                document.getElementById('settingsLoading').style.display = 'none';
+                document.getElementById('settingsForm').style.display = 'block';
+                
+            } catch (error) {
+                console.error('Error loading settings:', error);
+                alert('Failed to load settings: ' + error.message);
+                closeSettings();
+            }
+        }
+
+        // Render settings form
+        function renderSettingsForm() {
+            const toolConfigs = document.getElementById('toolConfigs');
+            toolConfigs.innerHTML = '';
+            
+            // Define LLM-driven tools
+            const tools = [
+                { key: 'orchestrator', label: 'Orchestrator (Main REPL)', help: 'Main conversational model' },
+                { key: 'codestral', label: 'Code Generation', help: 'Model for code generation tasks' },
+                { key: 'reasoning', label: 'Reasoning (Synthesis)', help: 'Model for research synthesis' },
+                { key: 'search', label: 'Research (Search)', help: 'Model for research queries' },
+                { key: 'intent_detector', label: 'Intent Detector', help: 'Model for routing decisions' },
+            ];
+            
+            tools.forEach(tool => {
+                const toolDiv = document.createElement('div');
+                toolDiv.className = 'tool-config';
+                
+                // Get current endpoint (from MODEL_ENDPOINTS)
+                const currentEndpoint = settingsConfig.model_endpoints?.[tool.key] || 'local';
+                
+                // Get current model (from SPECIALIZED_MODELS if exists, else MODEL)
+                const specializedModel = settingsConfig.specialized_models?.[tool.key]?.model;
+                const currentModel = specializedModel || settingsConfig.model || 'your-model-name';
+                
+                toolDiv.innerHTML = `
+                    <label class="tool-config-label">${tool.label}</label>
+                    <select 
+                        class="form-select" 
+                        id="endpoint_${tool.key}"
+                        onchange="onEndpointChange('${tool.key}')"
+                    >
+                        ${renderEndpointOptions(currentEndpoint)}
+                    </select>
+                    <select 
+                        class="form-select" 
+                        id="model_${tool.key}"
+                        style="margin-top: 8px; ${currentEndpoint === 'local' ? '' : 'display: none;'}"
+                    >
+                        ${renderModelOptions(currentModel, currentEndpoint)}
+                    </select>
+                    <small class="tool-config-help">${tool.help}</small>
+                `;
+                
+                toolConfigs.appendChild(toolDiv);
+            });
+            
+            // Set HF token (may be masked)
+            const hfTokenInput = document.getElementById('hfToken');
+            if (settingsConfig.hf_token && settingsConfig.hf_token !== 'None') {
+                hfTokenInput.value = settingsConfig.hf_token;
+            }
+        }
+
+        // Render endpoint dropdown options
+        function renderEndpointOptions(currentEndpoint) {
+            let html = '<option value="local">Local (LM Studio)</option>';
+            
+            // Add HF endpoints
+            const hfEndpoints = Object.keys(settingsConfig.hf_endpoints || {});
+            if (hfEndpoints.length > 0) {
+                html += '<optgroup label="HuggingFace Endpoints">';
+                hfEndpoints.forEach(key => {
+                    const endpoint = settingsConfig.hf_endpoints[key];
+                    const selected = currentEndpoint === key ? 'selected' : '';
+                    html += `<option value="${key}" ${selected}>HF: ${key} (${endpoint.model_name})</option>`;
+                });
+                html += '</optgroup>';
+            }
+            
+            html += '<optgroup label="Actions">';
+            html += '<option value="__add_new__">➕ Add New Endpoint...</option>';
+            html += '</optgroup>';
+            
+            return html;
+        }
+
+        // Render model dropdown options
+        function renderModelOptions(currentModel, endpoint) {
+            let html = '';
+            
+            if (endpoint === 'local') {
+                // Show LM Studio models
+                const localModels = availableModels.filter(m => m.type === 'local');
+                if (localModels.length === 0) {
+                    html = '<option value="">No models available</option>';
+                } else {
+                    localModels.forEach(model => {
+                        const selected = model.name === currentModel ? 'selected' : '';
+                        html += `<option value="${model.name}" ${selected}>${model.name}</option>`;
+                    });
+                }
+            } else {
+                // Show endpoint model name (read-only)
+                const endpointConfig = settingsConfig.hf_endpoints?.[endpoint];
+                if (endpointConfig) {
+                    html = `<option value="${endpointConfig.model_name}" selected>${endpointConfig.model_name}</option>`;
+                }
+            }
+            
+            return html;
+        }
+
+        // Handle endpoint selection change
+        function onEndpointChange(toolKey) {
+            const endpointSelect = document.getElementById(`endpoint_${toolKey}`);
+            const modelSelect = document.getElementById(`model_${toolKey}`);
+            const selectedValue = endpointSelect.value;
+            
+            if (selectedValue === '__add_new__') {
+                // Open endpoint modal
+                openEndpointModal(toolKey);
+                // Reset to previous value
+                const currentEndpoint = settingsConfig.model_endpoints?.[toolKey] || 'local';
+                endpointSelect.value = currentEndpoint;
+            } else {
+                // Update model dropdown
+                const specializedModel = settingsConfig.specialized_models?.[toolKey]?.model;
+                const currentModel = specializedModel || settingsConfig.model || 'your-model-name';
+                modelSelect.innerHTML = renderModelOptions(currentModel, selectedValue);
+                
+                // Show/hide model dropdown based on endpoint type
+                if (selectedValue === 'local') {
+                    modelSelect.style.display = 'block';
+                } else {
+                    modelSelect.style.display = 'none';
+                }
+            }
+        }
+
+        // Open endpoint modal for adding/editing
+        function openEndpointModal(toolKey = null, endpointKey = null) {
+            const modal = document.getElementById('endpointModal');
+            const title = document.getElementById('endpointModalTitle');
+            const form = document.getElementById('endpointForm');
+            
+            if (endpointKey) {
+                // Edit mode
+                title.textContent = 'Edit Endpoint';
+                const endpoint = settingsConfig.hf_endpoints[endpointKey];
+                document.getElementById('endpointKeyInput').value = endpointKey;
+                document.getElementById('endpointKeyInput').disabled = true;
+                document.getElementById('endpointUrl').value = endpoint.url;
+                document.getElementById('endpointModelName').value = endpoint.model_name;
+                document.getElementById('endpointTimeout').value = endpoint.timeout || 120;
+                currentEndpointKey = endpointKey;
+            } else {
+                // Add mode
+                title.textContent = 'Add New Endpoint';
+                form.reset();
+                document.getElementById('endpointKeyInput').disabled = false;
+                currentEndpointKey = null;
+            }
+            
+            modal.style.display = 'flex';
+        }
+
+        // Save endpoint
+        async function saveEndpoint() {
+            const form = document.getElementById('endpointForm');
+            const formData = {
+                key: document.getElementById('endpointKeyInput').value.trim(),
+                url: document.getElementById('endpointUrl').value.trim(),
+                model_name: document.getElementById('endpointModelName').value.trim(),
+                timeout: parseInt(document.getElementById('endpointTimeout').value) || 120,
+                enabled: true,
+            };
+            
+            // Validate
+            if (!formData.key || !formData.url || !formData.model_name) {
+                alert('Please fill in all required fields');
+                return;
+            }
+            
+            if (!formData.url.startsWith('http://') && !formData.url.startsWith('https://')) {
+                alert('URL must start with http:// or https://');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/settings/endpoint', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(formData),
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    // Reload settings to get updated endpoints
+                    await loadSettings();
+                    closeEndpointModal();
+                } else {
+                    alert('Error saving endpoint: ' + result.error);
+                }
+            } catch (error) {
+                console.error('Error saving endpoint:', error);
+                alert('Failed to save endpoint: ' + error.message);
+            }
+        }
+
+        // Save settings
+        async function saveSettings() {
+            const saveBtn = document.getElementById('saveSettingsBtn');
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Saving...';
+            
+            try {
+                // Collect form data
+                const updates = {
+                    model_endpoints: {},
+                    specialized_models: {},
+                };
+                
+                // Collect model endpoints
+                const tools = ['orchestrator', 'codestral', 'reasoning', 'search', 'intent_detector'];
+                tools.forEach(toolKey => {
+                    const endpointSelect = document.getElementById(`endpoint_${toolKey}`);
+                    const modelSelect = document.getElementById(`model_${toolKey}`);
+                    
+                    updates.model_endpoints[toolKey] = endpointSelect.value;
+                    
+                    // Only include model in specialized_models if endpoint is "local"
+                    if (endpointSelect.value === 'local') {
+                        updates.specialized_models[toolKey] = {
+                            model: modelSelect.value,
+                        };
+                    }
+                });
+                
+                // Collect HF token if changed (and not masked)
+                const hfTokenInput = document.getElementById('hfToken');
+                const tokenValue = hfTokenInput.value;
+                
+                // CRITICAL: Only send token if it's not masked (doesn't contain "...")
+                if (tokenValue && !tokenValue.includes('...')) {
+                    // Also check if it's different from the masked token shown
+                    const maskedToken = settingsConfig.hf_token;
+                    if (tokenValue !== maskedToken) {
+                        updates.hf_token = tokenValue;
+                    }
+                }
+                // If token contains "...", do NOT include in updates (treat as unchanged)
+                
+                // Send to API
+                const response = await fetch('/api/settings/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(updates),
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    alert(result.message || 'Settings saved successfully!');
+                    closeSettings();
+                } else {
+                    alert('Error saving settings: ' + result.error);
+                }
+            } catch (error) {
+                console.error('Error saving settings:', error);
+                alert('Failed to save settings: ' + error.message);
+            } finally {
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Save';
+            }
+        }
+
+        // Toggle token visibility
+        function toggleTokenVisibility(inputId) {
+            const input = document.getElementById(inputId);
+            const button = input.nextElementSibling;
+            
+            if (input.type === 'password') {
+                input.type = 'text';
+                button.textContent = '🙈';
+            } else {
+                input.type = 'password';
+                button.textContent = '👁️';
+            }
+        }
+
+        // Keyboard support
+        document.addEventListener('keydown', function(e) {
+            // ESC to close modals
+            if (e.key === 'Escape') {
+                const settingsModal = document.getElementById('settingsModal');
+                const endpointModal = document.getElementById('endpointModal');
+                
+                if (endpointModal.style.display === 'flex') {
+                    closeEndpointModal();
+                } else if (settingsModal.style.display === 'flex') {
+                    closeSettings();
+                }
+            }
+        });
     </script>
 </body>
 </html>
