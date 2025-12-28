@@ -29,6 +29,150 @@ This document provides a complete implementation guide for adding a settings mod
 5. [Detailed Technical Specifications](#detailed-technical-specifications)
 6. [Testing Strategy](#testing-strategy)
 7. [Security Considerations](#security-considerations)
+8. [One-Shot Readiness Clarifications](#one-shot-readiness-clarifications)
+
+---
+
+## One-Shot Readiness Clarifications
+
+**CRITICAL:** These clarifications eliminate all ambiguities and ensure true one-shot implementation without assumptions.
+
+### 1. MODEL vs SPECIALIZED_MODELS Semantics
+
+**Clarification:**
+- `MODEL` in config.py is **legacy-only** and serves as a **fallback** when a role is missing from `SPECIALIZED_MODELS`.
+- The settings UI **always writes to and relies on `SPECIALIZED_MODELS`**.
+- When reading config, if `specialized_models[role]` exists, use it; otherwise fall back to `MODEL`.
+- When writing config, **always write `SPECIALIZED_MODELS`** for all configured roles. The `MODEL` variable may remain in the file for backward compatibility but is not authoritative for any role once `SPECIALIZED_MODELS` is populated.
+
+**Implementation Rule:**
+```python
+# Reading: Use SPECIALIZED_MODELS if exists, else MODEL
+current_model = config.get("specialized_models", {}).get(role, {}).get("model") or config.get("model")
+
+# Writing: Always write SPECIALIZED_MODELS, MODEL is ignored
+updates["specialized_models"][role] = {"model": selected_model}
+```
+
+### 2. HF Token Masking and Update Semantics
+
+**Clarification:**
+- Backend **always masks** HF tokens in API responses (shows `hf_xxxx...xxxx` format).
+- Frontend **MUST check** if the input value contains `...` (three dots) - if it does, treat it as **unchanged** and **DO NOT** include it in the update payload.
+- Only send `hf_token` in updates if:
+  1. The input value does NOT contain `...`
+  2. AND the input value is different from the masked token shown
+  3. AND the input value is non-empty
+
+**Implementation Rule:**
+```javascript
+// Frontend validation before sending
+const hfTokenInput = document.getElementById('hfToken').value;
+if (hfTokenInput && !hfTokenInput.includes('...') && hfTokenInput !== settingsConfig.hf_token) {
+    updates.hf_token = hfTokenInput;
+}
+// If input contains '...', do NOT include hf_token in updates
+```
+
+**Backend Validation:**
+```python
+# Backend MUST reject masked tokens if somehow received
+if 'hf_token' in updates and '...' in str(updates['hf_token']):
+    return {"success": False, "error": "Invalid token format (masked token detected)"}
+```
+
+### 3. Endpoint Deletion Fallback Behavior
+
+**Clarification:**
+- When deleting an endpoint that is currently in use by one or more roles:
+  - **Automatically reassign** all affected roles to `"local"` endpoint.
+  - **No user confirmation required** - this is automatic and silent.
+  - **No error thrown** - deletion always succeeds, reassignment is automatic.
+- The `"local"` endpoint is **always guaranteed to exist** (it's not stored in `HF_ENDPOINTS`, it's a special value).
+
+**Implementation Rule:**
+```python
+# When deleting endpoint_key
+hf_endpoints = current.get("hf_endpoints", {}).copy()
+del hf_endpoints[endpoint_key]
+
+# Auto-reassign any roles using this endpoint
+model_endpoints = current.get("model_endpoints", {}).copy()
+for role, endpoint in list(model_endpoints.items()):
+    if endpoint == endpoint_key:
+        model_endpoints[role] = "local"  # Automatic fallback, no confirmation
+
+# Write both updates
+config_manager.write_config({
+    "hf_endpoints": hf_endpoints,
+    "model_endpoints": model_endpoints,
+})
+```
+
+### 4. Model List Caching Policy
+
+**Clarification:**
+- Model lists are **fetched live on each modal open** - no caching is required or expected.
+- The `fetch_all_models()` function is called every time the modal opens.
+- Performance target is **<500ms** for settings load (which includes model fetching).
+- If LM Studio is unavailable, return empty list for local models (don't block modal opening).
+- Cache invalidation is **not needed** because there's no cache.
+
+**Implementation Rule:**
+```python
+# Every modal open calls this (no caching)
+@app.route('/api/settings/models', methods=['GET'])
+def get_settings_models():
+    models = model_fetcher.fetch_all_models()  # Always fresh fetch
+    return jsonify({"models": models})
+```
+
+### 5. Config File Comment and Formatting Preservation
+
+**Clarification:**
+- Comment and formatting preservation is **explicitly NOT required**.
+- The config file is **always completely regenerated** from the config dictionary.
+- The `_write_config_file()` method generates a **brand-new file** with standard formatting.
+- User comments in the original `config.py` will be **lost** - this is acceptable and expected.
+- The generated file uses consistent, readable formatting but does not preserve original structure.
+
+**Implementation Rule:**
+```python
+# Always generate new file - do NOT attempt to preserve comments
+def _write_config_file(self, config: Dict[str, Any]):
+    """Write config dict to config.py file - always regenerates entire file."""
+    lines = [
+        '"""Configuration constants and settings.',
+        # ... generate complete new file
+    ]
+    # Write atomically (no comment preservation)
+    temp_path.write_text('\n'.join(lines))
+    temp_path.replace(self.config_path)
+```
+
+### 6. Server Restart Requirement
+
+**Clarification:**
+- The server is **NOT automatically restarted** after config changes.
+- Changes take effect **only after manual restart** by the user.
+- The success message **must include** the restart instruction: *"Configuration saved successfully. Please restart the server for changes to take effect."*
+- The UI **does not block** or wait for restart - it's informational only.
+- No auto-restart mechanism is implemented or required.
+
+**Implementation Rule:**
+```python
+# Success response includes restart instruction
+return jsonify({
+    "success": True,
+    "message": "Configuration saved successfully. Please restart the server for changes to take effect."
+})
+
+# Frontend shows this message to user
+if (result.success) {
+    alert(result.message || 'Settings saved successfully!');
+    closeSettings();
+}
+```
 
 ---
 
@@ -407,8 +551,7 @@ class ConfigManager:
             return self._get_default_config()
         
         try:
-            # Use ast.literal_eval for safe parsing (but config.py has assignments)
-            # Instead, import the module
+            # Use importlib to safely load config module
             import importlib.util
             spec = importlib.util.spec_from_file_location("config", self.config_path)
             config_module = importlib.util.module_from_spec(spec)
@@ -525,8 +668,14 @@ class ConfigManager:
         if "hf_endpoints" in updates:
             merged["hf_endpoints"] = {**current.get("hf_endpoints", {}), **updates["hf_endpoints"]}
         
+        # Only update HF token if provided and not masked
         if "hf_token" in updates:
-            merged["hf_token"] = updates["hf_token"]
+            token_value = updates["hf_token"]
+            # Reject masked tokens (contain "...")
+            if isinstance(token_value, str) and "..." in token_value:
+                logger.warning("Rejected masked HF token update")
+            else:
+                merged["hf_token"] = token_value
         
         if "energy_analyst" in updates:
             merged["energy_analyst"] = {**current.get("energy_analyst", {}), **updates["energy_analyst"]}
@@ -541,6 +690,7 @@ class ConfigManager:
             for role, endpoint in config["model_endpoints"].items():
                 if role not in valid_roles:
                     return f"Invalid role in model_endpoints: {role}"
+                # "local" is always valid (special value, not in HF_ENDPOINTS)
                 if endpoint != "local" and endpoint not in config.get("hf_endpoints", {}):
                     return f"Endpoint '{endpoint}' not found in HF_ENDPOINTS"
         
@@ -564,7 +714,12 @@ class ConfigManager:
         return None
     
     def _write_config_file(self, config: Dict[str, Any]):
-        """Write config dict to config.py file."""
+        """
+        Write config dict to config.py file.
+        
+        NOTE: This ALWAYS regenerates the entire file. Comments and formatting
+        from the original config.py are NOT preserved. This is intentional.
+        """
         lines = [
             '"""Configuration constants and settings.',
             '',
@@ -708,6 +863,9 @@ class ModelFetcher:
         """
         Fetch all available models (LM Studio + HF).
         
+        NOTE: This is called on EVERY modal open - no caching is performed.
+        Performance target is <500ms total for settings load.
+        
         Returns:
             Combined list of models
         """
@@ -757,7 +915,7 @@ def get_settings_config():
     try:
         config = config_manager.read_config()
         
-        # Mask HF token
+        # Mask HF token (always mask in responses)
         if config.get("hf_token"):
             token = config["hf_token"]
             if len(token) > 8:
@@ -775,6 +933,8 @@ def get_settings_config():
 def get_settings_models():
     """
     Get available models from LM Studio and HF endpoints.
+    
+    NOTE: This fetches models live on every request - no caching.
     
     Returns:
     {
@@ -884,6 +1044,9 @@ def delete_endpoint(endpoint_key):
     """
     Delete an HF endpoint.
     
+    NOTE: If the endpoint is in use by any role, those roles are automatically
+    reassigned to "local" endpoint without user confirmation.
+    
     Returns:
     {"success": bool, "error": str}
     """
@@ -898,11 +1061,12 @@ def delete_endpoint(endpoint_key):
         
         del hf_endpoints[endpoint_key]
         
-        # Also remove from MODEL_ENDPOINTS if used
+        # Auto-reassign any roles using this endpoint to "local"
+        # No confirmation required - automatic and silent
         model_endpoints = current.get("model_endpoints", {}).copy()
         for role, endpoint in list(model_endpoints.items()):
             if endpoint == endpoint_key:
-                model_endpoints[role] = "local"  # Fallback to local
+                model_endpoints[role] = "local"  # Automatic fallback
         
         # Write config
         result = config_manager.write_config({
@@ -924,11 +1088,14 @@ def save_settings_config():
     """
     Save configuration changes.
     
+    NOTE: Server is NOT automatically restarted. Changes take effect only after
+    manual restart. Success message includes restart instruction.
+    
     Request body:
     {
         "model_endpoints": {...},
         "specialized_models": {...},
-        "hf_token": str (optional),
+        "hf_token": str (optional, must NOT be masked),
     }
     
     Returns:
@@ -936,6 +1103,13 @@ def save_settings_config():
     """
     try:
         data = request.get_json()
+        
+        # Validate HF token is not masked
+        if "hf_token" in data and isinstance(data["hf_token"], str) and "..." in data["hf_token"]:
+            return jsonify({
+                "success": False,
+                "error": "Invalid token format (masked token detected - token unchanged)"
+            }), 400
         
         # Validate and write config
         result = config_manager.write_config(data)
@@ -1504,8 +1678,12 @@ function renderSettingsForm() {
         const toolDiv = document.createElement('div');
         toolDiv.className = 'tool-config';
         
+        // Get current endpoint (from MODEL_ENDPOINTS)
         const currentEndpoint = settingsConfig.model_endpoints?.[tool.key] || 'local';
-        const currentModel = settingsConfig.specialized_models?.[tool.key]?.model || settingsConfig.model || 'your-model-name';
+        
+        // Get current model (from SPECIALIZED_MODELS if exists, else MODEL)
+        const specializedModel = settingsConfig.specialized_models?.[tool.key]?.model;
+        const currentModel = specializedModel || settingsConfig.model || 'your-model-name';
         
         toolDiv.innerHTML = `
             <label class="tool-config-label">${tool.label}</label>
@@ -1529,7 +1707,7 @@ function renderSettingsForm() {
         toolConfigs.appendChild(toolDiv);
     });
     
-    // Set HF token
+    // Set HF token (may be masked)
     const hfTokenInput = document.getElementById('hfToken');
     if (settingsConfig.hf_token && settingsConfig.hf_token !== 'None') {
         hfTokenInput.value = settingsConfig.hf_token;
@@ -1599,7 +1777,8 @@ function onEndpointChange(toolKey) {
         endpointSelect.value = currentEndpoint;
     } else {
         // Update model dropdown
-        const currentModel = settingsConfig.specialized_models?.[toolKey]?.model || settingsConfig.model || 'your-model-name';
+        const specializedModel = settingsConfig.specialized_models?.[toolKey]?.model;
+        const currentModel = specializedModel || settingsConfig.model || 'your-model-name';
         modelSelect.innerHTML = renderModelOptions(currentModel, selectedValue);
         
         // Show/hide model dropdown based on endpoint type
@@ -1673,9 +1852,6 @@ async function saveEndpoint() {
             // Reload settings to get updated endpoints
             await loadSettings();
             closeEndpointModal();
-            
-            // Update the dropdown that triggered this
-            // (This is a simplified version - in real impl, track which tool triggered it)
         } else {
             alert('Error saving endpoint: ' + result.error);
         }
@@ -1706,6 +1882,7 @@ async function saveSettings() {
             
             updates.model_endpoints[toolKey] = endpointSelect.value;
             
+            // Only include model in specialized_models if endpoint is "local"
             if (endpointSelect.value === 'local') {
                 updates.specialized_models[toolKey] = {
                     model: modelSelect.value,
@@ -1713,11 +1890,19 @@ async function saveSettings() {
             }
         });
         
-        // Collect HF token if changed
+        // Collect HF token if changed (and not masked)
         const hfTokenInput = document.getElementById('hfToken');
-        if (hfTokenInput.value && hfTokenInput.value !== settingsConfig.hf_token) {
-            updates.hf_token = hfTokenInput.value;
+        const tokenValue = hfTokenInput.value;
+        
+        // CRITICAL: Only send token if it's not masked (doesn't contain "...")
+        if (tokenValue && !tokenValue.includes('...')) {
+            // Also check if it's different from the masked token shown
+            const maskedToken = settingsConfig.hf_token;
+            if (tokenValue !== maskedToken) {
+                updates.hf_token = tokenValue;
+            }
         }
+        // If token contains "...", do NOT include in updates (treat as unchanged)
         
         // Send to API
         const response = await fetch('/api/settings/config', {
@@ -1790,9 +1975,10 @@ document.addEventListener('keydown', function(e) {
 - [ ] GET /api/settings/models returns available models
 - [ ] POST /api/settings/config validates and saves
 - [ ] POST /api/settings/endpoint validates and saves endpoint
-- [ ] DELETE /api/settings/endpoint removes endpoint
+- [ ] DELETE /api/settings/endpoint removes endpoint and auto-reassigns roles
 - [ ] Config file backup created before write
 - [ ] Invalid inputs rejected with clear errors
+- [ ] Masked HF tokens rejected
 
 **Frontend Tests:**
 - [ ] Modal opens/closes smoothly
@@ -1802,14 +1988,15 @@ document.addEventListener('keydown', function(e) {
 - [ ] Save button disabled during save
 - [ ] Success/error messages display
 - [ ] ESC key closes modal
-- [ ] Click outside closes modal (optional)
+- [ ] Masked tokens not sent in updates
 
 **Integration Tests:**
 - [ ] Save settings → config.py updated
 - [ ] Add endpoint → appears in dropdowns
-- [ ] Delete endpoint → removed from dropdowns
+- [ ] Delete endpoint → removed from dropdowns, roles auto-reassigned to "local"
 - [ ] Change model → specialized_models updated
 - [ ] Change endpoint → MODEL_ENDPOINTS updated
+- [ ] MODEL variable preserved but not authoritative
 
 **Accessibility Tests:**
 - [ ] Keyboard navigation works
@@ -1844,6 +2031,7 @@ document.addEventListener('keydown', function(e) {
 - Validate HF token format (starts with `hf_`)
 - Validate URL format (http:// or https://)
 - Sanitize all inputs before writing to file
+- **CRITICAL:** Reject masked tokens (contain "...") in updates
 
 ### 2. Config File Writing
 
@@ -1864,6 +2052,11 @@ document.addEventListener('keydown', function(e) {
 - Verify endpoint keys are valid identifiers
 - Ensure URLs are valid format
 
+**File Regeneration:**
+- Config file is **always completely regenerated**
+- Comments and formatting from original are **NOT preserved**
+- This is intentional and expected behavior
+
 ### 3. Input Sanitization
 
 **All User Inputs:**
@@ -1871,6 +2064,7 @@ document.addEventListener('keydown', function(e) {
 - Validate endpoint keys (regex: `^[a-zA-Z_][a-zA-Z0-9_-]*$`)
 - Validate URLs (must start with http:// or https://)
 - Limit string lengths (prevent buffer overflow)
+- **Reject masked tokens** in API requests
 
 **Error Messages:**
 - Don't expose file paths in errors
@@ -1889,6 +2083,8 @@ document.addEventListener('keydown', function(e) {
 - ✅ User can add/edit/delete endpoints
 - ✅ Changes save to config.py
 - ✅ Config file backed up before write
+- ✅ Deleted endpoints auto-reassign roles to "local"
+- ✅ Masked tokens not saved
 
 ### Non-Functional Requirements
 - ✅ Modal opens in <200ms
@@ -1904,6 +2100,7 @@ document.addEventListener('keydown', function(e) {
 - ✅ Success/error messages clear
 - ✅ Smooth animations
 - ✅ Consistent with existing UI design
+- ✅ Restart instruction shown after save
 
 ---
 
@@ -1962,6 +2159,7 @@ document.addEventListener('keydown', function(e) {
    - Test with missing config.py (should create default)
    - Test with invalid inputs
    - Test on mobile devices
+   - Test masked token handling
 
 4. **Accessibility:**
    - Use semantic HTML
@@ -1970,16 +2168,24 @@ document.addEventListener('keydown', function(e) {
    - Test with screen reader
 
 5. **Performance:**
-   - Lazy load modal content
-   - Cache model list (refresh on demand)
-   - Debounce form validation
+   - Fetch models live on each modal open (no caching)
+   - Target <500ms for settings load
+   - Debounce form validation (if needed)
 
 6. **Security:**
    - Never log API keys
    - Validate all inputs server-side
    - Sanitize before writing to file
    - Use atomic file writes
+   - **CRITICAL:** Reject masked tokens in updates
+
+7. **Config Semantics:**
+   - `MODEL` is legacy/fallback only
+   - `SPECIALIZED_MODELS` is authoritative
+   - Always write `SPECIALIZED_MODELS` for all roles
+   - Endpoint deletion auto-reassigns to "local"
+   - Config file always regenerated (no comment preservation)
 
 ---
 
-**This implementation guide provides everything needed for a one-shot implementation of the settings modal feature.**
+**This implementation guide provides everything needed for a one-shot implementation of the settings modal feature. All ambiguities have been resolved with explicit clarifications.**
