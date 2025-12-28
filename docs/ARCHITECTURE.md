@@ -38,6 +38,11 @@ Deterministic Decision Tree (pattern matching)
     │   ├─→ FLUX for image generation
     │   └─→ Vision model for analysis
     │
+    ├─→ CONFIGURATION (Web UI Settings Modal)
+    │   ├─→ Model selection (orchestrator, codestral, reasoning, search, intent_detector, vision, image_generation)
+    │   ├─→ Endpoint management (HF, OpenAI, Anthropic)
+    │   └─→ API key management (masked display, secure storage)
+    │
     └─→ SIMPLE Q&A (/ask - no search)
         └─→ Direct model response
 ```
