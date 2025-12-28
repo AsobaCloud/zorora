@@ -15,23 +15,29 @@ class ModelSelector:
 
     def get_available_models(self) -> List[Dict[str, str]]:
         """
-        Fetch available models from LM Studio and HF endpoints.
+        Fetch available models from all providers (Local, HF, OpenAI, Anthropic).
 
         Returns:
-            List of dicts with 'name' and 'origin' keys
+            List of dicts with 'name', 'origin', 'provider', and 'cost' keys
         """
         models = []
+        import config
+        import os
 
         # Fetch from LM Studio (local)
         try:
             local_models = self.llm_client.list_models()
             for model in local_models:
-                models.append({"name": model, "origin": "Local (LM Studio)"})
+                models.append({
+                    "name": model,
+                    "origin": "Local (LM Studio)",
+                    "provider": "local",
+                    "cost": "Free"
+                })
         except Exception as e:
             self.ui.console.print(f"[yellow]Warning: Could not fetch LM Studio models: {e}[/yellow]")
 
-        # Fetch from HF endpoints
-        import config
+        # Fetch from HF endpoints (existing pattern)
         if hasattr(config, 'HF_ENDPOINTS') and hasattr(config, 'HF_TOKEN'):
             for endpoint_key, endpoint_config in config.HF_ENDPOINTS.items():
                 if not endpoint_config.get("enabled", True):
@@ -48,10 +54,48 @@ class ModelSelector:
                     # (HF endpoints typically serve a single model, not a list)
                     models.append({
                         "name": endpoint_config["model_name"],
-                        "origin": f"HF: {endpoint_key}"
+                        "origin": f"HF: {endpoint_key}",
+                        "provider": endpoint_key,
+                        "cost": "Free (HF Inference)"
                     })
                 except Exception as e:
                     self.ui.console.print(f"[yellow]Warning: Could not connect to HF endpoint '{endpoint_key}': {e}[/yellow]")
+
+        # Fetch from OpenAI endpoints (matches HF pattern)
+        openai_key = None
+        if hasattr(config, 'OPENAI_API_KEY') and config.OPENAI_API_KEY:
+            openai_key = config.OPENAI_API_KEY
+        elif os.getenv("OPENAI_API_KEY"):
+            openai_key = os.getenv("OPENAI_API_KEY")
+        
+        if openai_key and hasattr(config, 'OPENAI_ENDPOINTS'):
+            for endpoint_key, endpoint_config in config.OPENAI_ENDPOINTS.items():
+                if not endpoint_config.get("enabled", True):
+                    continue
+                models.append({
+                    "name": endpoint_config.get("model", endpoint_key),
+                    "origin": f"OpenAI: {endpoint_key}",
+                    "provider": endpoint_key,  # Simple key, not prefixed
+                    "cost": "Paid"
+                })
+
+        # Fetch from Anthropic endpoints (matches HF pattern)
+        anthropic_key = None
+        if hasattr(config, 'ANTHROPIC_API_KEY') and config.ANTHROPIC_API_KEY:
+            anthropic_key = config.ANTHROPIC_API_KEY
+        elif os.getenv("ANTHROPIC_API_KEY"):
+            anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+        
+        if anthropic_key and hasattr(config, 'ANTHROPIC_ENDPOINTS'):
+            for endpoint_key, endpoint_config in config.ANTHROPIC_ENDPOINTS.items():
+                if not endpoint_config.get("enabled", True):
+                    continue
+                models.append({
+                    "name": endpoint_config.get("model", endpoint_key),
+                    "origin": f"Anthropic: {endpoint_key}",
+                    "provider": endpoint_key,  # Simple key, not prefixed
+                    "cost": "Paid"
+                })
 
         return models
 
@@ -82,9 +126,13 @@ class ModelSelector:
                 "image_generation_endpoint": config.MODEL_ENDPOINTS.get("image_generation", "local"),
             })
 
-        # Add HF token information if available
+        # Add API key information if available
         if hasattr(config, 'HF_TOKEN'):
             result["hf_token"] = config.HF_TOKEN
+        if hasattr(config, 'OPENAI_API_KEY'):
+            result["openai_api_key"] = config.OPENAI_API_KEY
+        if hasattr(config, 'ANTHROPIC_API_KEY'):
+            result["anthropic_api_key"] = config.ANTHROPIC_API_KEY
 
         return result
 
@@ -97,7 +145,15 @@ class ModelSelector:
         def format_origin(endpoint_key):
             if endpoint_key == "local":
                 return "Local (LM Studio)"
-            return f"HF: {endpoint_key}"
+            # Check which provider dict contains this key
+            import config
+            if hasattr(config, 'OPENAI_ENDPOINTS') and endpoint_key in config.OPENAI_ENDPOINTS:
+                return f"OpenAI: {endpoint_key}"
+            if hasattr(config, 'ANTHROPIC_ENDPOINTS') and endpoint_key in config.ANTHROPIC_ENDPOINTS:
+                return f"Anthropic: {endpoint_key}"
+            if hasattr(config, 'HF_ENDPOINTS') and endpoint_key in config.HF_ENDPOINTS:
+                return f"HF: {endpoint_key}"
+            return f"Unknown: {endpoint_key}"
 
         # Helper to mask token
         def mask_token(token):
@@ -122,6 +178,8 @@ class ModelSelector:
             f"[cyan]Image Generation:[/cyan] {current.get('image_generation', 'Not configured')}" + (f" [dim]({format_origin(current.get('image_generation_endpoint', 'local'))})[/dim]" if current.get('image_generation_endpoint') else ""),
             f"[cyan]EnergyAnalyst:[/cyan] {current.get('energy_analyst_endpoint', 'http://localhost:8000')} ({energy_status})",
             f"[cyan]HuggingFace Token:[/cyan] {mask_token(current.get('hf_token'))}",
+            f"[cyan]OpenAI API Key:[/cyan] {mask_token(current.get('openai_api_key', ''))}",
+            f"[cyan]Anthropic API Key:[/cyan] {mask_token(current.get('anthropic_api_key', ''))}",
         ])
 
         config_text = "\n".join(config_lines)
@@ -132,9 +190,17 @@ class ModelSelector:
         table.add_column("#", style="dim", width=4)
         table.add_column("Model ID", style="cyan")
         table.add_column("Origin", style="dim")
+        table.add_column("Cost", style="yellow", width=12)
 
         for idx, model_info in enumerate(available, 1):
-            table.add_row(str(idx), model_info["name"], model_info["origin"])
+            cost = model_info.get("cost", "Unknown")
+            cost_style = "green" if cost == "Free" or "Free" in cost else "yellow"
+            table.add_row(
+                str(idx),
+                model_info["name"],
+                model_info["origin"],
+                f"[{cost_style}]{cost}[/{cost_style}]"
+            )
 
         self.ui.console.print(table)
 
@@ -158,12 +224,13 @@ class ModelSelector:
             idx = int(choice) - 1
             if 0 <= idx < len(available):
                 model_info = available[idx]
-                # Extract endpoint key from origin
-                origin = model_info["origin"]
-                if origin.startswith("HF: "):
-                    endpoint = origin[4:]  # Remove "HF: " prefix
-                else:
+                # Extract endpoint key from provider field (simple key, not prefixed)
+                provider = model_info.get("provider", "local")
+                if provider == "local":
                     endpoint = "local"
+                else:
+                    # Use provider as endpoint key (works for HF, OpenAI, Anthropic)
+                    endpoint = provider
 
                 return {
                     "model": model_info["name"],
@@ -201,6 +268,70 @@ class ModelSelector:
                 return None
 
         return new_token
+
+    def configure_openai_key(self, current_key: str) -> Optional[str]:
+        """Interactive OpenAI API key configuration."""
+        import os
+        # Check environment variable if config is empty
+        if not current_key:
+            current_key = os.getenv("OPENAI_API_KEY", "")
+        
+        # Mask current key for display
+        masked = f"{current_key[:4]}...{current_key[-4:]}" if current_key and len(current_key) >= 8 else "Not set"
+
+        self.ui.console.print(f"\n[bold]Configure OpenAI API Key[/bold]")
+        self.ui.console.print(f"[dim]Current: {masked}[/dim]")
+        self.ui.console.print("[dim]Enter new API key, or press Enter to keep current:[/dim]")
+        self.ui.console.print("[yellow]Note: Key will be stored in config.py[/yellow]")
+        self.ui.console.print("[dim]You can also set OPENAI_API_KEY environment variable[/dim]\n")
+
+        new_key = input(">>> ").strip()
+
+        if not new_key:
+            return None  # Keep current
+
+        # Basic validation - OpenAI keys typically start with "sk-"
+        if not new_key.startswith("sk-"):
+            self.ui.console.print("[yellow]Warning: OpenAI API keys usually start with 'sk-'[/yellow]")
+            self.ui.console.print("[dim]Continue anyway? (y/n):[/dim]")
+            confirm = input(">>> ").strip().lower()
+            if confirm != 'y':
+                self.ui.console.print("[dim]Key update cancelled.[/dim]")
+                return None
+
+        return new_key
+
+    def configure_anthropic_key(self, current_key: str) -> Optional[str]:
+        """Interactive Anthropic API key configuration."""
+        import os
+        # Check environment variable if config is empty
+        if not current_key:
+            current_key = os.getenv("ANTHROPIC_API_KEY", "")
+        
+        # Mask current key for display
+        masked = f"{current_key[:4]}...{current_key[-4:]}" if current_key and len(current_key) >= 8 else "Not set"
+
+        self.ui.console.print(f"\n[bold]Configure Anthropic API Key[/bold]")
+        self.ui.console.print(f"[dim]Current: {masked}[/dim]")
+        self.ui.console.print("[dim]Enter new API key, or press Enter to keep current:[/dim]")
+        self.ui.console.print("[yellow]Note: Key will be stored in config.py[/yellow]")
+        self.ui.console.print("[dim]You can also set ANTHROPIC_API_KEY environment variable[/dim]\n")
+
+        new_key = input(">>> ").strip()
+
+        if not new_key:
+            return None  # Keep current
+
+        # Basic validation - Anthropic keys typically start with "sk-ant-"
+        if not new_key.startswith("sk-ant-"):
+            self.ui.console.print("[yellow]Warning: Anthropic API keys usually start with 'sk-ant-'[/yellow]")
+            self.ui.console.print("[dim]Continue anyway? (y/n):[/dim]")
+            confirm = input(">>> ").strip().lower()
+            if confirm != 'y':
+                self.ui.console.print("[dim]Key update cancelled.[/dim]")
+                return None
+
+        return new_key
 
     def add_hf_endpoint(self) -> Optional[Dict[str, any]]:
         """Interactive HuggingFace endpoint addition."""
@@ -386,10 +517,20 @@ class ModelSelector:
                 replacement = f'"enabled": {updates["energy_analyst_enabled"]}'
                 content = re.sub(pattern, replacement, content)
 
-            # Update HF token
+            # Update API keys
             if "hf_token" in updates:
                 pattern = r'HF_TOKEN = "[^"]*"'
                 replacement = f'HF_TOKEN = "{updates["hf_token"]}"'
+                content = re.sub(pattern, replacement, content)
+            
+            if "openai_api_key" in updates:
+                pattern = r'OPENAI_API_KEY = "[^"]*"'
+                replacement = f'OPENAI_API_KEY = "{updates["openai_api_key"]}"'
+                content = re.sub(pattern, replacement, content)
+            
+            if "anthropic_api_key" in updates:
+                pattern = r'ANTHROPIC_API_KEY = "[^"]*"'
+                replacement = f'ANTHROPIC_API_KEY = "{updates["anthropic_api_key"]}"'
                 content = re.sub(pattern, replacement, content)
 
             self.config_path.write_text(content)
@@ -531,10 +672,21 @@ class ModelSelector:
             updates["energy_analyst_endpoint"] = energy_config["endpoint"]
             updates["energy_analyst_enabled"] = energy_config["enabled"]
 
-        # Configure HuggingFace token
-        new_token = self.configure_hf_token(current.get('hf_token', ''))
-        if new_token:
-            updates["hf_token"] = new_token
+        # Configure API keys
+        new_hf_token = self.configure_hf_token(current.get('hf_token', ''))
+        if new_hf_token:
+            updates["hf_token"] = new_hf_token
+        
+        import os
+        current_openai_key = current.get('openai_api_key', '') or os.getenv("OPENAI_API_KEY", "")
+        new_openai_key = self.configure_openai_key(current_openai_key)
+        if new_openai_key:
+            updates["openai_api_key"] = new_openai_key
+        
+        current_anthropic_key = current.get('anthropic_api_key', '') or os.getenv("ANTHROPIC_API_KEY", "")
+        new_anthropic_key = self.configure_anthropic_key(current_anthropic_key)
+        if new_anthropic_key:
+            updates["anthropic_api_key"] = new_anthropic_key
 
         # Apply updates
         if updates:

@@ -43,7 +43,8 @@ class REPL:
         self.model_selector = ModelSelector(self.llm_client, self.ui)
 
     def _create_orchestrator_client(self):
-        """Create LLMClient for orchestrator, using local or remote endpoint."""
+        """Create LLMClient for orchestrator, using local, HF, OpenAI, or Anthropic endpoint."""
+        import os
         # Check if we have endpoint mappings
         endpoint_key = "local"
         if hasattr(config, 'MODEL_ENDPOINTS') and "orchestrator" in config.MODEL_ENDPOINTS:
@@ -53,7 +54,63 @@ class REPL:
         if endpoint_key == "local":
             return LLMClient()
 
-        # Otherwise, use HF endpoint
+        # Check OpenAI endpoints (matches HF pattern)
+        if hasattr(config, 'OPENAI_ENDPOINTS') and endpoint_key in config.OPENAI_ENDPOINTS:
+            openai_config = config.OPENAI_ENDPOINTS[endpoint_key]
+            # Get API key from config or environment variable
+            api_key = config.OPENAI_API_KEY if hasattr(config, 'OPENAI_API_KEY') and config.OPENAI_API_KEY else os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                raise ValueError(f"OPENAI_API_KEY not configured for endpoint '{endpoint_key}'. Set it in config.py or OPENAI_API_KEY environment variable.")
+            
+            # Create LLMClient wrapper for OpenAI (uses OpenAIAdapter internally)
+            from providers.openai_adapter import OpenAIAdapter
+            adapter = OpenAIAdapter(
+                api_key=api_key,
+                model=openai_config.get("model", endpoint_key),
+                timeout=openai_config.get("timeout", config.TIMEOUT),
+            )
+            # Wrap adapter in LLMClient-compatible interface
+            client = LLMClient.__new__(LLMClient)
+            client.adapter = adapter
+            client.api_url = f"https://api.openai.com/v1/chat/completions"
+            client.model = openai_config.get("model", endpoint_key)
+            client.max_tokens = config.MAX_TOKENS
+            client.temperature = config.TEMPERATURE
+            client.timeout = openai_config.get("timeout", config.TIMEOUT)
+            client.tool_choice = config.TOOL_CHOICE
+            client.parallel_tool_calls = config.PARALLEL_TOOL_CALLS
+            client.auth_token = api_key
+            return client
+
+        # Check Anthropic endpoints (matches HF pattern)
+        if hasattr(config, 'ANTHROPIC_ENDPOINTS') and endpoint_key in config.ANTHROPIC_ENDPOINTS:
+            anthropic_config = config.ANTHROPIC_ENDPOINTS[endpoint_key]
+            # Get API key from config or environment variable
+            api_key = config.ANTHROPIC_API_KEY if hasattr(config, 'ANTHROPIC_API_KEY') and config.ANTHROPIC_API_KEY else os.getenv("ANTHROPIC_API_KEY")
+            if not api_key:
+                raise ValueError(f"ANTHROPIC_API_KEY not configured for endpoint '{endpoint_key}'. Set it in config.py or ANTHROPIC_API_KEY environment variable.")
+            
+            # Create LLMClient wrapper for Anthropic (uses AnthropicAdapter internally)
+            from providers.anthropic_adapter import AnthropicAdapter
+            adapter = AnthropicAdapter(
+                api_key=api_key,
+                model=anthropic_config.get("model", endpoint_key),
+                timeout=anthropic_config.get("timeout", config.TIMEOUT),
+            )
+            # Wrap adapter in LLMClient-compatible interface
+            client = LLMClient.__new__(LLMClient)
+            client.adapter = adapter
+            client.api_url = f"https://api.anthropic.com/v1/messages"
+            client.model = anthropic_config.get("model", endpoint_key)
+            client.max_tokens = config.MAX_TOKENS
+            client.temperature = config.TEMPERATURE
+            client.timeout = anthropic_config.get("timeout", config.TIMEOUT)
+            client.tool_choice = config.TOOL_CHOICE
+            client.parallel_tool_calls = config.PARALLEL_TOOL_CALLS
+            client.auth_token = api_key
+            return client
+
+        # Check HF endpoints (existing logic)
         if hasattr(config, 'HF_ENDPOINTS') and endpoint_key in config.HF_ENDPOINTS:
             hf_config = config.HF_ENDPOINTS[endpoint_key]
             return LLMClient(
