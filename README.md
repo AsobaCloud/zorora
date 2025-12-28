@@ -62,6 +62,15 @@ zorora web
 # Opens at http://localhost:5000
 ```
 
+**Web UI Features:**
+- Research query interface with depth selection (Quick/Balanced/Thorough)
+- Settings modal (⚙️ gear icon) for configuring:
+  - LLM models for each tool (orchestrator, codestral, reasoning, search, intent_detector, vision, image_generation)
+  - Endpoints (Local/LM Studio, HuggingFace, OpenAI, Anthropic)
+  - API keys (masked display, secure storage)
+  - Add/edit/delete custom endpoints
+- Research results display with synthesis, sources, and credibility scores
+
 ## Features
 
 ### Deep Research Capabilities
