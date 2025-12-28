@@ -4,7 +4,7 @@ from conversation import ConversationManager
 from conversation_persistence import ConversationPersistence
 from llm_client import LLMClient
 from tool_executor import ToolExecutor
-from tool_registry import ToolRegistry
+from tools.registry import ToolRegistry
 from turn_processor import TurnProcessor
 from model_selector import ModelSelector
 from config import load_system_prompt

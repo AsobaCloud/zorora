@@ -5,7 +5,7 @@ import json
 import re
 import logging
 
-from tool_registry import ToolRegistry, SPECIALIST_TOOLS
+from tools.registry import ToolRegistry, SPECIALIST_TOOLS
 
 logger = logging.getLogger(__name__)
 

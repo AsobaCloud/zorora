@@ -9,7 +9,7 @@ import json
 from conversation import ConversationManager
 from llm_client import LLMClient
 from tool_executor import ToolExecutor
-from tool_registry import ToolRegistry, SPECIALIST_TOOLS
+from tools.registry import ToolRegistry, SPECIALIST_TOOLS
 from simplified_router import SimplifiedRouter
 from research_workflow import ResearchWorkflow
 from research_persistence import ResearchPersistence
