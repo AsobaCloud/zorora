@@ -1,8 +1,21 @@
 # Zorora
 
-A lightweight research REPL optimized for knowledge acquisition, multi-source synthesis, and persistent storage. Built for macOS (Apple Silicon) with minimal RAM footprint.
+A local-first deep research engine that searches across academic databases, web sources, and newsroom articles, then synthesizes findings with credibility scoring and citation graphs. Built for macOS (Apple Silicon) with minimal RAM footprint.
 
-![Zorora Screenshot](docs/screenshot.png)
+![Zorora Terminal UI](docs/screenshot.png)
+
+![Zorora Web UI](docs/ui.png)
+
+## Core Value Proposition
+
+Zorora transforms from a basic research tool into a **deep research engine** that:
+
+1. **Searches EVERYTHING** - Academic databases (7 sources) + web search + Asoba newsroom
+2. **Follows citation trails** - Multi-hop research that explores cited papers
+3. **Cross-references claims** - Groups similar claims and counts agreement across sources
+4. **Scores credibility** - Transparent rules-based scoring of source authority
+5. **Builds citation graphs** - Visualizes relationships between sources
+6. **Synthesizes with confidence** - Generates comprehensive answers with citation levels
 
 ## Quick Start
 
@@ -13,6 +26,7 @@ A lightweight research REPL optimized for knowledge acquisition, multi-source sy
   - Download: [lmstudio.ai](https://lmstudio.ai)
   - Load a 4B model (e.g., Qwen3-VL-4B, Qwen3-4B)
 - **HuggingFace token** (optional) - For remote Codestral endpoint
+- **Brave Search API key** (optional) - For enhanced web search
 
 ### Installation
 
@@ -22,34 +36,73 @@ pip install git+https://github.com/AsobaCloud/zorora.git
 
 ### Run
 
+**Terminal Interface (for engineers):**
 ```bash
 zorora
 ```
 
+**Web Interface (for non-engineers):**
+```bash
+zorora web
+# Opens at http://localhost:5000
+```
+
 ## Features
 
-- **Multi-source research** - Automatic [newsroom](https://github.com/AsobaCloud/newsroom) + web search + synthesis with citations
-- **Research persistence** - Save/load findings with metadata to `~/.zorora/research/`
+### Deep Research Capabilities
+
+- **6-Phase Research Pipeline:**
+  1. **Parallel Source Aggregation** - Searches academic (7 sources), web (Brave + DDG), and newsroom simultaneously
+  2. **Citation Following** - Multi-hop exploration of cited papers (configurable depth: 1-3)
+  3. **Cross-Referencing** - Groups claims by similarity and counts agreement
+  4. **Credibility Scoring** - Rules-based scoring of source authority (academic journals, predatory publishers, retractions)
+  5. **Citation Graph Building** - Constructs directed graphs showing source relationships
+  6. **Synthesis** - Generates comprehensive answers with confidence levels and citations
+
+- **Research Depth Levels:**
+  - **Quick** - Initial sources only (skips citation following)
+  - **Balanced** - Adds citation following (1 hop)
+  - **Thorough** - Multi-hop citation exploration (up to 3 levels deep)
+
+- **Local-First Architecture:**
+  - All processing and storage on your machine
+  - SQLite database for fast indexed queries (`~/.zorora/zorora.db`)
+  - JSON files for full research findings (`~/.zorora/research/findings/`)
+  - Zero cloud dependencies (except source fetching)
+  - Complete privacy - research data never leaves your machine
+
+### Additional Features
+
+- **Research persistence** - Save/load findings with metadata
 - **Code generation** - Dedicated Codestral model for coding tasks
 - **Multi-step development** - `/develop` workflow: explore → plan → approve → execute → lint
 - **Slash commands** - Force workflows: `/search`, `/ask`, `/code`, `/develop`, `/image`, `/vision`
 - **Deterministic routing** - Pattern-based decision tree (no LLM routing failures)
 - **Hybrid deployment** - Local 4B orchestrator + remote 32B specialists
 - **RAM-efficient** - Runs on MacBook Air M3 with 4B model
+- **Dual interfaces** - Terminal REPL for engineers, Web UI for non-engineers
 
 ## Basic Usage
 
-### Research Query
+### Deep Research Query
 
+**Terminal:**
 ```
-[1] ⚙ > Based on the newsroom as well as web search, what are the major AI trends in 2025?
+[1] ⚙ > What are the latest developments in large language model architectures?
 ```
+
+**Web UI:**
+- Enter research question
+- Select depth level (Quick/Balanced/Thorough)
+- Click "Start Research"
 
 Zorora automatically:
-- Fetches newsroom headlines
-- Searches the web
-- Synthesizes findings with citations
-- Optionally saves results for later
+- Aggregates sources from academic databases, web, and newsroom (parallel)
+- Follows citation trails (if depth > 1)
+- Cross-references claims across sources
+- Scores credibility of each source
+- Builds citation graph
+- Synthesizes findings with citations and confidence levels
 
 ### Code Generation
 
@@ -62,21 +115,21 @@ Routes to Codestral specialist model for code generation.
 ### Save Research
 
 ```
-[3] ⚙ > Save this as "ai_trends_2025"
-Saved to: ~/.zorora/research/ai_trends_2025.md
+[3] ⚙ > Save this as "llm_architectures_2024"
+Saved to: ~/.zorora/research/llm_architectures_2024.md
 ```
 
 ### Load Research
 
 ```
-[4] ⚙ > Load my research on AI trends
+[4] ⚙ > Load my research on LLM architectures
 ```
 
 ## Slash Commands
 
 ### Workflow Commands
 
-- **`/search <query>`** - Force research workflow (newsroom + web + synthesis)
+- **`/search <query>`** - Force deep research workflow (academic + web + newsroom + synthesis)
 - **`/ask <query>`** - Force conversational mode (no web search)
 - **`/code <prompt>`** - Force code generation with Codestral
 - **`/develop <request>`** - Multi-step code development workflow
@@ -138,7 +191,13 @@ User Query / Slash Command
     ↓
 Pattern Matching (simplified_router.py)
     ↓
-    ├─→ RESEARCH WORKFLOW (newsroom + web + synthesis)
+    ├─→ DEEP RESEARCH WORKFLOW (6-phase pipeline)
+    │   ├─► Parallel Source Aggregation
+    │   ├─► Citation Following (multi-hop)
+    │   ├─► Cross-Referencing
+    │   ├─► Credibility Scoring
+    │   ├─► Citation Graph Building
+    │   └─► Synthesis
     ├─→ CODE WORKFLOW (Codestral specialist)
     ├─→ DEVELOPMENT WORKFLOW (/develop - multi-step)
     ├─→ FILE OPERATIONS (save/load/list)
@@ -146,10 +205,11 @@ Pattern Matching (simplified_router.py)
 ```
 
 **Key Principles:**
-- Code-controlled workflows, not LLM orchestration
-- Hardcoded pipelines for predictable results
-- Pattern matching ensures consistent routing
-- Specialist models for specific tasks
+- **Local-first** - Everything runs on your machine
+- **Deterministic workflows** - Code-controlled pipelines, not LLM orchestration
+- **Pattern matching** - Ensures consistent routing (0ms decision time)
+- **Specialist models** - Dedicated models for specific tasks
+- **Dual interfaces** - Terminal for engineers, Web UI for non-engineers
 
 For detailed architecture documentation, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -165,6 +225,12 @@ zorora/
 ├── turn_processor.py            # Workflow orchestration
 ├── tool_executor.py             # Tool execution
 ├── tool_registry.py             # Tool definitions
+├── ui/web/                      # Web UI (Flask app)
+│   ├── app.py
+│   ├── templates/
+│   │   └── index.html
+│   └── static/
+│       └── images/
 └── workflows/                   # Multi-step workflows
     ├── develop_workflow.py
     ├── codebase_explorer.py
@@ -176,6 +242,7 @@ zorora/
 
 - **[COMMANDS.md](COMMANDS.md)** - Complete command reference
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** - Detailed architecture explanation
+- **[docs/DEEP_RESEARCH_IMPLEMENTATION.md](docs/DEEP_RESEARCH_IMPLEMENTATION.md)** - Deep research feature roadmap
 - **[docs/WORKFLOWS.md](docs/WORKFLOWS.md)** - Workflow documentation
 - **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** - Troubleshooting guide
 - **[docs/BEST_PRACTICES.md](docs/BEST_PRACTICES.md)** - Best practices
@@ -184,7 +251,10 @@ zorora/
 ## Performance
 
 - **Routing decision:** 0ms (pattern matching)
-- **Research workflow:** 10-60 seconds total
+- **Research workflow:** Varies by depth
+  - Quick (depth=1): Initial sources only
+  - Balanced (depth=2): + Citation following
+  - Thorough (depth=3): + Multi-hop citations
 - **Code generation:** 10-90 seconds (local: 10-30s, HF 32B: 60-90s)
 - **RAM usage:** 4-6 GB (4B orchestrator model)
 
@@ -194,12 +264,13 @@ zorora/
 
 **Solution:** Code handles complexity:
 - Pattern matching routes queries (no LLM decision)
-- Hardcoded workflows execute pipelines (no LLM planning)
+- Hardcoded 6-phase research pipeline (no LLM planning)
 - Deterministic error handling (no LLM recovery)
+- Local-first storage (SQLite + JSON files)
 
-**Result:** 100% reliability with 4B models, 1/3 the RAM usage of 8B orchestrators.
+**Result:** 100% reliability with 4B models, 1/3 the RAM usage of 8B orchestrators, complete privacy with local storage.
 
-For more details, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+For more details, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/DEEP_RESEARCH_IMPLEMENTATION.md](docs/DEEP_RESEARCH_IMPLEMENTATION.md).
 
 ## Troubleshooting
 
@@ -214,6 +285,9 @@ For more details, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ### HuggingFace Endpoint Errors
 **Solution:** Check HF endpoint URL, verify token, ensure endpoint is running
+
+### Web UI Not Starting
+**Solution:** Ensure Flask is installed: `pip install flask`, then run `zorora web`
 
 For detailed troubleshooting, see [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
 
