@@ -1039,6 +1039,8 @@
                 { key: 'reasoning', label: 'Reasoning (Synthesis)', help: 'Model for research synthesis' },
                 { key: 'search', label: 'Research (Search)', help: 'Model for research queries' },
                 { key: 'intent_detector', label: 'Intent Detector', help: 'Model for routing decisions' },
+                { key: 'vision', label: 'Vision (Image Analysis)', help: 'Model for OCR and image analysis' },
+                { key: 'image_generation', label: 'Image Generation', help: 'Model for text-to-image generation' },
             ];
             
             tools.forEach(tool => {
@@ -1242,7 +1244,7 @@
                 };
                 
                 // Collect model endpoints
-                const tools = ['orchestrator', 'codestral', 'reasoning', 'search', 'intent_detector'];
+                const tools = ['orchestrator', 'codestral', 'reasoning', 'search', 'intent_detector', 'vision', 'image_generation'];
                 tools.forEach(toolKey => {
                     const endpointSelect = document.getElementById(`endpoint_${toolKey}`);
                     const modelSelect = document.getElementById(`model_${toolKey}`);
