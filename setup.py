@@ -15,9 +15,21 @@ setup(
     long_description_content_type="text/markdown",
     author="Asoba",
     url="https://github.com/AsobaCloud/zorora",
-    packages=["workflows", "tools", "tools.utils"],  # Include workflows and tools packages
+    packages=[
+        "workflows",
+        "workflows.deep_research",
+        "tools",
+        "tools.research",
+        "tools.code",
+        "tools.specialist",
+        "tools.utils",
+        "engine",
+        "ui",
+        "ui.web",
+    ],
     py_modules=[
         "main",
+        "web_main",
         "repl",
         "config",
         "conversation",
@@ -37,11 +49,15 @@ setup(
             "zorora=main:main",
         ],
     },
+    package_data={
+        "ui.web": ["templates/*.html", "static/images/*"],
+    },
     install_requires=[
         "requests>=2.28.0",
         "rich>=13.0.0",
         "ddgs>=9.0.0",
         "beautifulsoup4>=4.11.0",
+        "flask>=2.0.0",
     ],
     python_requires=">=3.8",
     classifiers=[

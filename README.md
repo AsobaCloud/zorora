@@ -27,11 +27,20 @@ Zorora transforms from a basic research tool into a **deep research engine** tha
   - Load a 4B model (e.g., Qwen3-VL-4B, Qwen3-4B)
 - **HuggingFace token** (optional) - For remote Codestral endpoint
 - **Brave Search API key** (optional) - For enhanced web search
+- **Flask** (for Web UI) - Installed automatically with package
 
 ### Installation
 
+**From GitHub:**
 ```bash
 pip install git+https://github.com/AsobaCloud/zorora.git
+```
+
+**From source:**
+```bash
+git clone https://github.com/AsobaCloud/zorora.git
+cd zorora
+pip install -e .
 ```
 
 ### Run
@@ -42,6 +51,12 @@ zorora
 ```
 
 **Web Interface (for non-engineers):**
+```bash
+python web_main.py
+# Opens at http://localhost:5000
+```
+
+Or if installed via pip:
 ```bash
 zorora web
 # Opens at http://localhost:5000
@@ -86,23 +101,38 @@ zorora web
 
 ### Deep Research Query
 
-**Terminal:**
+**Terminal (via REPL):**
 ```
 [1] ⚙ > What are the latest developments in large language model architectures?
 ```
 
-**Web UI:**
-- Enter research question
-- Select depth level (Quick/Balanced/Thorough)
-- Click "Start Research"
+The system automatically detects research intent and executes the deep research workflow.
 
-Zorora automatically:
-- Aggregates sources from academic databases, web, and newsroom (parallel)
-- Follows citation trails (if depth > 1)
-- Cross-references claims across sources
-- Scores credibility of each source
-- Builds citation graph
-- Synthesizes findings with citations and confidence levels
+**Web UI:**
+1. Open `http://localhost:5000` in your browser
+2. Enter research question in the search box
+3. Select depth level:
+   - **Quick** - Initial sources only (depth=1, ~25-35s)
+   - **Balanced** - + Citation following (depth=2, ~35-50s) - *Coming soon*
+   - **Thorough** - + Multi-hop citations (depth=3, ~50-70s) - *Coming soon*
+4. Click "Start Research"
+5. View synthesis, sources, and credibility scores
+
+**API (Programmatic Access):**
+```python
+from engine.research_engine import ResearchEngine
+
+engine = ResearchEngine()
+state = engine.deep_research("Your research question", depth=1)
+print(state.synthesis)
+```
+
+**What Happens Automatically:**
+- ✅ Aggregates sources from academic databases (7 sources), web (Brave + DDG), and newsroom (parallel)
+- ✅ Scores credibility of each source (multi-factor: domain, citations, cross-references)
+- ✅ Cross-references claims across sources
+- ✅ Synthesizes findings with citations and confidence levels
+- ✅ Saves results to local storage (`~/.zorora/zorora.db` + JSON files)
 
 ### Code Generation
 
@@ -112,18 +142,33 @@ Zorora automatically:
 
 Routes to Codestral specialist model for code generation.
 
-### Save Research
+### Save/Load Research
 
-```
-[3] ⚙ > Save this as "llm_architectures_2024"
-Saved to: ~/.zorora/research/llm_architectures_2024.md
+Research is automatically saved to local storage. Access via:
+
+**Terminal:**
+```python
+from engine.research_engine import ResearchEngine
+
+engine = ResearchEngine()
+# Search past research
+results = engine.search_research(query="LLM architectures", limit=10)
+# Load specific research
+research_data = engine.load_research(results[0]['research_id'])
 ```
 
-### Load Research
+**Web UI API:**
+```bash
+# Get research history
+curl http://localhost:5000/api/research/history?limit=10
 
+# Get specific research
+curl http://localhost:5000/api/research/<research_id>
 ```
-[4] ⚙ > Load my research on LLM architectures
-```
+
+**Storage Location:**
+- SQLite index: `~/.zorora/zorora.db`
+- Full JSON files: `~/.zorora/research/findings/<research_id>.json`
 
 ## Slash Commands
 
@@ -187,29 +232,53 @@ Use the interactive `/models` command:
 Zorora uses **deterministic routing** with pattern matching (no LLM-based orchestration):
 
 ```
-User Query / Slash Command
+User Query / Slash Command / Web UI Request
     ↓
-Pattern Matching (simplified_router.py)
+Pattern Matching (simplified_router.py) / Flask Routes (ui/web/app.py)
     ↓
-    ├─→ DEEP RESEARCH WORKFLOW (6-phase pipeline)
-    │   ├─► Parallel Source Aggregation
-    │   ├─► Citation Following (multi-hop)
-    │   ├─► Cross-Referencing
-    │   ├─► Credibility Scoring
-    │   ├─► Citation Graph Building
-    │   └─► Synthesis
+    ├─→ DEEP RESEARCH WORKFLOW (4-phase MVP pipeline)
+    │   ├─► Phase 1: Parallel Source Aggregation
+    │   │   ├─► Academic (7 sources: Scholar, PubMed, CORE, arXiv, bioRxiv, medRxiv, PMC)
+    │   │   ├─► Web (Brave Search + DuckDuckGo)
+    │   │   └─► Newsroom (Asoba API)
+    │   ├─► Phase 2: Credibility Scoring (multi-factor)
+    │   │   ├─► Domain-based scoring (Nature=0.85, arXiv=0.50, etc.)
+    │   │   ├─► Citation modifiers
+    │   │   └─► Cross-reference agreement
+    │   ├─► Phase 3: Cross-Referencing (simplified)
+    │   │   └─► Group claims by similarity
+    │   └─► Phase 4: Synthesis (Reasoning Model)
+    │       └─► Generate comprehensive answer with citations
     ├─→ CODE WORKFLOW (Codestral specialist)
     ├─→ DEVELOPMENT WORKFLOW (/develop - multi-step)
     ├─→ FILE OPERATIONS (save/load/list)
     └─→ SIMPLE Q&A (/ask - direct model)
 ```
 
+**Storage Architecture:**
+```
+Research Request
+    ↓
+ResearchEngine.deep_research()
+    ↓
+DeepResearchWorkflow.execute()
+    ↓
+LocalStorage.save_research()
+    ├─► SQLite Index (~/.zorora/zorora.db)
+    │   ├─► research_findings (metadata)
+    │   ├─► sources (indexed)
+    │   └─► citations (graph)
+    └─► JSON Files (~/.zorora/research/findings/<id>.json)
+        └─► Full research state (sources, findings, synthesis)
+```
+
 **Key Principles:**
-- **Local-first** - Everything runs on your machine
+- **Local-first** - Everything runs on your machine (SQLite + JSON files)
 - **Deterministic workflows** - Code-controlled pipelines, not LLM orchestration
 - **Pattern matching** - Ensures consistent routing (0ms decision time)
 - **Specialist models** - Dedicated models for specific tasks
-- **Dual interfaces** - Terminal for engineers, Web UI for non-engineers
+- **Dual interfaces** - Terminal REPL for engineers, Web UI for non-engineers
+- **Modular tools** - Research tools in `tools/research/`, registry in `tools/registry.py`
 
 For detailed architecture documentation, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -219,23 +288,48 @@ For detailed architecture documentation, see [docs/ARCHITECTURE.md](docs/ARCHITE
 zorora/
 ├── main.py                      # Entry point
 ├── repl.py                      # REPL loop and slash commands
+├── web_main.py                  # Web UI entry point
 ├── config.py                    # Configuration
 ├── simplified_router.py          # Deterministic routing
-├── research_workflow.py         # Research pipeline
+├── research_workflow.py         # Legacy research pipeline
 ├── turn_processor.py            # Workflow orchestration
 ├── tool_executor.py             # Tool execution
-├── tool_registry.py             # Tool definitions
-├── ui/web/                      # Web UI (Flask app)
-│   ├── app.py
-│   ├── templates/
-│   │   └── index.html
-│   └── static/
-│       └── images/
-└── workflows/                   # Multi-step workflows
-    ├── develop_workflow.py
-    ├── codebase_explorer.py
-    ├── code_planner.py
-    └── code_executor.py
+├── tool_registry.py             # Tool registry (shim for backward compat)
+├── tool_registry_legacy.py      # Original tool registry (backup)
+│
+├── engine/                      # Deep research engine
+│   ├── models.py                # Data models (Source, Finding, ResearchState)
+│   ├── storage.py               # SQLite storage layer
+│   └── research_engine.py       # High-level research API
+│
+├── tools/                       # Modular tool registry
+│   ├── registry.py              # Central tool registry
+│   ├── research/                # Research tools
+│   │   ├── academic_search.py   # Academic search (7 sources)
+│   │   ├── web_search.py        # Web search (Brave + DDG)
+│   │   └── newsroom.py          # Newsroom API integration
+│   ├── code/                    # Code tools (future)
+│   └── specialist/              # Specialist tools (future)
+│
+├── workflows/                   # Multi-step workflows
+│   ├── develop_workflow.py      # Development workflow
+│   ├── codebase_explorer.py     # Codebase exploration
+│   ├── code_planner.py          # Code planning
+│   ├── code_executor.py         # Code execution
+│   └── deep_research/           # Deep research workflow
+│       ├── aggregator.py        # Source aggregation
+│       ├── credibility.py       # Credibility scoring
+│       ├── synthesizer.py       # Synthesis generation
+│       └── workflow.py          # Workflow orchestrator
+│
+└── ui/web/                      # Web UI (Flask app)
+    ├── app.py                   # Flask application
+    ├── templates/
+    │   └── index.html           # Research UI
+    └── static/
+        └── images/
+            ├── Artboard-7.png   # Asoba logo
+            └── ui.png           # UI screenshot
 ```
 
 ## Documentation
@@ -251,10 +345,14 @@ zorora/
 ## Performance
 
 - **Routing decision:** 0ms (pattern matching)
-- **Research workflow:** Varies by depth
-  - Quick (depth=1): Initial sources only
-  - Balanced (depth=2): + Citation following
-  - Thorough (depth=3): + Multi-hop citations
+- **Research workflow:** Varies by depth (MVP - depth=1 only)
+  - **Quick (depth=1):** ~25-35s
+    - Source aggregation: ~8s (parallel)
+    - Credibility scoring: ~2s
+    - Synthesis: ~15-25s
+  - **Balanced (depth=2):** ~35-50s - *Coming soon (citation following)*
+  - **Thorough (depth=3):** ~50-70s - *Coming soon (multi-hop citations)*
+- **Storage queries:** <100ms (SQLite indexed)
 - **Code generation:** 10-90 seconds (local: 10-30s, HF 32B: 60-90s)
 - **RAM usage:** 4-6 GB (4B orchestrator model)
 
@@ -287,7 +385,16 @@ For more details, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/DEE
 **Solution:** Check HF endpoint URL, verify token, ensure endpoint is running
 
 ### Web UI Not Starting
-**Solution:** Ensure Flask is installed: `pip install flask`, then run `zorora web`
+**Solution:** 
+- Ensure Flask is installed: `pip install flask`
+- Run: `python web_main.py` (or `zorora web` if installed via pip)
+- Check port 5000 is available
+
+### Deep Research Not Working
+**Solution:**
+- Check that research tools are accessible: `from tools.research.academic_search import academic_search`
+- Verify storage directory exists: `~/.zorora/` (created automatically)
+- Check logs for API errors (Brave Search, Newsroom API)
 
 For detailed troubleshooting, see [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
 
@@ -299,4 +406,30 @@ See LICENSE file.
 
 **Repository:** https://github.com/AsobaCloud/zorora  
 **EnergyAnalyst:** https://huggingface.co/asoba/EnergyAnalyst-v0.1  
-**Version:** 1.0.0
+**Version:** 2.0.0 (Deep Research Release)
+
+---
+
+## Changelog
+
+### Version 2.0.0 - Deep Research Release
+
+**Major Features:**
+- ✅ Deep research engine with 4-phase workflow (MVP)
+- ✅ Modular tool registry (`tools/research/`, `tools/registry.py`)
+- ✅ SQLite + JSON storage layer (`engine/storage.py`)
+- ✅ Web UI with Flask (`ui/web/app.py`)
+- ✅ Credibility scoring system
+- ✅ Parallel source aggregation (academic + web + newsroom)
+- ✅ Research synthesis with citations
+
+**Architecture Changes:**
+- Refactored tool registry into modular structure
+- Created `engine/` module for research engine
+- Created `workflows/deep_research/` for workflow components
+- Added Flask-based Web UI
+
+**Breaking Changes:**
+- `tool_registry.py` is now a backward-compatibility shim
+- Use `from tools.registry import ...` for new code
+- Web UI requires Flask (added to requirements)
