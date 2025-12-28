@@ -850,9 +850,11 @@
                     </div>
                     
                     <div class="settings-section">
-                        <h3 class="settings-section-title">HuggingFace Token</h3>
+                        <h3 class="settings-section-title">API Keys</h3>
+                        <p class="settings-section-desc">Configure API keys for each provider.</p>
+                        
                         <div class="form-group">
-                            <label for="hfToken">API Token</label>
+                            <label for="hfToken">HuggingFace API Token</label>
                             <div class="input-with-button">
                                 <input 
                                     type="password" 
@@ -865,6 +867,38 @@
                                 </button>
                             </div>
                             <small class="form-help">Your HuggingFace API token for accessing HF endpoints</small>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="openaiApiKey">OpenAI API Key</label>
+                            <div class="input-with-button">
+                                <input 
+                                    type="password" 
+                                    id="openaiApiKey" 
+                                    class="form-input"
+                                    placeholder="sk-xxxxxxxxxxxx"
+                                >
+                                <button type="button" class="btn-icon" onclick="toggleTokenVisibility('openaiApiKey')" aria-label="Show/Hide token">
+                                    👁️
+                                </button>
+                            </div>
+                            <small class="form-help">Your OpenAI API key for accessing OpenAI endpoints</small>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="anthropicApiKey">Anthropic API Key</label>
+                            <div class="input-with-button">
+                                <input 
+                                    type="password" 
+                                    id="anthropicApiKey" 
+                                    class="form-input"
+                                    placeholder="sk-ant-xxxxxxxxxxxx"
+                                >
+                                <button type="button" class="btn-icon" onclick="toggleTokenVisibility('anthropicApiKey')" aria-label="Show/Hide token">
+                                    👁️
+                                </button>
+                            </div>
+                            <small class="form-help">Your Anthropic API key for accessing Anthropic endpoints</small>
                         </div>
                     </div>
                 </form>
@@ -893,6 +927,16 @@
                     <input type="hidden" id="endpointKey" name="key">
                     
                     <div class="form-group">
+                        <label for="endpointProvider">Provider <span class="required">*</span></label>
+                        <select id="endpointProvider" class="form-select" onchange="onProviderChange()" required>
+                            <option value="hf">HuggingFace</option>
+                            <option value="openai">OpenAI</option>
+                            <option value="anthropic">Anthropic</option>
+                        </select>
+                        <small class="form-help">Select the API provider</small>
+                    </div>
+                    
+                    <div class="form-group">
                         <label for="endpointKeyInput">Endpoint Key <span class="required">*</span></label>
                         <input 
                             type="text" 
@@ -905,28 +949,56 @@
                         <small class="form-help">Short identifier (must be valid Python identifier)</small>
                     </div>
                     
-                    <div class="form-group">
-                        <label for="endpointUrl">Endpoint URL <span class="required">*</span></label>
-                        <input 
-                            type="url" 
-                            id="endpointUrl" 
-                            class="form-input"
-                            placeholder="https://xyz.endpoints.huggingface.cloud/v1/chat/completions"
-                            required
-                        >
-                        <small class="form-help">Full URL to inference endpoint</small>
+                    <!-- HF-specific fields -->
+                    <div id="hfFields">
+                        <div class="form-group">
+                            <label for="endpointUrl">Endpoint URL <span class="required">*</span></label>
+                            <input 
+                                type="url" 
+                                id="endpointUrl" 
+                                class="form-input"
+                                placeholder="https://xyz.endpoints.huggingface.cloud/v1/chat/completions"
+                            >
+                            <small class="form-help">Full URL to HuggingFace inference endpoint</small>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="endpointModelName">Model Name <span class="required">*</span></label>
+                            <input 
+                                type="text" 
+                                id="endpointModelName" 
+                                class="form-input"
+                                placeholder="meta-llama/Llama-3.1-70B-Instruct"
+                            >
+                            <small class="form-help">Model identifier</small>
+                        </div>
                     </div>
                     
-                    <div class="form-group">
-                        <label for="endpointModelName">Model Name <span class="required">*</span></label>
-                        <input 
-                            type="text" 
-                            id="endpointModelName" 
-                            class="form-input"
-                            placeholder="meta-llama/Llama-3.1-70B-Instruct"
-                            required
-                        >
-                        <small class="form-help">Model identifier</small>
+                    <!-- OpenAI/Anthropic fields -->
+                    <div id="apiFields" style="display: none;">
+                        <div class="form-group">
+                            <label for="endpointModel">Model <span class="required">*</span></label>
+                            <input 
+                                type="text" 
+                                id="endpointModel" 
+                                class="form-input"
+                                placeholder="gpt-4 or claude-3-opus-20240229"
+                            >
+                            <small class="form-help" id="modelHelp">Model identifier</small>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="endpointMaxTokens">Max Tokens</label>
+                            <input 
+                                type="number" 
+                                id="endpointMaxTokens" 
+                                class="form-input"
+                                value="4096"
+                                min="256"
+                                max="8192"
+                            >
+                            <small class="form-help">Maximum tokens for responses</small>
+                        </div>
                     </div>
                     
                     <div class="form-group">
@@ -1076,10 +1148,20 @@
                 toolConfigs.appendChild(toolDiv);
             });
             
-            // Set HF token (may be masked)
+            // Set API tokens (may be masked)
             const hfTokenInput = document.getElementById('hfToken');
             if (settingsConfig.hf_token && settingsConfig.hf_token !== 'None') {
                 hfTokenInput.value = settingsConfig.hf_token;
+            }
+            
+            const openaiApiKeyInput = document.getElementById('openaiApiKey');
+            if (settingsConfig.openai_api_key && settingsConfig.openai_api_key !== 'None') {
+                openaiApiKeyInput.value = settingsConfig.openai_api_key;
+            }
+            
+            const anthropicApiKeyInput = document.getElementById('anthropicApiKey');
+            if (settingsConfig.anthropic_api_key && settingsConfig.anthropic_api_key !== 'None') {
+                anthropicApiKeyInput.value = settingsConfig.anthropic_api_key;
             }
         }
 
@@ -1095,6 +1177,30 @@
                     const endpoint = settingsConfig.hf_endpoints[key];
                     const selected = currentEndpoint === key ? 'selected' : '';
                     html += `<option value="${key}" ${selected}>HF: ${key} (${endpoint.model_name})</option>`;
+                });
+                html += '</optgroup>';
+            }
+            
+            // Add OpenAI endpoints
+            const openaiEndpoints = Object.keys(settingsConfig.openai_endpoints || {});
+            if (openaiEndpoints.length > 0) {
+                html += '<optgroup label="OpenAI Endpoints">';
+                openaiEndpoints.forEach(key => {
+                    const endpoint = settingsConfig.openai_endpoints[key];
+                    const selected = currentEndpoint === key ? 'selected' : '';
+                    html += `<option value="${key}" ${selected}>OpenAI: ${key} (${endpoint.model})</option>`;
+                });
+                html += '</optgroup>';
+            }
+            
+            // Add Anthropic endpoints
+            const anthropicEndpoints = Object.keys(settingsConfig.anthropic_endpoints || {});
+            if (anthropicEndpoints.length > 0) {
+                html += '<optgroup label="Anthropic Endpoints">';
+                anthropicEndpoints.forEach(key => {
+                    const endpoint = settingsConfig.anthropic_endpoints[key];
+                    const selected = currentEndpoint === key ? 'selected' : '';
+                    html += `<option value="${key}" ${selected}>Anthropic: ${key} (${endpoint.model})</option>`;
                 });
                 html += '</optgroup>';
             }
@@ -1123,9 +1229,22 @@
                 }
             } else {
                 // Show endpoint model name (read-only)
-                const endpointConfig = settingsConfig.hf_endpoints?.[endpoint];
-                if (endpointConfig) {
-                    html = `<option value="${endpointConfig.model_name}" selected>${endpointConfig.model_name}</option>`;
+                // Check HF endpoints first
+                const hfEndpoint = settingsConfig.hf_endpoints?.[endpoint];
+                if (hfEndpoint) {
+                    html = `<option value="${hfEndpoint.model_name}" selected>${hfEndpoint.model_name}</option>`;
+                } else {
+                    // Check OpenAI endpoints
+                    const openaiEndpoint = settingsConfig.openai_endpoints?.[endpoint];
+                    if (openaiEndpoint) {
+                        html = `<option value="${openaiEndpoint.model}" selected>${openaiEndpoint.model}</option>`;
+                    } else {
+                        // Check Anthropic endpoints
+                        const anthropicEndpoint = settingsConfig.anthropic_endpoints?.[endpoint];
+                        if (anthropicEndpoint) {
+                            html = `<option value="${anthropicEndpoint.model}" selected>${anthropicEndpoint.model}</option>`;
+                        }
+                    }
                 }
             }
             
@@ -1151,10 +1270,42 @@
                 modelSelect.innerHTML = renderModelOptions(currentModel, selectedValue);
                 
                 // Show/hide model dropdown based on endpoint type
+                // Only show for local endpoints (HF/OpenAI/Anthropic endpoints use their configured model)
                 if (selectedValue === 'local') {
                     modelSelect.style.display = 'block';
                 } else {
                     modelSelect.style.display = 'none';
+                }
+            }
+        }
+
+        // Handle provider change in endpoint modal
+        function onProviderChange() {
+            const provider = document.getElementById('endpointProvider').value;
+            const hfFields = document.getElementById('hfFields');
+            const apiFields = document.getElementById('apiFields');
+            const urlInput = document.getElementById('endpointUrl');
+            const modelNameInput = document.getElementById('endpointModelName');
+            const modelInput = document.getElementById('endpointModel');
+            const modelHelp = document.getElementById('modelHelp');
+            
+            if (provider === 'hf') {
+                hfFields.style.display = 'block';
+                apiFields.style.display = 'none';
+                urlInput.required = true;
+                modelNameInput.required = true;
+                modelInput.required = false;
+                modelHelp.textContent = 'Model identifier';
+            } else {
+                hfFields.style.display = 'none';
+                apiFields.style.display = 'block';
+                urlInput.required = false;
+                modelNameInput.required = false;
+                modelInput.required = true;
+                if (provider === 'openai') {
+                    modelHelp.textContent = 'OpenAI model (e.g., gpt-4, gpt-4-turbo)';
+                } else {
+                    modelHelp.textContent = 'Anthropic model (e.g., claude-3-opus-20240229)';
                 }
             }
         }
@@ -1166,13 +1317,37 @@
             const form = document.getElementById('endpointForm');
             
             if (endpointKey) {
-                // Edit mode
+                // Edit mode - detect provider
                 title.textContent = 'Edit Endpoint';
-                const endpoint = settingsConfig.hf_endpoints[endpointKey];
+                let provider = 'hf';
+                let endpoint = settingsConfig.hf_endpoints?.[endpointKey];
+                
+                if (!endpoint) {
+                    endpoint = settingsConfig.openai_endpoints?.[endpointKey];
+                    if (endpoint) {
+                        provider = 'openai';
+                    } else {
+                        endpoint = settingsConfig.anthropic_endpoints?.[endpointKey];
+                        if (endpoint) {
+                            provider = 'anthropic';
+                        }
+                    }
+                }
+                
+                document.getElementById('endpointProvider').value = provider;
+                onProviderChange();
+                
                 document.getElementById('endpointKeyInput').value = endpointKey;
                 document.getElementById('endpointKeyInput').disabled = true;
-                document.getElementById('endpointUrl').value = endpoint.url;
-                document.getElementById('endpointModelName').value = endpoint.model_name;
+                
+                if (provider === 'hf') {
+                    document.getElementById('endpointUrl').value = endpoint.url || '';
+                    document.getElementById('endpointModelName').value = endpoint.model_name || '';
+                } else {
+                    document.getElementById('endpointModel').value = endpoint.model || '';
+                    document.getElementById('endpointMaxTokens').value = endpoint.max_tokens || 4096;
+                }
+                
                 document.getElementById('endpointTimeout').value = endpoint.timeout || 120;
                 currentEndpointKey = endpointKey;
             } else {
@@ -1180,6 +1355,8 @@
                 title.textContent = 'Add New Endpoint';
                 form.reset();
                 document.getElementById('endpointKeyInput').disabled = false;
+                document.getElementById('endpointProvider').value = 'hf';
+                onProviderChange();
                 currentEndpointKey = null;
             }
             
@@ -1188,24 +1365,42 @@
 
         // Save endpoint
         async function saveEndpoint() {
-            const form = document.getElementById('endpointForm');
+            const provider = document.getElementById('endpointProvider').value;
             const formData = {
                 key: document.getElementById('endpointKeyInput').value.trim(),
-                url: document.getElementById('endpointUrl').value.trim(),
-                model_name: document.getElementById('endpointModelName').value.trim(),
+                provider: provider,
                 timeout: parseInt(document.getElementById('endpointTimeout').value) || 120,
                 enabled: true,
             };
             
-            // Validate
-            if (!formData.key || !formData.url || !formData.model_name) {
-                alert('Please fill in all required fields');
+            // Validate key
+            if (!formData.key) {
+                alert('Please enter an endpoint key');
                 return;
             }
             
-            if (!formData.url.startsWith('http://') && !formData.url.startsWith('https://')) {
-                alert('URL must start with http:// or https://');
-                return;
+            // Provider-specific fields
+            if (provider === 'hf') {
+                formData.url = document.getElementById('endpointUrl').value.trim();
+                formData.model_name = document.getElementById('endpointModelName').value.trim();
+                
+                if (!formData.url || !formData.model_name) {
+                    alert('Please fill in all required fields');
+                    return;
+                }
+                
+                if (!formData.url.startsWith('http://') && !formData.url.startsWith('https://')) {
+                    alert('URL must start with http:// or https://');
+                    return;
+                }
+            } else {
+                formData.model = document.getElementById('endpointModel').value.trim();
+                formData.max_tokens = parseInt(document.getElementById('endpointMaxTokens').value) || 4096;
+                
+                if (!formData.model) {
+                    alert('Please enter a model name');
+                    return;
+                }
             }
             
             try {
@@ -1259,19 +1454,27 @@
                     }
                 });
                 
-                // Collect HF token if changed (and not masked)
-                const hfTokenInput = document.getElementById('hfToken');
-                const tokenValue = hfTokenInput.value;
+                // Collect API tokens if changed (and not masked)
+                const tokenInputs = [
+                    { id: 'hfToken', key: 'hf_token' },
+                    { id: 'openaiApiKey', key: 'openai_api_key' },
+                    { id: 'anthropicApiKey', key: 'anthropic_api_key' },
+                ];
                 
-                // CRITICAL: Only send token if it's not masked (doesn't contain "...")
-                if (tokenValue && !tokenValue.includes('...')) {
-                    // Also check if it's different from the masked token shown
-                    const maskedToken = settingsConfig.hf_token;
-                    if (tokenValue !== maskedToken) {
-                        updates.hf_token = tokenValue;
+                tokenInputs.forEach(({ id, key }) => {
+                    const input = document.getElementById(id);
+                    const tokenValue = input.value;
+                    
+                    // CRITICAL: Only send token if it's not masked (doesn't contain "...")
+                    if (tokenValue && !tokenValue.includes('...')) {
+                        // Also check if it's different from the masked token shown
+                        const maskedToken = settingsConfig[key];
+                        if (tokenValue !== maskedToken) {
+                            updates[key] = tokenValue;
+                        }
                     }
-                }
-                // If token contains "...", do NOT include in updates (treat as unchanged)
+                    // If token contains "...", do NOT include in updates (treat as unchanged)
+                });
                 
                 // Send to API
                 const response = await fetch('/api/settings/config', {

@@ -52,6 +52,10 @@ class ConfigManager:
                 "model_endpoints": getattr(config_module, "MODEL_ENDPOINTS", {}),
                 "hf_endpoints": getattr(config_module, "HF_ENDPOINTS", {}),
                 "hf_token": getattr(config_module, "HF_TOKEN", None),
+                "openai_api_key": getattr(config_module, "OPENAI_API_KEY", None),
+                "openai_endpoints": getattr(config_module, "OPENAI_ENDPOINTS", {}),
+                "anthropic_api_key": getattr(config_module, "ANTHROPIC_API_KEY", None),
+                "anthropic_endpoints": getattr(config_module, "ANTHROPIC_ENDPOINTS", {}),
                 "energy_analyst": getattr(config_module, "ENERGY_ANALYST", {}),
             }
         except Exception as e:
@@ -78,6 +82,10 @@ class ConfigManager:
             },
             "hf_endpoints": {},
             "hf_token": None,
+            "openai_api_key": None,
+            "openai_endpoints": {},
+            "anthropic_api_key": None,
+            "anthropic_endpoints": {},
             "energy_analyst": {
                 "endpoint": "http://localhost:8000",
                 "enabled": True,
@@ -156,14 +164,21 @@ class ConfigManager:
         if "hf_endpoints" in updates:
             merged["hf_endpoints"] = {**current.get("hf_endpoints", {}), **updates["hf_endpoints"]}
         
-        # Only update HF token if provided and not masked
-        if "hf_token" in updates:
-            token_value = updates["hf_token"]
-            # Reject masked tokens (contain "...")
-            if isinstance(token_value, str) and "..." in token_value:
-                logger.warning("Rejected masked HF token update")
-            else:
-                merged["hf_token"] = token_value
+        if "openai_endpoints" in updates:
+            merged["openai_endpoints"] = {**current.get("openai_endpoints", {}), **updates["openai_endpoints"]}
+        
+        if "anthropic_endpoints" in updates:
+            merged["anthropic_endpoints"] = {**current.get("anthropic_endpoints", {}), **updates["anthropic_endpoints"]}
+        
+        # Only update API tokens if provided and not masked
+        for token_key in ["hf_token", "openai_api_key", "anthropic_api_key"]:
+            if token_key in updates:
+                token_value = updates[token_key]
+                # Reject masked tokens (contain "...")
+                if isinstance(token_value, str) and "..." in token_value:
+                    logger.warning(f"Rejected masked {token_key} update")
+                else:
+                    merged[token_key] = token_value
         
         if "energy_analyst" in updates:
             merged["energy_analyst"] = {**current.get("energy_analyst", {}), **updates["energy_analyst"]}
@@ -178,9 +193,15 @@ class ConfigManager:
             for role, endpoint in config["model_endpoints"].items():
                 if role not in valid_roles:
                     return f"Invalid role in model_endpoints: {role}"
-                # "local" is always valid (special value, not in HF_ENDPOINTS)
-                if endpoint != "local" and endpoint not in config.get("hf_endpoints", {}):
-                    return f"Endpoint '{endpoint}' not found in HF_ENDPOINTS"
+                # "local" is always valid (special value)
+                if endpoint == "local":
+                    continue
+                # Check if endpoint exists in any provider dict
+                hf_endpoints = config.get("hf_endpoints", {})
+                openai_endpoints = config.get("openai_endpoints", {})
+                anthropic_endpoints = config.get("anthropic_endpoints", {})
+                if endpoint not in hf_endpoints and endpoint not in openai_endpoints and endpoint not in anthropic_endpoints:
+                    return f"Endpoint '{endpoint}' not found in HF_ENDPOINTS, OPENAI_ENDPOINTS, or ANTHROPIC_ENDPOINTS"
         
         # Validate HF endpoints
         if "hf_endpoints" in config:
@@ -193,6 +214,22 @@ class ConfigManager:
                     return f"HF endpoint '{key}' URL must start with http:// or https://"
                 if "model_name" not in endpoint_config:
                     return f"HF endpoint '{key}' missing 'model_name'"
+        
+        # Validate OpenAI endpoints
+        if "openai_endpoints" in config:
+            for key, endpoint_config in config["openai_endpoints"].items():
+                if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_-]*$', key):
+                    return f"Invalid endpoint key: {key} (must be valid Python identifier)"
+                if "model" not in endpoint_config:
+                    return f"OpenAI endpoint '{key}' missing 'model'"
+        
+        # Validate Anthropic endpoints
+        if "anthropic_endpoints" in config:
+            for key, endpoint_config in config["anthropic_endpoints"].items():
+                if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_-]*$', key):
+                    return f"Invalid endpoint key: {key} (must be valid Python identifier)"
+                if "model" not in endpoint_config:
+                    return f"Anthropic endpoint '{key}' missing 'model'"
         
         # Validate API URL
         if "api_url" in config:
@@ -258,6 +295,46 @@ class ConfigManager:
             lines.append(f'        "model_name": "{endpoint_config["model_name"]}",')
             lines.append(f'        "timeout": {endpoint_config.get("timeout", 120)},')
             lines.append(f'        "enabled": {endpoint_config.get("enabled", True)},')
+            lines.append('    },')
+        
+        lines.append('}')
+        lines.append('')
+        lines.append('# OpenAI API Configuration')
+        if config.get("openai_api_key"):
+            lines.append(f'OPENAI_API_KEY = "{config["openai_api_key"]}"')
+        else:
+            lines.append('# OPENAI_API_KEY = "sk-YOUR_KEY_HERE"')
+        lines.append('')
+        lines.append('OPENAI_ENDPOINTS = {')
+        
+        # Write OPENAI_ENDPOINTS
+        for key, endpoint_config in config.get("openai_endpoints", {}).items():
+            lines.append(f'    "{key}": {{')
+            lines.append(f'        "model": "{endpoint_config["model"]}",')
+            lines.append(f'        "timeout": {endpoint_config.get("timeout", 60)},')
+            lines.append(f'        "enabled": {endpoint_config.get("enabled", True)},')
+            if "max_tokens" in endpoint_config:
+                lines.append(f'        "max_tokens": {endpoint_config["max_tokens"]},')
+            lines.append('    },')
+        
+        lines.append('}')
+        lines.append('')
+        lines.append('# Anthropic API Configuration')
+        if config.get("anthropic_api_key"):
+            lines.append(f'ANTHROPIC_API_KEY = "{config["anthropic_api_key"]}"')
+        else:
+            lines.append('# ANTHROPIC_API_KEY = "sk-ant-YOUR_KEY_HERE"')
+        lines.append('')
+        lines.append('ANTHROPIC_ENDPOINTS = {')
+        
+        # Write ANTHROPIC_ENDPOINTS
+        for key, endpoint_config in config.get("anthropic_endpoints", {}).items():
+            lines.append(f'    "{key}": {{')
+            lines.append(f'        "model": "{endpoint_config["model"]}",')
+            lines.append(f'        "timeout": {endpoint_config.get("timeout", 60)},')
+            lines.append(f'        "enabled": {endpoint_config.get("enabled", True)},')
+            if "max_tokens" in endpoint_config:
+                lines.append(f'        "max_tokens": {endpoint_config["max_tokens"]},')
             lines.append('    },')
         
         lines.append('}')
@@ -347,9 +424,63 @@ class ModelFetcher:
             logger.warning(f"Could not fetch HF endpoints: {e}")
             return []
     
+    def fetch_openai_endpoints(self) -> List[Dict[str, str]]:
+        """
+        Fetch configured OpenAI endpoints.
+        
+        Returns:
+            List of dicts with endpoint info
+        """
+        try:
+            import config
+            endpoints = []
+            
+            if hasattr(config, 'OPENAI_ENDPOINTS'):
+                for key, endpoint_config in config.OPENAI_ENDPOINTS.items():
+                    if endpoint_config.get("enabled", True):
+                        endpoints.append({
+                            "key": key,
+                            "name": endpoint_config.get("model", key),
+                            "origin": f"OpenAI: {key}",
+                            "type": "openai",
+                            "url": "https://api.openai.com/v1/chat/completions",
+                        })
+            
+            return endpoints
+        except Exception as e:
+            logger.warning(f"Could not fetch OpenAI endpoints: {e}")
+            return []
+    
+    def fetch_anthropic_endpoints(self) -> List[Dict[str, str]]:
+        """
+        Fetch configured Anthropic endpoints.
+        
+        Returns:
+            List of dicts with endpoint info
+        """
+        try:
+            import config
+            endpoints = []
+            
+            if hasattr(config, 'ANTHROPIC_ENDPOINTS'):
+                for key, endpoint_config in config.ANTHROPIC_ENDPOINTS.items():
+                    if endpoint_config.get("enabled", True):
+                        endpoints.append({
+                            "key": key,
+                            "name": endpoint_config.get("model", key),
+                            "origin": f"Anthropic: {key}",
+                            "type": "anthropic",
+                            "url": "https://api.anthropic.com/v1/messages",
+                        })
+            
+            return endpoints
+        except Exception as e:
+            logger.warning(f"Could not fetch Anthropic endpoints: {e}")
+            return []
+    
     def fetch_all_models(self) -> List[Dict[str, str]]:
         """
-        Fetch all available models (LM Studio + HF).
+        Fetch all available models (LM Studio + HF + OpenAI + Anthropic).
         
         NOTE: This is called on EVERY modal open - no caching is performed.
         Performance target is <500ms total for settings load.
@@ -358,10 +489,12 @@ class ModelFetcher:
             Combined list of models
         """
         models = self.fetch_lm_studio_models()
-        endpoints = self.fetch_hf_endpoints()
+        hf_endpoints = self.fetch_hf_endpoints()
+        openai_endpoints = self.fetch_openai_endpoints()
+        anthropic_endpoints = self.fetch_anthropic_endpoints()
         
         # Convert endpoints to model format
-        for endpoint in endpoints:
+        for endpoint in hf_endpoints + openai_endpoints + anthropic_endpoints:
             models.append({
                 "name": endpoint["name"],
                 "origin": endpoint["origin"],

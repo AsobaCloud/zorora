@@ -180,14 +180,15 @@ def get_settings_config():
     try:
         config = config_manager.read_config()
         
-        # Mask HF token (always mask in responses)
-        if config.get("hf_token"):
-            token = config["hf_token"]
-            if len(token) > 8:
-                masked = f"{token[:4]}...{token[-4:]}"
-            else:
-                masked = "***"
-            config["hf_token"] = masked
+        # Mask API tokens (always mask in responses)
+        for token_key in ["hf_token", "openai_api_key", "anthropic_api_key"]:
+            if config.get(token_key):
+                token = config[token_key]
+                if len(token) > 8:
+                    masked = f"{token[:4]}...{token[-4:]}"
+                else:
+                    masked = "***"
+                config[token_key] = masked
         
         return jsonify(config)
     except Exception as e:
@@ -221,12 +222,12 @@ def get_settings_models():
 @app.route('/api/settings/endpoints', methods=['GET'])
 def get_settings_endpoints():
     """
-    Get saved HF endpoints.
+    Get saved endpoints (HF, OpenAI, Anthropic).
     
     Returns:
     {
         "endpoints": [
-            {"key": str, "url": str, "model_name": str, ...},
+            {"key": str, "provider": str, "url": str, "model": str, ...},
             ...
         ]
     }
@@ -235,13 +236,40 @@ def get_settings_endpoints():
         config = config_manager.read_config()
         endpoints = []
         
+        # HF endpoints
         for key, endpoint_config in config.get("hf_endpoints", {}).items():
             endpoints.append({
                 "key": key,
+                "provider": "hf",
                 "url": endpoint_config.get("url", ""),
-                "model_name": endpoint_config.get("model_name", ""),
+                "model": endpoint_config.get("model_name", ""),
+                "model_name": endpoint_config.get("model_name", ""),  # Keep for backward compat
                 "timeout": endpoint_config.get("timeout", 120),
                 "enabled": endpoint_config.get("enabled", True),
+            })
+        
+        # OpenAI endpoints
+        for key, endpoint_config in config.get("openai_endpoints", {}).items():
+            endpoints.append({
+                "key": key,
+                "provider": "openai",
+                "url": "https://api.openai.com/v1/chat/completions",  # Fixed URL
+                "model": endpoint_config.get("model", ""),
+                "timeout": endpoint_config.get("timeout", 60),
+                "enabled": endpoint_config.get("enabled", True),
+                "max_tokens": endpoint_config.get("max_tokens", 4096),
+            })
+        
+        # Anthropic endpoints
+        for key, endpoint_config in config.get("anthropic_endpoints", {}).items():
+            endpoints.append({
+                "key": key,
+                "provider": "anthropic",
+                "url": "https://api.anthropic.com/v1/messages",  # Fixed URL
+                "model": endpoint_config.get("model", ""),
+                "timeout": endpoint_config.get("timeout", 60),
+                "enabled": endpoint_config.get("enabled", True),
+                "max_tokens": endpoint_config.get("max_tokens", 4096),
             })
         
         return jsonify({"endpoints": endpoints})
@@ -253,15 +281,18 @@ def get_settings_endpoints():
 @app.route('/api/settings/endpoint', methods=['POST'])
 def save_endpoint():
     """
-    Add or update an HF endpoint.
+    Add or update an endpoint (HF, OpenAI, or Anthropic).
     
     Request body:
     {
         "key": str,
-        "url": str,
-        "model_name": str,
+        "provider": str ("hf" | "openai" | "anthropic"),
+        "url": str (required for HF only),
+        "model": str (required for OpenAI/Anthropic, or "model_name" for HF),
+        "model_name": str (required for HF, alias for "model"),
         "timeout": int (optional),
         "enabled": bool (optional),
+        "max_tokens": int (optional, for OpenAI/Anthropic),
     }
     
     Returns:
@@ -269,14 +300,11 @@ def save_endpoint():
     """
     try:
         data = request.get_json()
+        provider = data.get("provider", "hf").lower()
         
         # Validate required fields
-        if not data.get("key") or not data.get("url") or not data.get("model_name"):
-            return jsonify({"success": False, "error": "Missing required fields"}), 400
-        
-        # Validate URL
-        if not data["url"].startswith(("http://", "https://")):
-            return jsonify({"success": False, "error": "URL must start with http:// or https://"}), 400
+        if not data.get("key"):
+            return jsonify({"success": False, "error": "Missing 'key' field"}), 400
         
         # Validate key (Python identifier)
         import re
@@ -286,17 +314,53 @@ def save_endpoint():
         # Read current config
         current = config_manager.read_config()
         
-        # Update HF endpoints
-        hf_endpoints = current.get("hf_endpoints", {}).copy()
-        hf_endpoints[data["key"]] = {
-            "url": data["url"],
-            "model_name": data["model_name"],
-            "timeout": data.get("timeout", 120),
-            "enabled": data.get("enabled", True),
-        }
-        
-        # Write config
-        result = config_manager.write_config({"hf_endpoints": hf_endpoints})
+        if provider == "hf":
+            # HF endpoint validation
+            if not data.get("url") or not (data.get("model_name") or data.get("model")):
+                return jsonify({"success": False, "error": "HF endpoint requires 'url' and 'model_name'"}), 400
+            
+            if not data["url"].startswith(("http://", "https://")):
+                return jsonify({"success": False, "error": "URL must start with http:// or https://"}), 400
+            
+            hf_endpoints = current.get("hf_endpoints", {}).copy()
+            hf_endpoints[data["key"]] = {
+                "url": data["url"],
+                "model_name": data.get("model_name") or data.get("model"),
+                "timeout": data.get("timeout", 120),
+                "enabled": data.get("enabled", True),
+            }
+            result = config_manager.write_config({"hf_endpoints": hf_endpoints})
+            
+        elif provider == "openai":
+            # OpenAI endpoint validation
+            if not data.get("model"):
+                return jsonify({"success": False, "error": "OpenAI endpoint requires 'model'"}), 400
+            
+            openai_endpoints = current.get("openai_endpoints", {}).copy()
+            openai_endpoints[data["key"]] = {
+                "model": data["model"],
+                "timeout": data.get("timeout", 60),
+                "enabled": data.get("enabled", True),
+                "max_tokens": data.get("max_tokens", 4096),
+            }
+            result = config_manager.write_config({"openai_endpoints": openai_endpoints})
+            
+        elif provider == "anthropic":
+            # Anthropic endpoint validation
+            if not data.get("model"):
+                return jsonify({"success": False, "error": "Anthropic endpoint requires 'model'"}), 400
+            
+            anthropic_endpoints = current.get("anthropic_endpoints", {}).copy()
+            anthropic_endpoints[data["key"]] = {
+                "model": data["model"],
+                "timeout": data.get("timeout", 60),
+                "enabled": data.get("enabled", True),
+                "max_tokens": data.get("max_tokens", 4096),
+            }
+            result = config_manager.write_config({"anthropic_endpoints": anthropic_endpoints})
+            
+        else:
+            return jsonify({"success": False, "error": f"Invalid provider: {provider}. Must be 'hf', 'openai', or 'anthropic'"}), 400
         
         if result["success"]:
             return jsonify({"success": True})
@@ -311,7 +375,7 @@ def save_endpoint():
 @app.route('/api/settings/endpoint/<endpoint_key>', methods=['DELETE'])
 def delete_endpoint(endpoint_key):
     """
-    Delete an HF endpoint.
+    Delete an endpoint (HF, OpenAI, or Anthropic).
     
     NOTE: If the endpoint is in use by any role, those roles are automatically
     reassigned to "local" endpoint without user confirmation.
@@ -323,12 +387,32 @@ def delete_endpoint(endpoint_key):
         # Read current config
         current = config_manager.read_config()
         
-        # Remove endpoint
-        hf_endpoints = current.get("hf_endpoints", {}).copy()
-        if endpoint_key not in hf_endpoints:
-            return jsonify({"success": False, "error": "Endpoint not found"}), 404
+        updates = {}
+        endpoint_found = False
         
-        del hf_endpoints[endpoint_key]
+        # Check and remove from HF endpoints
+        hf_endpoints = current.get("hf_endpoints", {}).copy()
+        if endpoint_key in hf_endpoints:
+            del hf_endpoints[endpoint_key]
+            updates["hf_endpoints"] = hf_endpoints
+            endpoint_found = True
+        
+        # Check and remove from OpenAI endpoints
+        openai_endpoints = current.get("openai_endpoints", {}).copy()
+        if endpoint_key in openai_endpoints:
+            del openai_endpoints[endpoint_key]
+            updates["openai_endpoints"] = openai_endpoints
+            endpoint_found = True
+        
+        # Check and remove from Anthropic endpoints
+        anthropic_endpoints = current.get("anthropic_endpoints", {}).copy()
+        if endpoint_key in anthropic_endpoints:
+            del anthropic_endpoints[endpoint_key]
+            updates["anthropic_endpoints"] = anthropic_endpoints
+            endpoint_found = True
+        
+        if not endpoint_found:
+            return jsonify({"success": False, "error": "Endpoint not found"}), 404
         
         # Auto-reassign any roles using this endpoint to "local"
         # No confirmation required - automatic and silent
@@ -337,11 +421,10 @@ def delete_endpoint(endpoint_key):
             if endpoint == endpoint_key:
                 model_endpoints[role] = "local"  # Automatic fallback
         
+        updates["model_endpoints"] = model_endpoints
+        
         # Write config
-        result = config_manager.write_config({
-            "hf_endpoints": hf_endpoints,
-            "model_endpoints": model_endpoints,
-        })
+        result = config_manager.write_config(updates)
         
         if result["success"]:
             return jsonify({"success": True})
@@ -374,12 +457,13 @@ def save_settings_config():
     try:
         data = request.get_json()
         
-        # Validate HF token is not masked
-        if "hf_token" in data and isinstance(data["hf_token"], str) and "..." in data["hf_token"]:
-            return jsonify({
-                "success": False,
-                "error": "Invalid token format (masked token detected - token unchanged)"
-            }), 400
+        # Validate API tokens are not masked
+        for token_key in ["hf_token", "openai_api_key", "anthropic_api_key"]:
+            if token_key in data and isinstance(data[token_key], str) and "..." in data[token_key]:
+                return jsonify({
+                    "success": False,
+                    "error": f"Invalid {token_key} format (masked token detected - token unchanged)"
+                }), 400
         
         # Validate and write config
         result = config_manager.write_config(data)
