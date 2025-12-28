@@ -238,7 +238,7 @@ def get_settings_endpoints():
         
         # HF endpoints
         for key, endpoint_config in config.get("hf_endpoints", {}).items():
-            endpoints.append({
+            endpoint_data = {
                 "key": key,
                 "provider": "hf",
                 "url": endpoint_config.get("url", ""),
@@ -246,11 +246,20 @@ def get_settings_endpoints():
                 "model_name": endpoint_config.get("model_name", ""),  # Keep for backward compat
                 "timeout": endpoint_config.get("timeout", 120),
                 "enabled": endpoint_config.get("enabled", True),
-            })
+            }
+            # Mask API key if present
+            if endpoint_config.get("api_key"):
+                token = endpoint_config["api_key"]
+                if len(token) > 8:
+                    masked = f"{token[:4]}...{token[-4:]}"
+                else:
+                    masked = "***"
+                endpoint_data["api_key"] = masked
+            endpoints.append(endpoint_data)
         
         # OpenAI endpoints
         for key, endpoint_config in config.get("openai_endpoints", {}).items():
-            endpoints.append({
+            endpoint_data = {
                 "key": key,
                 "provider": "openai",
                 "url": "https://api.openai.com/v1/chat/completions",  # Fixed URL
@@ -258,11 +267,20 @@ def get_settings_endpoints():
                 "timeout": endpoint_config.get("timeout", 60),
                 "enabled": endpoint_config.get("enabled", True),
                 "max_tokens": endpoint_config.get("max_tokens", 4096),
-            })
+            }
+            # Mask API key if present
+            if endpoint_config.get("api_key"):
+                token = endpoint_config["api_key"]
+                if len(token) > 8:
+                    masked = f"{token[:4]}...{token[-4:]}"
+                else:
+                    masked = "***"
+                endpoint_data["api_key"] = masked
+            endpoints.append(endpoint_data)
         
         # Anthropic endpoints
         for key, endpoint_config in config.get("anthropic_endpoints", {}).items():
-            endpoints.append({
+            endpoint_data = {
                 "key": key,
                 "provider": "anthropic",
                 "url": "https://api.anthropic.com/v1/messages",  # Fixed URL
@@ -270,7 +288,16 @@ def get_settings_endpoints():
                 "timeout": endpoint_config.get("timeout", 60),
                 "enabled": endpoint_config.get("enabled", True),
                 "max_tokens": endpoint_config.get("max_tokens", 4096),
-            })
+            }
+            # Mask API key if present
+            if endpoint_config.get("api_key"):
+                token = endpoint_config["api_key"]
+                if len(token) > 8:
+                    masked = f"{token[:4]}...{token[-4:]}"
+                else:
+                    masked = "***"
+                endpoint_data["api_key"] = masked
+            endpoints.append(endpoint_data)
         
         return jsonify({"endpoints": endpoints})
     except Exception as e:
@@ -322,13 +349,21 @@ def save_endpoint():
             if not data["url"].startswith(("http://", "https://")):
                 return jsonify({"success": False, "error": "URL must start with http:// or https://"}), 400
             
+            # Validate API key is not masked
+            if "api_key" in data and isinstance(data["api_key"], str) and "..." in data["api_key"]:
+                return jsonify({"success": False, "error": "Invalid API key format (masked token detected)"}), 400
+            
             hf_endpoints = current.get("hf_endpoints", {}).copy()
-            hf_endpoints[data["key"]] = {
+            endpoint_config = {
                 "url": data["url"],
                 "model_name": data.get("model_name") or data.get("model"),
                 "timeout": data.get("timeout", 120),
                 "enabled": data.get("enabled", True),
             }
+            # Only include api_key if provided and not masked
+            if "api_key" in data and data["api_key"]:
+                endpoint_config["api_key"] = data["api_key"]
+            hf_endpoints[data["key"]] = endpoint_config
             result = config_manager.write_config({"hf_endpoints": hf_endpoints})
             
         elif provider == "openai":
@@ -336,13 +371,21 @@ def save_endpoint():
             if not data.get("model"):
                 return jsonify({"success": False, "error": "OpenAI endpoint requires 'model'"}), 400
             
+            # Validate API key is not masked
+            if "api_key" in data and isinstance(data["api_key"], str) and "..." in data["api_key"]:
+                return jsonify({"success": False, "error": "Invalid API key format (masked token detected)"}), 400
+            
             openai_endpoints = current.get("openai_endpoints", {}).copy()
-            openai_endpoints[data["key"]] = {
+            endpoint_config = {
                 "model": data["model"],
                 "timeout": data.get("timeout", 60),
                 "enabled": data.get("enabled", True),
                 "max_tokens": data.get("max_tokens", 4096),
             }
+            # Only include api_key if provided and not masked
+            if "api_key" in data and data["api_key"]:
+                endpoint_config["api_key"] = data["api_key"]
+            openai_endpoints[data["key"]] = endpoint_config
             result = config_manager.write_config({"openai_endpoints": openai_endpoints})
             
         elif provider == "anthropic":
@@ -350,13 +393,21 @@ def save_endpoint():
             if not data.get("model"):
                 return jsonify({"success": False, "error": "Anthropic endpoint requires 'model'"}), 400
             
+            # Validate API key is not masked
+            if "api_key" in data and isinstance(data["api_key"], str) and "..." in data["api_key"]:
+                return jsonify({"success": False, "error": "Invalid API key format (masked token detected)"}), 400
+            
             anthropic_endpoints = current.get("anthropic_endpoints", {}).copy()
-            anthropic_endpoints[data["key"]] = {
+            endpoint_config = {
                 "model": data["model"],
                 "timeout": data.get("timeout", 60),
                 "enabled": data.get("enabled", True),
                 "max_tokens": data.get("max_tokens", 4096),
             }
+            # Only include api_key if provided and not masked
+            if "api_key" in data and data["api_key"]:
+                endpoint_config["api_key"] = data["api_key"]
+            anthropic_endpoints[data["key"]] = endpoint_config
             result = config_manager.write_config({"anthropic_endpoints": anthropic_endpoints})
             
         else:

@@ -293,6 +293,8 @@ class ConfigManager:
             lines.append(f'    "{key}": {{')
             lines.append(f'        "url": "{endpoint_config["url"]}",')
             lines.append(f'        "model_name": "{endpoint_config["model_name"]}",')
+            if "api_key" in endpoint_config:
+                lines.append(f'        "api_key": "{endpoint_config["api_key"]}",')
             lines.append(f'        "timeout": {endpoint_config.get("timeout", 120)},')
             lines.append(f'        "enabled": {endpoint_config.get("enabled", True)},')
             lines.append('    },')
@@ -311,6 +313,8 @@ class ConfigManager:
         for key, endpoint_config in config.get("openai_endpoints", {}).items():
             lines.append(f'    "{key}": {{')
             lines.append(f'        "model": "{endpoint_config["model"]}",')
+            if "api_key" in endpoint_config:
+                lines.append(f'        "api_key": "{endpoint_config["api_key"]}",')
             lines.append(f'        "timeout": {endpoint_config.get("timeout", 60)},')
             lines.append(f'        "enabled": {endpoint_config.get("enabled", True)},')
             if "max_tokens" in endpoint_config:
@@ -331,6 +335,8 @@ class ConfigManager:
         for key, endpoint_config in config.get("anthropic_endpoints", {}).items():
             lines.append(f'    "{key}": {{')
             lines.append(f'        "model": "{endpoint_config["model"]}",')
+            if "api_key" in endpoint_config:
+                lines.append(f'        "api_key": "{endpoint_config["api_key"]}",')
             lines.append(f'        "timeout": {endpoint_config.get("timeout", 60)},')
             lines.append(f'        "enabled": {endpoint_config.get("enabled", True)},')
             if "max_tokens" in endpoint_config:
