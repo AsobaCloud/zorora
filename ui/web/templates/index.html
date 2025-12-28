@@ -1004,15 +1004,15 @@
                         </div>
                         
                         <div class="form-group">
-                            <label for="endpointApiKey">API Key (optional)</label>
+                            <label for="endpointApiKeyAPI">API Key (optional)</label>
                             <div class="input-with-button">
                                 <input 
                                     type="password" 
-                                    id="endpointApiKey" 
+                                    id="endpointApiKeyAPI" 
                                     class="form-input"
                                     placeholder="sk-xxxxxxxxxxxx (leave empty to use global API key)"
                                 >
-                                <button type="button" class="btn-icon" onclick="toggleTokenVisibility('endpointApiKey')" aria-label="Show/Hide token">
+                                <button type="button" class="btn-icon" onclick="toggleTokenVisibility('endpointApiKeyAPI')" aria-label="Show/Hide token">
                                     👁️
                                 </button>
                             </div>
@@ -1320,31 +1320,38 @@
             const modelNameInput = document.getElementById('endpointModelName');
             const modelInput = document.getElementById('endpointModel');
             const modelHelp = document.getElementById('modelHelp');
+            const apiKeyHelp = document.getElementById('apiKeyHelp');
             
-                const apiKeyHelp = document.getElementById('apiKeyHelp');
-                
-                if (provider === 'hf') {
-                    hfFields.style.display = 'block';
-                    apiFields.style.display = 'none';
-                    urlInput.required = true;
-                    modelNameInput.required = true;
-                    modelInput.required = false;
-                    modelHelp.textContent = 'Model identifier';
-                    apiKeyHelp.textContent = 'Per-endpoint API key (overrides global HF_TOKEN if provided)';
+            // Get the correct API key input based on provider
+            const hfApiKeyInput = document.getElementById('endpointApiKey');
+            const apiApiKeyInput = document.getElementById('endpointApiKeyAPI');
+            
+            // Clear API key fields when switching providers to prevent cross-contamination
+            if (hfApiKeyInput) hfApiKeyInput.value = '';
+            if (apiApiKeyInput) apiApiKeyInput.value = '';
+            
+            if (provider === 'hf') {
+                hfFields.style.display = 'block';
+                apiFields.style.display = 'none';
+                urlInput.required = true;
+                modelNameInput.required = true;
+                modelInput.required = false;
+                modelHelp.textContent = 'Model identifier';
+                apiKeyHelp.textContent = 'Per-endpoint API key (overrides global HF_TOKEN if provided)';
+            } else {
+                hfFields.style.display = 'none';
+                apiFields.style.display = 'block';
+                urlInput.required = false;
+                modelNameInput.required = false;
+                modelInput.required = true;
+                if (provider === 'openai') {
+                    modelHelp.textContent = 'OpenAI model (e.g., gpt-4, gpt-4-turbo)';
+                    apiKeyHelp.textContent = 'Per-endpoint API key (overrides global OPENAI_API_KEY if provided)';
                 } else {
-                    hfFields.style.display = 'none';
-                    apiFields.style.display = 'block';
-                    urlInput.required = false;
-                    modelNameInput.required = false;
-                    modelInput.required = true;
-                    if (provider === 'openai') {
-                        modelHelp.textContent = 'OpenAI model (e.g., gpt-4, gpt-4-turbo)';
-                        apiKeyHelp.textContent = 'Per-endpoint API key (overrides global OPENAI_API_KEY if provided)';
-                    } else {
-                        modelHelp.textContent = 'Anthropic model (e.g., claude-3-opus-20240229)';
-                        apiKeyHelp.textContent = 'Per-endpoint API key (overrides global ANTHROPIC_API_KEY if provided)';
-                    }
+                    modelHelp.textContent = 'Anthropic model (e.g., claude-3-opus-20240229)';
+                    apiKeyHelp.textContent = 'Per-endpoint API key (overrides global ANTHROPIC_API_KEY if provided)';
                 }
+            }
         }
 
         // Open endpoint modal for adding/editing
@@ -1381,23 +1388,25 @@
                     document.getElementById('endpointUrl').value = endpoint.url || '';
                     document.getElementById('endpointModelName').value = endpoint.model_name || '';
                     // Mask API key if present
-                    if (endpoint.api_key) {
+                    const hfApiKeyInput = document.getElementById('endpointApiKey');
+                    if (endpoint.api_key && hfApiKeyInput) {
                         const token = endpoint.api_key;
                         const masked = token.length > 8 ? `${token.substring(0, 4)}...${token.substring(token.length - 4)}` : '***';
-                        document.getElementById('endpointApiKey').value = masked;
-                    } else {
-                        document.getElementById('endpointApiKey').value = '';
+                        hfApiKeyInput.value = masked;
+                    } else if (hfApiKeyInput) {
+                        hfApiKeyInput.value = '';
                     }
                 } else {
                     document.getElementById('endpointModel').value = endpoint.model || '';
                     document.getElementById('endpointMaxTokens').value = endpoint.max_tokens || 4096;
-                    // Mask API key if present
-                    if (endpoint.api_key) {
+                    // Mask API key if present (use endpointApiKeyAPI for OpenAI/Anthropic)
+                    const apiApiKeyInput = document.getElementById('endpointApiKeyAPI');
+                    if (endpoint.api_key && apiApiKeyInput) {
                         const token = endpoint.api_key;
                         const masked = token.length > 8 ? `${token.substring(0, 4)}...${token.substring(token.length - 4)}` : '***';
-                        document.getElementById('endpointApiKey').value = masked;
-                    } else {
-                        document.getElementById('endpointApiKey').value = '';
+                        apiApiKeyInput.value = masked;
+                    } else if (apiApiKeyInput) {
+                        apiApiKeyInput.value = '';
                     }
                 }
                 
@@ -1432,9 +1441,14 @@
                 return;
             }
             
-            // Get API key (check if masked)
-            const apiKeyInput = document.getElementById('endpointApiKey');
-            const apiKeyValue = apiKeyInput.value.trim();
+            // Get API key from the correct field based on provider
+            let apiKeyInput;
+            if (provider === 'hf') {
+                apiKeyInput = document.getElementById('endpointApiKey');
+            } else {
+                apiKeyInput = document.getElementById('endpointApiKeyAPI');
+            }
+            const apiKeyValue = apiKeyInput ? apiKeyInput.value.trim() : '';
             // Only include API key if provided and not masked (doesn't contain "...")
             if (apiKeyValue && !apiKeyValue.includes('...')) {
                 formData.api_key = apiKeyValue;
