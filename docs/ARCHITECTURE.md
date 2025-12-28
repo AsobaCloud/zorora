@@ -47,7 +47,9 @@ Deterministic Decision Tree (pattern matching)
 - **No LLM-based orchestration** - Patterns determine routing, code controls execution
 - **Hardcoded workflows** - Fixed pipelines for predictable results (newsroom → web → synthesis)
 - **Persistent research** - Everything saved to `~/.zorora/research/` with metadata
-- **Specialist models** - Codestral for code, reasoning model for synthesis
+- **Specialist models** - Codestral for code, reasoning model for synthesis, vision for images
+- **Multi-provider support** - Configure models from LM Studio (local), HuggingFace, OpenAI, and Anthropic APIs
+- **Visual configuration** - Web UI settings modal for easy model/endpoint management
 - **Hybrid inference** - Mix local models (4B orchestrator) with remote HuggingFace endpoints (32B Codestral)
 
 ## Core Components
@@ -239,7 +241,7 @@ zorora/
 │
 ├── conversation.py              # Conversation manager
 ├── conversation_persistence.py  # Save/load conversations
-├── llm_client.py               # LM Studio/HF API client
+├── llm_client.py               # LM Studio/HF/OpenAI/Anthropic API client
 ├── ui.py                       # Rich terminal UI
 │
 ├── simplified_router.py        # Deterministic decision tree
@@ -249,15 +251,21 @@ zorora/
 ├── turn_processor.py           # Main workflow orchestration
 ├── tool_executor.py            # Tool execution engine
 ├── tool_registry.py            # Tool definitions and functions
-├── model_selector.py           # Interactive model configuration
+├── model_selector.py           # Interactive model configuration (terminal)
 │
-└── workflows/                  # Multi-step development workflows
-    ├── __init__.py
-    ├── develop_workflow.py     # /develop orchestrator
-    ├── codebase_explorer.py    # Phase 1: Code exploration
-    ├── code_planner.py         # Phase 2: Planning with approval
-    ├── code_executor.py        # Phase 4: Code execution
-    └── code_tools.py           # File operations and linting
+├── workflows/                  # Multi-step development workflows
+│   ├── __init__.py
+│   ├── develop_workflow.py     # /develop orchestrator
+│   ├── codebase_explorer.py    # Phase 1: Code exploration
+│   ├── code_planner.py         # Phase 2: Planning with approval
+│   ├── code_executor.py        # Phase 4: Code execution
+│   └── code_tools.py           # File operations and linting
+│
+└── ui/web/                     # Web UI (Flask application)
+    ├── app.py                  # Flask routes + API endpoints
+    ├── config_manager.py       # Config file read/write management
+    └── templates/
+        └── index.html          # Research UI + Settings Modal
 ```
 
 ## Performance

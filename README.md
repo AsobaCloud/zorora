@@ -96,6 +96,9 @@ zorora web
 - **Hybrid deployment** - Local 4B orchestrator + remote 32B specialists
 - **RAM-efficient** - Runs on MacBook Air M3 with 4B model
 - **Dual interfaces** - Terminal REPL for engineers, Web UI for non-engineers
+- **Multi-provider support** - Configure models from HuggingFace, OpenAI, and Anthropic APIs
+- **Visual settings management** - Web UI settings modal for easy configuration
+- **Vision and image generation** - Dedicated models for image analysis and text-to-image generation
 
 ## Basic Usage
 
@@ -117,6 +120,12 @@ The system automatically detects research intent and executes the deep research 
    - **Thorough** - + Multi-hop citations (depth=3, ~50-70s) - *Coming soon*
 4. Click "Start Research"
 5. View synthesis, sources, and credibility scores
+
+**Configure Settings:**
+- Click the ⚙️ gear icon to open settings modal
+- Configure LLM models, endpoints, and API keys
+- Add/edit/delete endpoints for HuggingFace, OpenAI, and Anthropic
+- Changes take effect after server restart
 
 **API (Programmatic Access):**
 ```python
@@ -193,7 +202,35 @@ For detailed command reference, see [COMMANDS.md](COMMANDS.md).
 
 ## Configuration
 
-### Quick Setup
+### Web UI Settings Modal (Recommended)
+
+The easiest way to configure Zorora is through the Web UI settings modal:
+
+1. Start the Web UI: `python web_main.py` (or `zorora web`)
+2. Click the ⚙️ gear icon in the top-right corner
+3. Configure LLM models and endpoints:
+   - **Model Selection**: Choose models for each tool (orchestrator, codestral, reasoning, search, intent_detector, vision, image_generation)
+   - **Endpoint Selection**: Select from:
+     - **Local (LM Studio)** - Models running locally
+     - **HuggingFace Endpoints** - Remote HF inference endpoints
+     - **OpenAI Endpoints** - OpenAI API (gpt-4, gpt-4-turbo, gpt-3.5-turbo)
+     - **Anthropic Endpoints** - Anthropic API (claude-opus, claude-sonnet, claude-haiku)
+   - **API Keys**: Configure API keys for:
+     - HuggingFace (for HF endpoints)
+     - OpenAI (for OpenAI endpoints)
+     - Anthropic (for Anthropic endpoints)
+   - **Add/Edit Endpoints**: Click "Add New Endpoint" to configure custom endpoints
+4. Click "Save" - changes take effect after server restart
+
+**Features:**
+- ✅ Visual configuration interface (no code editing required)
+- ✅ Dropdown selection for models and endpoints
+- ✅ Secure API key management (masked display, show/hide toggle)
+- ✅ Add/edit/delete endpoints for all providers
+- ✅ Automatic role reassignment when endpoints are deleted
+- ✅ Config file backup before each write
+
+### Terminal Configuration
 
 Use the interactive `/models` command:
 
@@ -206,9 +243,12 @@ Use the interactive `/models` command:
 1. Copy `config.example.py` to `config.py`
 2. Edit `config.py` with your settings:
    - LM Studio model name
-   - HuggingFace token (optional)
+   - HuggingFace token (optional, for HF endpoints)
+   - OpenAI API key (optional, for OpenAI endpoints)
+   - Anthropic API key (optional, for Anthropic endpoints)
    - Brave Search API key (optional)
    - Specialist model configurations
+   - Endpoint mappings (`MODEL_ENDPOINTS`, `HF_ENDPOINTS`, `OPENAI_ENDPOINTS`, `ANTHROPIC_ENDPOINTS`)
 
 ### Web Search Setup
 
@@ -323,9 +363,10 @@ zorora/
 │       └── workflow.py          # Workflow orchestrator
 │
 └── ui/web/                      # Web UI (Flask app)
-    ├── app.py                   # Flask application
+    ├── app.py                   # Flask application + API routes
+    ├── config_manager.py        # Config file management (read/write)
     ├── templates/
-    │   └── index.html           # Research UI
+    │   └── index.html           # Research UI + Settings Modal
     └── static/
         └── images/
             ├── Artboard-7.png   # Asoba logo
@@ -337,6 +378,8 @@ zorora/
 - **[COMMANDS.md](COMMANDS.md)** - Complete command reference
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** - Detailed architecture explanation
 - **[docs/DEEP_RESEARCH_IMPLEMENTATION.md](docs/DEEP_RESEARCH_IMPLEMENTATION.md)** - Deep research feature roadmap
+- **[docs/SETTINGS_MODAL_IMPLEMENTATION.md](docs/SETTINGS_MODAL_IMPLEMENTATION.md)** - Settings modal implementation guide
+- **[docs/MULTI_PROVIDER_API_IMPLEMENTATION.md](docs/MULTI_PROVIDER_API_IMPLEMENTATION.md)** - Multi-provider API support details
 - **[docs/WORKFLOWS.md](docs/WORKFLOWS.md)** - Workflow documentation
 - **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** - Troubleshooting guide
 - **[docs/BEST_PRACTICES.md](docs/BEST_PRACTICES.md)** - Best practices
@@ -381,8 +424,13 @@ For more details, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/DEE
 ### Can't Save Research
 **Solution:** Check `~/.zorora/research/` directory exists and is writable
 
-### HuggingFace Endpoint Errors
-**Solution:** Check HF endpoint URL, verify token, ensure endpoint is running
+### Endpoint Errors (HF/OpenAI/Anthropic)
+**Solution:** 
+- Check endpoint URL (for HF endpoints)
+- Verify API keys are configured (use Web UI settings modal)
+- Ensure endpoints are enabled in config
+- Check API rate limits (OpenAI/Anthropic)
+- Verify model names match provider requirements
 
 ### Web UI Not Starting
 **Solution:** 
@@ -406,11 +454,36 @@ See LICENSE file.
 
 **Repository:** https://github.com/AsobaCloud/zorora  
 **EnergyAnalyst:** https://huggingface.co/asoba/EnergyAnalyst-v0.1  
-**Version:** 2.0.0 (Deep Research Release)
+**Version:** 2.1.0 (Settings Modal & Multi-Provider Support)
 
 ---
 
 ## Changelog
+
+### Version 2.1.0 - Settings Modal & Multi-Provider Support
+
+**Major Features:**
+- ✅ Web UI Settings Modal - Visual configuration interface
+- ✅ Multi-provider endpoint support (HuggingFace, OpenAI, Anthropic)
+- ✅ API key management for all providers (masked display, secure storage)
+- ✅ Endpoint CRUD operations via Web UI (add/edit/delete)
+- ✅ Vision and image_generation model configuration
+- ✅ Config file backup before writes
+- ✅ Automatic role reassignment on endpoint deletion
+
+**Configuration Improvements:**
+- Visual settings modal (no code editing required)
+- Dropdown selection for models and endpoints
+- Provider-specific endpoint forms (HF: URL+Model, OpenAI/Anthropic: Model+MaxTokens)
+- Secure API key handling (masking, show/hide toggle)
+- Config validation and error handling
+
+**API Enhancements:**
+- `/api/settings/config` - Read/write configuration
+- `/api/settings/models` - List available models (all providers)
+- `/api/settings/endpoints` - List endpoints (all providers)
+- `/api/settings/endpoint` - Add/edit endpoint (provider-aware)
+- `/api/settings/endpoint/<key>` - Delete endpoint (checks all providers)
 
 ### Version 2.0.0 - Deep Research Release
 
