@@ -1,0 +1,129 @@
+{
+  "fix_summary": {
+    "status": "SUCCESSFULLY_DEPLOYED_AND_WORKING",
+    "date": "2025-12-29",
+    "commit": "9423655",
+    "commit_message": "fix: Normalize API Gateway path and enhance query parameter parsing",
+    "lambda_function": "ona-globalTrainingService-prod",
+    "region": "af-south-1"
+  },
+  "deployment_evidence": {
+    "lambda_status": {
+      "LastModified": "2025-12-29T22:19:18.000+0000",
+      "CodeSha256": "ecfcd07b9eaf92988f66088da1c0c19dbbef408d6b2d8093642c822b4fe26a2e",
+      "LastUpdateStatus": "Successful",
+      "ImageUri": "905418405543.dkr.ecr.af-south-1.amazonaws.com/ona-globaltrainingservice:prod"
+    },
+    "ecr_image": {
+      "repository": "ona-globaltrainingservice",
+      "tag": "prod",
+      "imagePushedAt": "2025-12-29T16:07:29.894000-06:00",
+      "imageDigest": "sha256:ecfcd07b9eaf92988f66088da1c0c19dbbef408d6b2d8093642c822b4fe26a2e",
+      "matches_lambda_sha": true
+    }
+  },
+  "path_normalization_proof": {
+    "before_fix": {
+      "rawPath_input": "/prod/api/v1/challengers",
+      "error": "Could not extract customer_id from event",
+      "root_cause": "Path included /prod prefix, causing route matching to fail"
+    },
+    "after_fix": {
+      "rawPath_input": "/prod/api/v1/challengers",
+      "normalized_path": "/api/v1/challengers",
+      "prefix_removed": "/prod",
+      "query_string": "customer_id=test-proof-1767046975",
+      "query_params_extracted": {
+        "customer_id": "test-proof-1767046975"
+      },
+      "handler_called": "handle_list_challengers",
+      "customer_id_extracted": "test-proof-1767046975",
+      "status": "SUCCESS"
+    }
+  },
+  "api_response_proof": {
+    "test_request": {
+      "method": "GET",
+      "url": "https://p0c7u3j9wi.execute-api.af-south-1.amazonaws.com/prod/api/v1/challengers",
+      "query_params": {
+        "customer_id": "final-proof-test"
+      },
+      "headers": {
+        "Authorization": "Bearer Zgyf4uvCX7V0/frwcSqkjfOgxYPSyYkgYt2IvjEPCA0=",
+        "x-actor": "final-proof"
+      }
+    },
+    "test_response": {
+      "status_code": 200,
+      "body": {
+        "customer_id": "final-proof-test",
+        "challengers": [],
+        "count": 0
+      },
+      "error": null
+    }
+  },
+  "cloudwatch_logs_evidence": {
+    "api_gateway_detection": {
+      "event_version": "2.0",
+      "has_routeKey": true,
+      "api_gateway_check_result": true,
+      "status": "CORRECTLY_DETECTED"
+    },
+    "path_normalization": {
+      "rawPath_input": "/prod/api/v1/challengers",
+      "normalized_path": "/api/v1/challengers",
+      "prefix_removed": true,
+      "status": "SUCCESS"
+    },
+    "query_parameter_extraction": {
+      "rawQueryString": "customer_id=test-proof-1767046975",
+      "extracted_params": {
+        "customer_id": "test-proof-1767046975"
+      },
+      "status": "SUCCESS"
+    },
+    "handler_execution": {
+      "handler_called": "handle_list_challengers",
+      "customer_id_extracted": "test-proof-1767046975",
+      "status": "SUCCESS"
+    }
+  },
+  "validation_results": {
+    "phase_0_preflight": {
+      "step_0_1_api_gateway_reachability": "PASS",
+      "step_0_2_auth_token_validity": "PASS",
+      "step_0_3_lambda_environment": "PASS",
+      "step_0_4_s3_access": "PASS",
+      "overall_status": "ALL_PASSED"
+    },
+    "phase_2_readonly": {
+      "step_2_1_ml_list_challengers": "PASS",
+      "step_2_2_ml_show_metrics": "FAIL",
+      "step_2_2_failure_reason": "Model ID format mismatch (unrelated to path normalization fix)",
+      "overall_status": "PARTIAL_PASS"
+    }
+  },
+  "test_results_summary": {
+    "api_gateway_detection": "PASS",
+    "path_normalization": "PASS",
+    "query_parameter_extraction": "PASS",
+    "handler_routing": "PASS",
+    "http_response": "PASS",
+    "e2e_validation_phase_0": "PASS",
+    "e2e_validation_phase_2_1": "PASS",
+    "overall_status": "FIX_VERIFIED_AND_WORKING"
+  },
+  "conclusion": {
+    "fix_status": "VERIFIED_AND_DEPLOYED",
+    "error_resolved": "Could not extract customer_id from event",
+    "lambda_functionality": [
+      "Detects API Gateway HTTP API events (version: 2.0 with routeKey)",
+      "Normalizes paths by removing stage prefixes (/prod, /dev, /staging)",
+      "Robustly parses query parameters from rawQueryString and queryStringParameters",
+      "Routes requests to correct Flask handlers",
+      "Returns successful responses with valid JSON"
+    ],
+    "verification_timestamp": "2025-12-29T22:22:56 UTC"
+  }
+}
