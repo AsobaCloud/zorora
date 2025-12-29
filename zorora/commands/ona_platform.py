@@ -243,7 +243,7 @@ def register_ona_commands(repl):
         repl: REPL instance to register commands with
     """
     # Initialize HTTP client
-    base_url = os.getenv('ONA_API_BASE_URL', 'https://api.ona-platform.internal/api/v1')
+    base_url = os.getenv('ONA_API_BASE_URL', 'https://p0c7u3j9wi.execute-api.af-south-1.amazonaws.com/api/v1')
     auth_token = os.getenv('ONA_API_TOKEN', '')
     use_iam = os.getenv('ONA_USE_IAM', 'false').lower() == 'true'
     

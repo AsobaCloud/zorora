@@ -513,7 +513,22 @@ class REPL:
   [cyan]/visualize[/cyan]               - Show context usage statistics
   [cyan]/help[/cyan]                    - Show this help message
   [cyan]exit[/cyan]                     - Exit the REPL
+"""
+        # Add ONA Platform Commands section if available
+        if self.remote_commands:
+            help_text += """
+[bold cyan]ONA Platform Commands:[/bold cyan] (Optional - requires ONA integration)
 
+  [cyan]ml-list-challengers <customer_id>[/cyan]     - List challenger models for a customer
+  [cyan]ml-show-metrics <model_id>[/cyan]            - Show evaluation metrics for a model
+  [cyan]ml-diff <challenger_id> <production_id>[/cyan] - Compare challenger vs production model
+  [cyan]ml-promote <customer_id> <model_id> <reason> [--force][/cyan] - Promote challenger to production
+  [cyan]ml-rollback <customer_id> <reason>[/cyan]   - Rollback production model to previous version
+  [cyan]ml-audit-log <customer_id>[/cyan]            - Get audit log for a customer
+
+[dim]Note: ONA platform commands require ONA_API_BASE_URL and ONA_API_TOKEN environment variables.[/dim]
+"""
+        help_text += """
 [dim]Note: By default, all queries trigger web search. Use /ask for follow-ups without search.[/dim]
         """
         self.ui.console.print(help_text)

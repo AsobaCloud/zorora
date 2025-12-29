@@ -207,6 +207,38 @@ curl http://localhost:5000/api/research/<research_id>
 - **`/help`** - Show available commands
 - **`exit`, `quit`, `q`** - Exit the REPL
 
+### ONA Platform Commands (Optional)
+
+Remote commands for interacting with ONA platform ML model observation workflows. Requires ONA platform integration (configured via environment variables).
+
+- **`ml-list-challengers <customer_id>`** - List challenger models for a customer
+- **`ml-show-metrics <model_id>`** - Show evaluation metrics for a model
+- **`ml-diff <challenger_id> <production_id>`** - Compare challenger vs production model
+- **`ml-promote <customer_id> <model_id> <reason> [--force]`** - Promote challenger model to production (requires confirmation)
+- **`ml-rollback <customer_id> <reason>`** - Rollback production model to previous version (requires confirmation)
+- **`ml-audit-log <customer_id>`** - Get audit log for a customer
+
+**Configuration:**
+
+Set environment variables before running Zorora:
+
+```bash
+# Option 1: Retrieve from AWS SSM Parameter Store (recommended)
+source <(./scripts/get-global-training-api-credentials.sh)
+
+# Option 2: Manual configuration
+export ONA_API_BASE_URL="https://p0c7u3j9wi.execute-api.af-south-1.amazonaws.com/api/v1"
+export ONA_API_TOKEN="your-api-token-here"
+export ONA_USE_IAM="false"
+```
+
+**Environment Variables:**
+- `ONA_API_BASE_URL` - ONA platform API base URL (default: `https://p0c7u3j9wi.execute-api.af-south-1.amazonaws.com/api/v1`)
+- `ONA_API_TOKEN` - Authentication token for ONA platform API (required if not using IAM)
+- `ONA_USE_IAM` - Use IAM authentication (default: `false`)
+
+For detailed operational procedures, see [docs/ZORORA_OPERATIONAL_CONTRACT.md](docs/ZORORA_OPERATIONAL_CONTRACT.md).
+
 For detailed command reference, see [COMMANDS.md](COMMANDS.md).
 
 ## Configuration

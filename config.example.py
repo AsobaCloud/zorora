@@ -51,6 +51,13 @@ ENERGY_ANALYST = {
 # - Local: http://localhost:8000
 # - Production: https://energyanalystragservice-production.up.railway.app
 
+# ONA Platform API Configuration (Optional)
+# For ML model observation workflows (ml-list-challengers, ml-show-metrics, etc.)
+# Configure via environment variables:
+#   export ONA_API_BASE_URL="https://p0c7u3j9wi.execute-api.af-south-1.amazonaws.com/api/v1"
+#   export ONA_API_TOKEN="your-token-here"
+#   export ONA_USE_IAM="false"  # Set to "true" for IAM authentication
+
 # Brave Search API Configuration
 # Get your free API key at: https://brave.com/search/api/
 # Free tier: 2000 queries/month (~66/day)

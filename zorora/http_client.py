@@ -32,7 +32,7 @@ class ZororaHTTPClient:
         Initialize HTTP client.
         
         Args:
-            base_url: Base URL for API (e.g., 'https://api.ona-platform.internal/api/v1')
+            base_url: Base URL for API (e.g., 'https://p0c7u3j9wi.execute-api.af-south-1.amazonaws.com/api/v1')
             auth_token: Bearer token for authentication (if not using IAM)
             use_iam: If True, use AWS IAM role assumption (requires AWS credentials)
             timeout: Request timeout in seconds
