@@ -22,7 +22,7 @@ class DeepResearchWorkflow:
     3. Cross-Referencing (simplified)
     4. Synthesis
     
-    Note: Citation following skipped for MVP (as per ANSWERS_FOR_REVIEW.md)
+    Note: Citation following skipped for MVP (as per docs/ANSWERS_FOR_REVIEW.md)
     """
 
     def __init__(self, max_depth: int = 1):
