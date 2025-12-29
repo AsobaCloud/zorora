@@ -669,10 +669,9 @@ class REPL:
             while True:
                 turn_count += 1
 
-                # Display rich prompt
+                # Get user input (with boxed prompt)
                 tools_available = True  # Can be dynamically determined
-                self.ui.get_prompt(turn_count, tools_available)
-                user_input = input().strip()
+                user_input = self.ui.get_input(turn_count, tools_available)
 
                 if not user_input:
                     turn_count -= 1  # Don't count empty inputs
