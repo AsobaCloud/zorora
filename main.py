@@ -7,13 +7,20 @@ from repl import REPL
 from config import LOGGING_LEVEL, LOGGING_FORMAT, LOG_FILE
 
 # Configure logging
+# Always write to file
+handlers = [logging.FileHandler(LOG_FILE)]
+
+# Only add console handler if --verbose flag is set
+if '--verbose' in sys.argv or '-v' in sys.argv:
+    # Use stderr for logs (not stdout) to keep stdout clean for user output
+    console_handler = logging.StreamHandler(sys.stderr)
+    console_handler.setLevel(logging.INFO)
+    handlers.append(console_handler)
+
 logging.basicConfig(
     level=LOGGING_LEVEL,
     format=LOGGING_FORMAT,
-    handlers=[
-        logging.FileHandler(LOG_FILE),
-        logging.StreamHandler()
-    ]
+    handlers=handlers
 )
 logger = logging.getLogger(__name__)
 

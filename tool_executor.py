@@ -4,8 +4,10 @@ from typing import Dict, Any, Optional
 import json
 import re
 import logging
+import uuid
 
 from tools.registry import ToolRegistry, SPECIALIST_TOOLS
+from ui.progress_events import ProgressEvent, EventType
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +44,22 @@ class ToolExecutor:
         # Fix common parameter name mistakes from orchestrator
         arguments = self._fix_parameter_names(tool_name, arguments)
 
+        # Generate unique node ID for this tool execution
+        tool_node_id = f"tool_{uuid.uuid4().hex[:8]}"
+
+        # Emit tool start event
+        if self.ui:
+            self.ui.emit_progress_event(ProgressEvent(
+                event_type=EventType.TOOL_START,
+                message=f"Running {tool_name}",
+                parent_id=None,  # Will be set by workflow
+                metadata={
+                    "node_id": tool_node_id,
+                    "tool": tool_name,
+                    "arguments": {k: str(v)[:50] for k, v in arguments.items()}  # Truncate args
+                }
+            ))
+
         try:
             # Special handling for use_codestral - pass UI for interactive planning
             if tool_name == "use_codestral" and self.ui is not None:
@@ -58,14 +76,55 @@ class ToolExecutor:
             if tool_name == "run_shell":
                 self._handle_cd_command(arguments.get("command", ""), result)
 
+            # Emit tool complete event
+            if self.ui:
+                result_size = len(result) if isinstance(result, str) else 0
+                self.ui.emit_progress_event(ProgressEvent(
+                    event_type=EventType.TOOL_COMPLETE,
+                    message=f"Completed {tool_name}",
+                    parent_id=None,
+                    metadata={
+                        "node_id": tool_node_id,
+                        "tool": tool_name,
+                        "result_size": result_size,
+                        "success": not result.startswith("Error:") if isinstance(result, str) else True
+                    }
+                ))
+
             return self._truncate_result(result, tool_name)
         except KeyboardInterrupt:
             # Allow KeyboardInterrupt to propagate so it can be handled by the REPL
             raise
         except TypeError as e:
-            return f"Error: Invalid arguments for tool '{tool_name}': {e}"
+            error_msg = f"Error: Invalid arguments for tool '{tool_name}': {e}"
+            # Emit tool error event
+            if self.ui:
+                self.ui.emit_progress_event(ProgressEvent(
+                    event_type=EventType.TOOL_ERROR,
+                    message=f"Error in {tool_name}: {str(e)[:100]}",
+                    parent_id=None,
+                    metadata={
+                        "node_id": tool_node_id,
+                        "tool": tool_name,
+                        "error": str(e)
+                    }
+                ))
+            return error_msg
         except Exception as e:
-            return f"Error executing tool '{tool_name}': {e}"
+            error_msg = f"Error executing tool '{tool_name}': {e}"
+            # Emit tool error event
+            if self.ui:
+                self.ui.emit_progress_event(ProgressEvent(
+                    event_type=EventType.TOOL_ERROR,
+                    message=f"Error in {tool_name}: {str(e)[:100]}",
+                    parent_id=None,
+                    metadata={
+                        "node_id": tool_node_id,
+                        "tool": tool_name,
+                        "error": str(e)
+                    }
+                ))
+            return error_msg
 
     def _handle_cd_command(self, command: str, result: str):
         """

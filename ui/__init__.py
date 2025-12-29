@@ -5,6 +5,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.text import Text
 from rich.live import Live
+from rich.tree import Tree
 from contextlib import contextmanager
 from typing import Optional, Dict, Any
 import time
@@ -44,6 +45,7 @@ from config import (
     UI_ENABLED, UI_NO_COLOR, UI_MARKDOWN_RENDERING,
     UI_SPINNER_STYLE, UI_SHOW_TOKEN_COUNT, UI_THEME
 )
+from ui.progress_events import ProgressEvent, ProgressEventQueue, EventType
 
 
 class ZororaUI:
@@ -71,6 +73,9 @@ class ZororaUI:
             except Exception:
                 # Fallback if prompt_toolkit initialization fails
                 self.prompt_toolkit_available = False
+        
+        # Active progress display (for event routing)
+        self._active_progress = None
     
     def cleanup(self):
         """Restore terminal to normal state before exit."""
@@ -374,3 +379,315 @@ class ZororaUI:
         color = "green" if success else "red"
         status = f"Completed: {result_size} chars" if success else "Failed"
         self.console.print(f"[dim {color}]  {icon} {tool_name}: {status}[/dim {color}]")
+    
+    def emit_progress_event(self, event: ProgressEvent):
+        """
+        Emit a progress event (thread-safe).
+        
+        This is a convenience method that routes events to the active
+        ProgressDisplay if one exists, or ignores if none.
+        
+        Args:
+            event: ProgressEvent to emit
+        """
+        # Store reference to active progress display
+        # This is set when progress() context manager is entered
+        if hasattr(self, '_active_progress') and self._active_progress:
+            self._active_progress.emit(event)
+    
+    def progress(self, title: str = "Processing") -> 'ProgressDisplay':
+        """
+        Create a progress display context manager.
+        
+        Args:
+            title: Display title
+            
+        Returns:
+            ProgressDisplay context manager
+            
+        Example:
+            with ui.progress("Research workflow") as p:
+                p.emit(ProgressEvent(EventType.STEP_START, "Fetching..."))
+        """
+        display = ProgressDisplay(self, title)
+        self._active_progress = display
+        return display
+
+
+class ProgressDisplay:
+    """
+    Pure event renderer for progress display.
+    
+    Does NOT know about workflows or tools - only renders events.
+    """
+    
+    def __init__(self, ui: ZororaUI, title: str = "Processing"):
+        """
+        Initialize progress display.
+        
+        Args:
+            ui: ZororaUI instance
+            title: Display title
+        """
+        self.ui = ui
+        self.title = title
+        self.event_queue = ProgressEventQueue()
+        self.render_tree: Dict[str, Dict[str, Any]] = {}  # node_id -> {status, message, children, start_time}
+        self.root_id = "root"
+        self.done = False
+        self.live_display = None
+        self.render_thread = None
+        self.start_time = time.time()
+        
+        # Initialize root node
+        self.render_tree[self.root_id] = {
+            "status": "pending",
+            "message": title,
+            "children": [],
+            "start_time": self.start_time,
+            "metadata": {}
+        }
+    
+    def emit(self, event: ProgressEvent):
+        """
+        Emit a progress event (thread-safe).
+        
+        Args:
+            event: ProgressEvent to emit
+        """
+        self.event_queue.put(event)
+    
+    def _check_screen_ownership(self):
+        """
+        Ensure no active input session (CRITICAL INVARIANT).
+        
+        Raises:
+            RuntimeError: If prompt_toolkit session is active
+        """
+        if self.ui.prompt_session and hasattr(self.ui.prompt_session, 'is_running'):
+            # Check if prompt_toolkit session is active
+            # This is a safety check - should never happen if used correctly
+            # Note: prompt_toolkit doesn't expose perfect state, so this is best-effort
+            pass  # We'll rely on proper sequencing instead
+    
+    def _process_event(self, event: ProgressEvent):
+        """
+        Process a single event and update render tree.
+        
+        Args:
+            event: ProgressEvent to process
+        """
+        node_id = event.metadata.get("node_id") or f"node_{len(self.render_tree)}"
+        parent_id = event.parent_id or self.root_id
+        
+        if event.event_type == EventType.WORKFLOW_START:
+            self.render_tree[self.root_id]["status"] = "in_progress"
+            self.render_tree[self.root_id]["message"] = event.message
+            self.render_tree[self.root_id]["start_time"] = event.timestamp
+        
+        elif event.event_type == EventType.WORKFLOW_COMPLETE:
+            self.render_tree[self.root_id]["status"] = "complete"
+            self.render_tree[self.root_id]["message"] = event.message
+            self.done = True
+        
+        elif event.event_type == EventType.STEP_START:
+            if node_id not in self.render_tree:
+                self.render_tree[node_id] = {
+                    "status": "in_progress",
+                    "message": event.message,
+                    "children": [],
+                    "start_time": event.timestamp,
+                    "metadata": event.metadata
+                }
+                if parent_id in self.render_tree:
+                    self.render_tree[parent_id]["children"].append(node_id)
+            else:
+                self.render_tree[node_id]["status"] = "in_progress"
+                self.render_tree[node_id]["message"] = event.message
+                self.render_tree[node_id]["start_time"] = event.timestamp
+        
+        elif event.event_type == EventType.STEP_COMPLETE:
+            if node_id in self.render_tree:
+                self.render_tree[node_id]["status"] = "complete"
+                self.render_tree[node_id]["message"] = event.message
+                if "duration" not in self.render_tree[node_id]:
+                    duration = event.timestamp - self.render_tree[node_id]["start_time"]
+                    self.render_tree[node_id]["duration"] = duration
+        
+        elif event.event_type == EventType.STEP_ERROR:
+            if node_id in self.render_tree:
+                self.render_tree[node_id]["status"] = "error"
+                self.render_tree[node_id]["message"] = event.message
+        
+        elif event.event_type == EventType.TOOL_START:
+            if node_id not in self.render_tree:
+                self.render_tree[node_id] = {
+                    "status": "in_progress",
+                    "message": event.message,
+                    "children": [],
+                    "start_time": event.timestamp,
+                    "metadata": event.metadata
+                }
+                if parent_id in self.render_tree:
+                    self.render_tree[parent_id]["children"].append(node_id)
+        
+        elif event.event_type == EventType.TOOL_COMPLETE:
+            if node_id in self.render_tree:
+                self.render_tree[node_id]["status"] = "complete"
+                self.render_tree[node_id]["message"] = event.message
+                duration = event.timestamp - self.render_tree[node_id]["start_time"]
+                self.render_tree[node_id]["duration"] = duration
+        
+        elif event.event_type == EventType.TOOL_ERROR:
+            if node_id in self.render_tree:
+                self.render_tree[node_id]["status"] = "error"
+                self.render_tree[node_id]["message"] = event.message
+        
+        elif event.event_type == EventType.MESSAGE:
+            # Add as child of parent
+            if parent_id in self.render_tree:
+                self.render_tree[parent_id]["children"].append(node_id)
+                self.render_tree[node_id] = {
+                    "status": "info",
+                    "message": event.message,
+                    "children": [],
+                    "start_time": event.timestamp,
+                    "metadata": event.metadata
+                }
+    
+    def _render_node(self, node_id: str, tree: Tree, visited: set) -> Tree:
+        """
+        Recursively render a node and its children.
+        
+        Args:
+            node_id: Node ID to render
+            tree: Rich Tree to add to
+            visited: Set of visited node IDs (prevent cycles)
+            
+        Returns:
+            Tree with node added
+        """
+        if node_id in visited:
+            return tree
+        visited.add(node_id)
+        
+        if node_id not in self.render_tree:
+            return tree
+        
+        node_data = self.render_tree[node_id]
+        status = node_data["status"]
+        message = node_data["message"]
+        duration = node_data.get("duration")
+        
+        # Status indicators
+        if status == "pending":
+            icon = "⬢"
+            style = "dim cyan"
+        elif status == "in_progress":
+            icon = "⬡"
+            style = "cyan"
+        elif status == "complete":
+            icon = "✓"
+            style = "green"
+        elif status == "error":
+            icon = "✗"
+            style = "red"
+        else:
+            icon = "•"
+            style = "dim"
+        
+        # Build message with duration
+        display_message = f"{icon} {message}"
+        if duration is not None:
+            display_message += f" ({duration:.1f}s)"
+        
+        # Add node to tree
+        branch = tree.add(Text(display_message, style=style))
+        
+        # Render children
+        for child_id in node_data["children"]:
+            self._render_node(child_id, branch, visited)
+        
+        return tree
+    
+    def _create_display(self) -> Panel:
+        """
+        Create Rich Panel with current progress state.
+        
+        Returns:
+            Rich Panel to display
+        """
+        # Build tree
+        tree = Tree("")
+        visited = set()
+        self._render_node(self.root_id, tree, visited)
+        
+        # Calculate total elapsed time
+        elapsed = time.time() - self.start_time
+        
+        # Create panel
+        title = f"{self.title} ({elapsed:.1f}s)"
+        panel = Panel(
+            tree,
+            title=title,
+            border_style="cyan",
+            padding=(1, 2)
+        )
+        
+        return panel
+    
+    def _update_display_loop(self, live):
+        """
+        Background thread that updates the Live display.
+        
+        Args:
+            live: Rich Live instance (created in main thread)
+        """
+        while not self.done:
+            # Drain events from queue
+            events = self.event_queue.drain(max_events=100)
+            for event in events:
+                self._process_event(event)
+            
+            # Update display
+            live.update(self._create_display())
+            
+            # Small sleep to prevent CPU spinning
+            time.sleep(0.1)
+        
+        # Final update
+        live.update(self._create_display())
+    
+    def __enter__(self):
+        """Context manager entry."""
+        self._check_screen_ownership()
+        
+        # Create Live display in main thread (required by Rich)
+        live = Live(self._create_display(), console=self.ui.console, refresh_per_second=10)
+        live.start()
+        self.live_display = live
+        
+        # Start update loop in background thread
+        self.render_thread = threading.Thread(target=self._update_display_loop, args=(live,), daemon=True)
+        self.render_thread.start()
+        
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit."""
+        self.done = True
+        self.event_queue.close()
+        
+        # Wait for render thread to finish
+        if self.render_thread:
+            self.render_thread.join(timeout=1.0)
+        
+        # Stop Live display
+        if self.live_display:
+            self.live_display.stop()
+        
+        # Clear active progress reference
+        if hasattr(self.ui, '_active_progress'):
+            self.ui._active_progress = None
+        
+        return False

@@ -8,7 +8,10 @@ No complex planning - just a fixed, reliable pipeline:
 
 import logging
 import re
+import uuid
 from typing import List, Tuple, Optional
+
+from ui.progress_events import ProgressEvent, EventType
 
 logger = logging.getLogger(__name__)
 
@@ -53,51 +56,128 @@ class ResearchWorkflow:
         """
         logger.info(f"Starting research workflow for: {query[:80]}...")
 
-        sources: List[Tuple[str, str]] = []
+        # Generate workflow node ID
+        workflow_id = f"workflow_{uuid.uuid4().hex[:8]}"
 
-        # Step 1: Try newsroom (with query filtering)
+        # Start progress display
         if ui:
-            ui.console.print("\n[cyan]Step 1/3:[/cyan] Fetching relevant newsroom articles...")
+            with ui.progress(f"Research: {query[:60]}...") as progress:
+                # Emit workflow start
+                progress.emit(ProgressEvent(
+                    event_type=EventType.WORKFLOW_START,
+                    message=f"Research: {query[:60]}...",
+                    parent_id=None,
+                    metadata={"workflow_id": workflow_id, "query": query}
+                ))
 
-        newsroom_result = self._fetch_newsroom(query)
-        if newsroom_result:
-            sources.append(("Newsroom", newsroom_result))
-            if ui:
-                ui.console.print(f"[green]  ✓ Found {self._count_articles(newsroom_result)} relevant articles[/green]")
+                sources: List[Tuple[str, str]] = []
+
+                # Step 1: Try newsroom
+                step1_id = f"step1_{uuid.uuid4().hex[:8]}"
+                progress.emit(ProgressEvent(
+                    event_type=EventType.STEP_START,
+                    message="Step 1/3: Fetching newsroom articles...",
+                    parent_id=workflow_id,
+                    metadata={"node_id": step1_id, "step": 1}
+                ))
+
+                newsroom_result = self._fetch_newsroom(query)
+                if newsroom_result:
+                    sources.append(("Newsroom", newsroom_result))
+                    article_count = self._count_articles(newsroom_result)
+                    progress.emit(ProgressEvent(
+                        event_type=EventType.STEP_COMPLETE,
+                        message=f"Found {article_count} relevant articles",
+                        parent_id=workflow_id,
+                        metadata={"node_id": step1_id, "article_count": article_count}
+                    ))
+                else:
+                    progress.emit(ProgressEvent(
+                        event_type=EventType.STEP_ERROR,
+                        message="Newsroom unavailable (API 401) - skipping",
+                        parent_id=workflow_id,
+                        metadata={"node_id": step1_id}
+                    ))
+                    logger.warning("Newsroom fetch failed, continuing with web only")
+
+                # Step 2: Web search
+                step2_id = f"step2_{uuid.uuid4().hex[:8]}"
+                progress.emit(ProgressEvent(
+                    event_type=EventType.STEP_START,
+                    message="Step 2/3: Searching web...",
+                    parent_id=workflow_id,
+                    metadata={"node_id": step2_id, "step": 2}
+                ))
+
+                search_query = self._extract_search_keywords(query)
+                web_result = self._fetch_web(search_query)
+
+                if web_result and not web_result.startswith("Error:"):
+                    sources.append(("Web", web_result))
+                    progress.emit(ProgressEvent(
+                        event_type=EventType.STEP_COMPLETE,
+                        message="Found web results",
+                        parent_id=workflow_id,
+                        metadata={"node_id": step2_id}
+                    ))
+                else:
+                    progress.emit(ProgressEvent(
+                        event_type=EventType.STEP_ERROR,
+                        message="Web search failed",
+                        parent_id=workflow_id,
+                        metadata={"node_id": step2_id}
+                    ))
+                    logger.error(f"Web search failed: {web_result}")
+
+                # Step 3: Synthesize
+                if not sources:
+                    progress.emit(ProgressEvent(
+                        event_type=EventType.WORKFLOW_COMPLETE,
+                        message="Error: No sources available",
+                        parent_id=None,
+                        metadata={"workflow_id": workflow_id, "error": True}
+                    ))
+                    return "Error: Could not fetch any sources. Please check newsroom and web search availability."
+
+                step3_id = f"step3_{uuid.uuid4().hex[:8]}"
+                progress.emit(ProgressEvent(
+                    event_type=EventType.STEP_START,
+                    message="Step 3/3: Synthesizing findings...",
+                    parent_id=workflow_id,
+                    metadata={"node_id": step3_id, "step": 3}
+                ))
+
+                result = self._synthesize(query, sources)
+
+                progress.emit(ProgressEvent(
+                    event_type=EventType.STEP_COMPLETE,
+                    message="Synthesis complete",
+                    parent_id=workflow_id,
+                    metadata={"node_id": step3_id}
+                ))
+
+                progress.emit(ProgressEvent(
+                    event_type=EventType.WORKFLOW_COMPLETE,
+                    message="Research complete",
+                    parent_id=None,
+                    metadata={"workflow_id": workflow_id}
+                ))
+
+                return result
         else:
-            if ui:
-                ui.console.print("[yellow]  ⚠ Newsroom unavailable, skipping[/yellow]")
-            logger.warning("Newsroom fetch failed, continuing with web only")
-
-        # Step 2: Web search (always)
-        if ui:
-            ui.console.print("\n[cyan]Step 2/3:[/cyan] Searching web...")
-
-        search_query = self._extract_search_keywords(query)
-        web_result = self._fetch_web(search_query)
-
-        if web_result and not web_result.startswith("Error:"):
-            sources.append(("Web", web_result))
-            if ui:
-                ui.console.print(f"[green]  ✓ Found web results[/green]")
-        else:
-            if ui:
-                ui.console.print("[red]  ✗ Web search failed[/red]")
-            logger.error(f"Web search failed: {web_result}")
-
-        # Step 3: Synthesize
-        if not sources:
-            return "Error: Could not fetch any sources. Please check newsroom and web search availability."
-
-        if ui:
-            ui.console.print("\n[cyan]Step 3/3:[/cyan] Synthesizing findings...")
-
-        result = self._synthesize(query, sources)
-
-        if ui:
-            ui.console.print("[green]  ✓ Research complete[/green]\n")
-
-        return result
+            # No UI - fallback to old behavior
+            sources: List[Tuple[str, str]] = []
+            newsroom_result = self._fetch_newsroom(query)
+            if newsroom_result:
+                sources.append(("Newsroom", newsroom_result))
+            search_query = self._extract_search_keywords(query)
+            web_result = self._fetch_web(search_query)
+            if web_result and not web_result.startswith("Error:"):
+                sources.append(("Web", web_result))
+            if not sources:
+                return "Error: Could not fetch any sources."
+            result = self._synthesize(query, sources)
+            return result
 
     def _fetch_newsroom(self, query: str) -> Optional[str]:
         """
