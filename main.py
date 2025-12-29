@@ -33,6 +33,17 @@ def main():
 
     # Initialize and run REPL
     repl = REPL()
+    
+    # Register ONA platform commands (if configured)
+    try:
+        from zorora.commands.ona_platform import register_ona_commands
+        register_ona_commands(repl)
+    except ImportError:
+        # ONA commands not available (optional feature)
+        pass
+    except Exception as e:
+        logger.warning(f"Failed to register ONA commands: {e}")
+    
     try:
         repl.run()
     finally:

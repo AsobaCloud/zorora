@@ -11,6 +11,16 @@ from config import load_system_prompt
 import config
 from ui import ZororaUI
 
+# Import remote command support (optional - may not exist if ONA commands not installed)
+try:
+    from zorora.remote_command import RemoteCommand, CommandError
+    from zorora.http_client import HTTPError
+except ImportError:
+    # Remote command support not available
+    RemoteCommand = None
+    CommandError = None
+    HTTPError = None
+
 
 class REPL:
     """Read-Eval-Print Loop for Claude Code-like interaction."""
@@ -41,6 +51,9 @@ class REPL:
             ui=self.ui
         )
         self.model_selector = ModelSelector(self.llm_client, self.ui)
+        
+        # Initialize remote command registry
+        self.remote_commands: dict = {}
 
     def _create_orchestrator_client(self):
         """Create LLMClient for orchestrator, using local, HF, OpenAI, or Anthropic endpoint."""
@@ -126,14 +139,76 @@ class REPL:
         import logging
         logging.getLogger(__name__).warning(f"Endpoint '{endpoint_key}' not found for orchestrator, falling back to local")
         return LLMClient()
+    
+    def register_remote_command(self, command):
+        """
+        Register a remote command with the REPL.
+        
+        Args:
+            command: RemoteCommand instance to register
+        """
+        if RemoteCommand is None:
+            self.ui.console.print("[yellow]Warning: Remote command support not available[/yellow]")
+            return
+        
+        if not isinstance(command, RemoteCommand):
+            self.ui.console.print(f"[red]Error: Command must be instance of RemoteCommand[/red]")
+            return
+        
+        self.remote_commands[command.name] = command
+        self.ui.console.print(f"[dim]Registered remote command: {command.name}[/dim]")
+    
+    def get_execution_context(self):
+        """
+        Get execution context for remote commands.
+        
+        Returns:
+            Context dict with actor, environment, etc.
+        """
+        import os
+        return {
+            'actor': os.getenv('ZORORA_ACTOR', os.getenv('USER', 'zorora-user')),
+            'environment': os.getenv('ZORORA_ENV', 'prod'),
+            'request_id': f"zorora-{os.getpid()}-{id(self)}"
+        }
 
     def _handle_workflow_command(self, command: str):
         """
-        Handle workflow-forcing slash commands.
+        Handle workflow-forcing slash commands and remote commands.
 
         Returns tuple of (response, execution_time) if handled, None otherwise.
         """
         cmd_lower = command.lower().strip()
+        
+        # Check for remote commands first (before slash commands)
+        # Remote commands use format: ml-<command> <args>
+        if cmd_lower.startswith('ml-'):
+            if RemoteCommand is None:
+                self.ui.console.print("[red]Error: Remote command support not available[/red]")
+                return None
+            
+            parts = command.split(None, 1)
+            cmd_name = parts[0] if parts else command
+            
+            if cmd_name in self.remote_commands:
+                remote_cmd = self.remote_commands[cmd_name]
+                args = parts[1].split() if len(parts) > 1 else []
+                context = self.get_execution_context()
+                
+                try:
+                    result = remote_cmd.execute(args, context)
+                    self.ui.console.print(result)
+                    return (result, 0)  # No execution time tracking for remote commands
+                except CommandError as e:
+                    self.ui.console.print(f"[red]Error: {e.message}[/red]")
+                    return None
+                except HTTPError as e:
+                    self.ui.console.print(f"[red]API Error: {e.message}[/red]")
+                    return None
+            else:
+                self.ui.console.print(f"[red]Unknown remote command: {cmd_name}[/red]")
+                self.ui.console.print(f"[dim]Available remote commands: {', '.join(self.remote_commands.keys())}[/dim]")
+                return None
 
         # /search <query> - Force research workflow
         if cmd_lower.startswith("/search "):
