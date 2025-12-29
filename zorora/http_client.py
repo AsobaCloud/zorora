@@ -38,7 +38,7 @@ class ZororaHTTPClient:
             timeout: Request timeout in seconds
             max_retries: Maximum number of retry attempts
         """
-        self.base_url = base_url.rstrip('/')
+        self.base_url = base_url.rstrip('/') + '/'
         self.auth_token = auth_token
         self.use_iam = use_iam
         self.timeout = timeout
