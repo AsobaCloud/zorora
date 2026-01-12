@@ -1,7 +1,10 @@
 """Flask web application for Zorora deep research UI."""
 
 import logging
-from flask import Flask, render_template, request, jsonify
+import threading
+import uuid
+import json
+from flask import Flask, render_template, request, jsonify, Response, stream_with_context
 from datetime import datetime
 
 from engine.research_engine import ResearchEngine
@@ -20,6 +23,9 @@ research_engine = ResearchEngine()
 config_manager = ConfigManager()
 model_fetcher = ModelFetcher()
 
+# Progress tracking for research workflows
+research_progress = {}  # {research_id: {"status": str, "message": str, "phase": str}}
+
 
 @app.route('/')
 def index():
@@ -27,10 +33,204 @@ def index():
     return render_template('index.html')
 
 
+def _run_research_with_progress(research_id: str, query: str, depth: int):
+    """Run research workflow in background thread and emit progress updates."""
+    import time
+    import threading
+    
+    try:
+        # Use the existing DeepResearchWorkflow but wrap it with progress updates
+        from workflows.deep_research.workflow import DeepResearchWorkflow
+        from workflows.deep_research.aggregator import aggregate_sources
+        from engine.models import ResearchState, Source, Finding
+        from workflows.deep_research.credibility import score_source_credibility
+        from workflows.deep_research.synthesizer import synthesize
+        
+        # Phase 1: Source Aggregation
+        research_progress[research_id] = {
+            "status": "running",
+            "message": "Searching academic databases, web, and newsroom...",
+            "phase": "aggregation"
+        }
+        time.sleep(0.1)  # Allow progress update to be sent
+        
+        sources = aggregate_sources(query, max_results_per_source=10)
+        
+        # Deduplicate
+        seen_urls = set()
+        unique_sources = []
+        for source in sources:
+            if source.url and source.url not in seen_urls:
+                seen_urls.add(source.url)
+                unique_sources.append(source)
+            elif not source.url and source.title not in seen_urls:
+                seen_urls.add(source.title)
+                unique_sources.append(source)
+        
+        research_progress[research_id] = {
+            "status": "running",
+            "message": f"Found {len(unique_sources)} sources. Scoring credibility...",
+            "phase": "credibility"
+        }
+        time.sleep(0.1)
+        
+        # Phase 2: Credibility Scoring
+        state = ResearchState(
+            original_query=query,
+            max_depth=depth,
+            max_iterations=1
+        )
+        
+        for i, source in enumerate(unique_sources):
+            cross_ref_count = 1
+            for other_source in unique_sources:
+                if other_source.source_id != source.source_id:
+                    if source.title.lower() in other_source.title.lower() or \
+                       other_source.title.lower() in source.title.lower():
+                        cross_ref_count += 1
+            
+            # Ensure source has at least a title
+            if not source.title or source.title.strip() == "":
+                source.title = source.url if source.url else f"Source {i+1}"
+            
+            cred_result = score_source_credibility(
+                url=source.url or source.title,
+                citation_count=source.cited_by_count or 0,
+                cross_reference_count=cross_ref_count,
+                source_title=source.title
+            )
+            
+            source.credibility_score = cred_result["score"]
+            source.credibility_category = cred_result["category"]
+            state.add_source(source)
+            
+            # Update progress every 5 sources
+            if (i + 1) % 5 == 0 or (i + 1) == len(unique_sources):
+                research_progress[research_id] = {
+                    "status": "running",
+                    "message": f"Scored {i + 1}/{len(unique_sources)} sources...",
+                    "phase": "credibility"
+                }
+                time.sleep(0.1)
+        
+        research_progress[research_id] = {
+            "status": "running",
+            "message": "Cross-referencing findings and grouping similar claims...",
+            "phase": "cross_reference"
+        }
+        time.sleep(0.1)
+        
+        # Phase 3: Cross-Referencing
+        for i, source in enumerate(state.sources_checked):
+            claim = source.content_snippet or source.title
+            if claim:
+                finding = Finding(
+                    claim=claim[:500],
+                    sources=[source.source_id],
+                    confidence="medium",
+                    average_credibility=source.credibility_score
+                )
+                state.findings.append(finding)
+            
+            # Update progress every 10 findings
+            if (i + 1) % 10 == 0:
+                research_progress[research_id] = {
+                    "status": "running",
+                    "message": f"Processed {i + 1}/{len(state.sources_checked)} sources for cross-referencing...",
+                    "phase": "cross_reference"
+                }
+                time.sleep(0.1)
+        
+        research_progress[research_id] = {
+            "status": "running",
+            "message": "Generating synthesis from findings... This may take 15-25 seconds.",
+            "phase": "synthesis"
+        }
+        time.sleep(0.1)
+        
+        # Phase 4: Synthesis with heartbeat
+        synthesis_done = threading.Event()
+        synthesis_start_time = time.time()
+        
+        def emit_heartbeat():
+            """Emit periodic heartbeat messages during synthesis."""
+            heartbeat_count = 0
+            messages = [
+                "Analyzing sources and generating synthesis...",
+                "Processing findings and cross-referencing...",
+                "Generating comprehensive answer with citations...",
+                "Finalizing synthesis..."
+            ]
+            while not synthesis_done.wait(5):  # Update every 5 seconds
+                heartbeat_count += 1
+                if heartbeat_count <= len(messages):
+                    research_progress[research_id] = {
+                        "status": "running",
+                        "message": messages[heartbeat_count - 1],
+                        "phase": "synthesis"
+                    }
+                else:
+                    elapsed = int(time.time() - synthesis_start_time)
+                    research_progress[research_id] = {
+                        "status": "running",
+                        "message": f"Still synthesizing... ({elapsed}s elapsed)",
+                        "phase": "synthesis"
+                    }
+        
+        heartbeat_thread = threading.Thread(target=emit_heartbeat, daemon=True)
+        heartbeat_thread.start()
+        
+        try:
+            synthesis_text = synthesize(state)
+            state.synthesis = synthesis_text
+            state.completed_at = datetime.now()
+            state.current_iteration = 1
+        finally:
+            synthesis_done.set()
+            heartbeat_thread.join(timeout=1)
+        
+        # Save research
+        research_id_actual = research_engine.save_research(state)
+        
+        # Store final results
+        research_progress[research_id] = {
+            "status": "completed",
+            "message": f"Research complete! Found {state.total_sources} sources.",
+            "phase": "complete",
+            "results": {
+                "research_id": research_id_actual,
+                "query": query,
+                "synthesis": state.synthesis,
+                "total_sources": state.total_sources,
+                "findings_count": len(state.findings),
+                "sources": [
+                    {
+                        "source_id": s.source_id,
+                        "title": s.title or "Untitled Source",
+                        "url": s.url or "",
+                        "credibility_score": s.credibility_score or 0.0,
+                        "credibility_category": s.credibility_category or "Unknown",
+                        "source_type": s.source_type or "unknown"
+                    }
+                    for s in state.sources_checked[:20]
+                ],
+                "completed_at": state.completed_at.isoformat() if state.completed_at else None
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Research error: {e}", exc_info=True)
+        research_progress[research_id] = {
+            "status": "error",
+            "message": f"Error: {str(e)}",
+            "phase": "error"
+        }
+
+
 @app.route('/api/research', methods=['POST'])
 def start_research():
     """
-    Start deep research workflow.
+    Start deep research workflow (async with progress tracking).
     
     Request body:
     {
@@ -58,36 +258,78 @@ def start_research():
         
         logger.info(f"Starting research: {query} (depth={depth})")
         
-        # Execute research (synchronous for MVP)
-        state = research_engine.deep_research(query, depth=depth)
+        # Generate unique research ID for progress tracking
+        research_id = str(uuid.uuid4())
         
-        # Format response
-        response = {
-            "research_id": state.started_at.strftime("%Y%m%d_%H%M%S"),
-            "status": "completed",
-            "query": query,
-            "synthesis": state.synthesis,
-            "total_sources": state.total_sources,
-            "findings_count": len(state.findings),
-            "sources": [
-                {
-                    "source_id": s.source_id,
-                    "title": s.title,
-                    "url": s.url,
-                    "credibility_score": s.credibility_score,
-                    "credibility_category": s.credibility_category,
-                    "source_type": s.source_type
-                }
-                for s in state.sources_checked[:20]  # Top 20 sources
-            ],
-            "completed_at": state.completed_at.isoformat() if state.completed_at else None
+        # Initialize progress
+        research_progress[research_id] = {
+            "status": "starting",
+            "message": "Initializing research workflow...",
+            "phase": "init"
         }
         
-        return jsonify(response)
+        # Start research in background thread
+        thread = threading.Thread(
+            target=_run_research_with_progress,
+            args=(research_id, query, depth),
+            daemon=True
+        )
+        thread.start()
+        
+        return jsonify({
+            "research_id": research_id,
+            "status": "started",
+            "query": query
+        })
         
     except Exception as e:
         logger.error(f"Research error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/research/<research_id>/progress', methods=['GET'])
+def get_research_progress(research_id):
+    """
+    Get progress updates for research (Server-Sent Events).
+    
+    Returns:
+    SSE stream with progress updates
+    """
+    def generate():
+        """Generate SSE events for progress updates."""
+        import time
+        last_status = None
+        last_message = None
+        
+        while True:
+            if research_id not in research_progress:
+                yield f"data: {json.dumps({'error': 'Research not found'})}\n\n"
+                break
+            
+            progress = research_progress[research_id]
+            status = progress.get("status")
+            message = progress.get("message")
+            
+            # Send update if status or message changed
+            if status != last_status or message != last_message:
+                yield f"data: {json.dumps(progress)}\n\n"
+                last_status = status
+                last_message = message
+                
+                # Close connection if completed or error
+                if status in ["completed", "error"]:
+                    break
+            
+            time.sleep(0.5)  # Poll every 500ms
+    
+    return Response(
+        stream_with_context(generate()),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no'  # Disable nginx buffering
+        }
+    )
 
 
 @app.route('/api/research/<research_id>', methods=['GET'])

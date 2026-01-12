@@ -102,7 +102,8 @@ def score_source_credibility(
     url: str,
     citation_count: int = 0,
     cross_reference_count: int = 1,
-    publication_year: Optional[int] = None
+    publication_year: Optional[int] = None,
+    source_title: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Multi-factor credibility scoring
@@ -125,6 +126,20 @@ def score_source_credibility(
             base_score = info["score"]
             base_reason = info["reason"]
             break
+    
+    # Use source title for display if available and no known domain match
+    if base_reason == "Unknown source" and source_title:
+        # Extract domain from URL for display, or use title
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(url if url.startswith('http') else f'https://{url}')
+            domain = parsed.netloc or parsed.path.split('/')[0] if parsed.path else None
+            if domain:
+                base_reason = domain
+            else:
+                base_reason = source_title[:50]  # Truncate long titles
+        except:
+            base_reason = source_title[:50] if source_title else "Unknown source"
 
     # Step 2: Check predatory publishers (override)
     if is_predatory_publisher(url):

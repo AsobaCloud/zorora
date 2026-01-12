@@ -9,6 +9,8 @@ No complex planning - just a fixed, reliable pipeline:
 import logging
 import re
 import uuid
+import time
+import threading
 from typing import List, Tuple, Optional
 
 from ui.progress_events import ProgressEvent, EventType
@@ -142,12 +144,51 @@ class ResearchWorkflow:
                 step3_id = f"step3_{uuid.uuid4().hex[:8]}"
                 progress.emit(ProgressEvent(
                     event_type=EventType.STEP_START,
-                    message="Step 3/3: Synthesizing findings...",
+                    message="Step 3/3: Synthesizing findings... This may take 15-25 seconds.",
                     parent_id=workflow_id,
                     metadata={"node_id": step3_id, "step": 3}
                 ))
 
-                result = self._synthesize(query, sources)
+                # Emit periodic updates during synthesis
+                synthesis_done = threading.Event()
+                synthesis_start_time = time.time()
+                
+                def emit_heartbeat():
+                    """Emit periodic heartbeat messages during synthesis."""
+                    heartbeat_count = 0
+                    messages = [
+                        "Analyzing sources and generating synthesis...",
+                        "Processing findings and cross-referencing...",
+                        "Generating comprehensive answer with citations...",
+                        "Finalizing synthesis..."
+                    ]
+                    while not synthesis_done.wait(5):  # Update every 5 seconds
+                        heartbeat_count += 1
+                        if heartbeat_count <= len(messages):
+                            progress.emit(ProgressEvent(
+                                event_type=EventType.MESSAGE,
+                                message=messages[heartbeat_count - 1],
+                                parent_id=workflow_id,
+                                metadata={"node_id": step3_id, "heartbeat": heartbeat_count}
+                            ))
+                        else:
+                            # After all messages, just show elapsed time
+                            elapsed = int(time.time() - synthesis_start_time)
+                            progress.emit(ProgressEvent(
+                                event_type=EventType.MESSAGE,
+                                message=f"Still synthesizing... ({elapsed}s elapsed)",
+                                parent_id=workflow_id,
+                                metadata={"node_id": step3_id, "heartbeat": heartbeat_count}
+                            ))
+                
+                heartbeat_thread = threading.Thread(target=emit_heartbeat, daemon=True)
+                heartbeat_thread.start()
+                
+                try:
+                    result = self._synthesize(query, sources)
+                finally:
+                    synthesis_done.set()
+                    heartbeat_thread.join(timeout=1)
 
                 progress.emit(ProgressEvent(
                     event_type=EventType.STEP_COMPLETE,

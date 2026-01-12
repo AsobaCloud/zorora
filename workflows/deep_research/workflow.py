@@ -86,7 +86,8 @@ class DeepResearchWorkflow:
             cred_result = score_source_credibility(
                 url=source.url or source.title,
                 citation_count=source.cited_by_count,
-                cross_reference_count=cross_ref_count
+                cross_reference_count=cross_ref_count,
+                source_title=source.title
             )
             
             source.credibility_score = cred_result["score"]

@@ -3,6 +3,7 @@
 import sqlite3
 import json
 import logging
+import threading
 from pathlib import Path
 from typing import List, Dict, Optional, Any
 from datetime import datetime
@@ -21,14 +22,33 @@ class LocalStorage:
 
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-
-        self.conn = sqlite3.connect(str(self.db_path))
-        self.conn.row_factory = sqlite3.Row
+        
+        # Thread-local storage for SQLite connections
+        # Each thread gets its own connection to avoid threading issues
+        self._local = threading.local()
+        
+        # Initialize schema on first connection
         self._init_schema()
+
+    def _get_connection(self):
+        """Get thread-local SQLite connection"""
+        if not hasattr(self._local, 'conn'):
+            self._local.conn = sqlite3.connect(
+                str(self.db_path),
+                check_same_thread=False  # Allow cross-thread usage
+            )
+            self._local.conn.row_factory = sqlite3.Row
+        return self._local.conn
+
+    @property
+    def conn(self):
+        """Thread-safe connection property"""
+        return self._get_connection()
 
     def _init_schema(self):
         """Initialize database schema"""
-        cursor = self.conn.cursor()
+        conn = self._get_connection()
+        cursor = conn.cursor()
 
         # Research findings index
         cursor.execute("""
@@ -75,7 +95,7 @@ class LocalStorage:
 
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_cited_by ON citations(cites_source_id)")
 
-        self.conn.commit()
+        conn.commit()
 
     def save_research(self, state: ResearchState) -> str:
         """Save research to SQLite + JSON file"""

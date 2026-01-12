@@ -259,36 +259,6 @@
             transform: none;
         }
 
-        .example-prompts {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 16px;
-            margin-bottom: 40px;
-            animation: fadeIn 1s ease-out;
-        }
-
-        .prompt-card {
-            background: var(--white);
-            border: 1px solid var(--border-grey);
-            border-radius: 12px;
-            padding: 20px;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            text-align: left;
-        }
-
-        .prompt-card:hover {
-            background: var(--card-hover);
-            border-color: var(--primary-purple);
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.15);
-        }
-
-        .prompt-card-text {
-            color: var(--text-dark);
-            font-size: 0.95rem;
-            line-height: 1.5;
-        }
 
         /* Animations */
         @keyframes fadeIn {
@@ -316,9 +286,6 @@
                 font-size: 1rem;
             }
 
-            .example-prompts {
-                grid-template-columns: 1fr;
-            }
 
             .depth-options {
                 flex-direction: column;
@@ -684,20 +651,6 @@
             </form>
         </div>
 
-        <div class="example-prompts">
-            <div class="prompt-card" onclick="usePrompt(this)">
-                <div class="prompt-card-text">What are the latest developments in large language model architectures?</div>
-            </div>
-            <div class="prompt-card" onclick="usePrompt(this)">
-                <div class="prompt-card-text">How do transformer models compare to other neural network architectures?</div>
-            </div>
-            <div class="prompt-card" onclick="usePrompt(this)">
-                <div class="prompt-card-text">What are the current trends in AI safety and alignment research?</div>
-            </div>
-            <div class="prompt-card" onclick="usePrompt(this)">
-                <div class="prompt-card-text">What is the state of quantum computing breakthroughs in 2024?</div>
-            </div>
-        </div>
     </div>
 
     <script>
@@ -709,10 +662,6 @@
             // Will be implemented below
         }
 
-        function usePrompt(element) {
-            const promptText = element.querySelector('.prompt-card-text').textContent;
-            document.getElementById('searchInput').value = promptText;
-        }
 
         // Depth selector functionality
         document.querySelectorAll('.depth-option').forEach(option => {
@@ -738,6 +687,9 @@
             searchButton.disabled = true;
             searchButton.textContent = 'Researching...';
             
+            // Show progress area
+            showProgressArea();
+            
             try {
                 const response = await fetch('/api/research', {
                     method: 'POST',
@@ -753,31 +705,229 @@
                 }
                 
                 const data = await response.json();
+                const researchId = data.research_id;
                 
-                // Display results
-                displayResults(data);
+                // Connect to SSE for progress updates
+                connectToProgressStream(researchId, query);
                 
             } catch (error) {
+                hideProgressArea();
                 alert('Error: ' + error.message);
                 console.error('Research error:', error);
-            } finally {
                 searchButton.disabled = false;
                 searchButton.textContent = 'Start Research';
             }
         });
         
+        function showProgressArea() {
+            // Remove existing results container
+            const existingResults = document.getElementById('resultsContainer');
+            if (existingResults) {
+                existingResults.remove();
+            }
+            
+            // Remove existing progress area
+            const existingProgress = document.getElementById('progressContainer');
+            if (existingProgress) {
+                existingProgress.remove();
+            }
+            
+            // Create progress container
+            const progressContainer = document.createElement('div');
+            progressContainer.id = 'progressContainer';
+            progressContainer.style.cssText = 'max-width: 900px; margin: 40px auto; padding: 0 24px;';
+            
+            progressContainer.innerHTML = `
+                <div style="background: white; border-radius: 12px; padding: 32px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                    <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 24px;">
+                        <div class="spinner" style="width: 32px; height: 32px; border-width: 2px;"></div>
+                        <h2 style="color: #1A1A1A; margin: 0; font-size: 1.5rem;">Research in Progress</h2>
+                    </div>
+                    <div id="progressMessage" style="color: #6B7280; font-size: 1rem; line-height: 1.6;">
+                        Initializing research workflow...
+                    </div>
+                    <div id="progressPhase" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #E5E7EB; color: #9CA3AF; font-size: 0.9rem;">
+                        Phase: Initialization
+                    </div>
+                </div>
+            `;
+            
+            document.querySelector('.main-container').appendChild(progressContainer);
+            progressContainer.scrollIntoView({ behavior: 'smooth' });
+        }
+        
+        function hideProgressArea() {
+            const progressContainer = document.getElementById('progressContainer');
+            if (progressContainer) {
+                progressContainer.remove();
+            }
+        }
+        
+        function connectToProgressStream(researchId, query) {
+            const eventSource = new EventSource(`/api/research/${researchId}/progress`);
+            const progressMessage = document.getElementById('progressMessage');
+            const progressPhase = document.getElementById('progressPhase');
+            const searchButton = document.getElementById('searchButton');
+            
+            eventSource.onmessage = function(event) {
+                try {
+                    const progress = JSON.parse(event.data);
+                    
+                    if (progress.error) {
+                        eventSource.close();
+                        hideProgressArea();
+                        alert('Error: ' + progress.error);
+                        searchButton.disabled = false;
+                        searchButton.textContent = 'Start Research';
+                        return;
+                    }
+                    
+                    // Update progress message
+                    if (progressMessage && progress.message) {
+                        progressMessage.textContent = progress.message;
+                    }
+                    
+                    // Update phase
+                    if (progressPhase && progress.phase) {
+                        const phaseNames = {
+                            'init': 'Initialization',
+                            'aggregation': 'Source Aggregation',
+                            'credibility': 'Credibility Scoring',
+                            'cross_reference': 'Cross-Referencing',
+                            'synthesis': 'Synthesis Generation',
+                            'complete': 'Complete',
+                            'error': 'Error'
+                        };
+                        progressPhase.textContent = `Phase: ${phaseNames[progress.phase] || progress.phase}`;
+                    }
+                    
+                    // If completed, show results
+                    if (progress.status === 'completed' && progress.results) {
+                        eventSource.close();
+                        hideProgressArea();
+                        displayResults(progress.results);
+                        searchButton.disabled = false;
+                        searchButton.textContent = 'Start Research';
+                    }
+                    
+                    // If error, show error message
+                    if (progress.status === 'error') {
+                        eventSource.close();
+                        hideProgressArea();
+                        alert('Research error: ' + progress.message);
+                        searchButton.disabled = false;
+                        searchButton.textContent = 'Start Research';
+                    }
+                    
+                } catch (error) {
+                    console.error('Error parsing progress event:', error);
+                }
+            };
+            
+            eventSource.onerror = function(error) {
+                console.error('SSE connection error:', error);
+                eventSource.close();
+                // Don't hide progress immediately - might be temporary connection issue
+                // Wait a bit and check if research completed
+                setTimeout(() => {
+                    if (progressMessage && progressMessage.textContent.includes('complete')) {
+                        // Research likely completed, try to fetch results
+                        fetch(`/api/research/${researchId}`)
+                            .then(res => res.json())
+                            .then(data => {
+                                hideProgressArea();
+                                displayResults(data);
+                                searchButton.disabled = false;
+                                searchButton.textContent = 'Start Research';
+                            })
+                            .catch(err => {
+                                console.error('Error fetching results:', err);
+                            });
+                    }
+                }, 2000);
+            };
+        }
+        
+        function stripThinkTags(text) {
+            // Remove <think>...</think> tags and their content
+            if (!text) return text;
+            return text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+        }
+        
+        function makeCitationsClickable(text, sources) {
+            // Create a map of source titles/names to URLs for quick lookup
+            const sourceMap = new Map();
+            sources.forEach(source => {
+                if (source.title && source.url) {
+                    // Normalize title for matching (lowercase, remove extra spaces)
+                    const normalizedTitle = source.title.toLowerCase().trim().replace(/\s+/g, ' ');
+                    sourceMap.set(normalizedTitle, {
+                        url: source.url,
+                        title: source.title
+                    });
+                }
+            });
+            
+            // Match citations like [Source Name] or [Source Name] and make them clickable
+            // Pattern: [text inside brackets]
+            return text.replace(/\[([^\]]+)\]/g, (match, citationText) => {
+                const normalizedCitation = citationText.toLowerCase().trim().replace(/\s+/g, ' ');
+                
+                // Try exact match first
+                let source = sourceMap.get(normalizedCitation);
+                
+                // If no exact match, try partial match (citation contains source title or vice versa)
+                if (!source) {
+                    for (const [normalizedTitle, sourceData] of sourceMap.entries()) {
+                        if (normalizedCitation.includes(normalizedTitle) || normalizedTitle.includes(normalizedCitation)) {
+                            source = sourceData;
+                            break;
+                        }
+                    }
+                }
+                
+                // If still no match, try matching by first few words
+                if (!source && normalizedCitation.split(' ').length >= 2) {
+                    const citationWords = normalizedCitation.split(' ').slice(0, 3).join(' ');
+                    for (const [normalizedTitle, sourceData] of sourceMap.entries()) {
+                        if (normalizedTitle.startsWith(citationWords) || citationWords.startsWith(normalizedTitle.split(' ').slice(0, 3).join(' '))) {
+                            source = sourceData;
+                            break;
+                        }
+                    }
+                }
+                
+                if (source && source.url) {
+                    return `<a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer" style="color: #6366f1; text-decoration: underline; font-weight: 500;" title="${escapeHtml(source.title)}">[${escapeHtml(citationText)}]</a>`;
+                } else {
+                    // No match found, return as plain text
+                    return `[${escapeHtml(citationText)}]`;
+                }
+            });
+        }
+        
         function displayResults(data) {
+            // Remove progress container if it exists
+            hideProgressArea();
+            
             // Create results container if it doesn't exist
             let resultsContainer = document.getElementById('resultsContainer');
             if (!resultsContainer) {
                 resultsContainer = document.createElement('div');
                 resultsContainer.id = 'resultsContainer';
                 resultsContainer.style.cssText = 'max-width: 900px; margin: 40px auto; padding: 0 24px;';
-                document.querySelector('.container').appendChild(resultsContainer);
+                document.querySelector('.main-container').appendChild(resultsContainer);
             }
             
             // Scroll to results
             resultsContainer.scrollIntoView({ behavior: 'smooth' });
+            
+            // Strip <think> tags from synthesis
+            let cleanSynthesis = stripThinkTags(data.synthesis || 'No synthesis available');
+            
+            // Make citations clickable
+            const sources = data.sources || [];
+            let synthesisWithLinks = makeCitationsClickable(cleanSynthesis, sources);
             
             // Build HTML
             let html = `
@@ -790,21 +940,31 @@
                     </div>
                     <div style="border-top: 1px solid #E5E7EB; padding-top: 24px; margin-top: 24px;">
                         <h3 style="color: #1A1A1A; margin-bottom: 16px; font-size: 1.2rem;">Synthesis</h3>
-                        <div style="color: #2D2D2D; line-height: 1.6; white-space: pre-wrap;">${escapeHtml(data.synthesis || 'No synthesis available')}</div>
+                        <div style="color: #2D2D2D; line-height: 1.6; white-space: pre-wrap;">${synthesisWithLinks}</div>
                     </div>
-                    ${data.sources && data.sources.length > 0 ? `
+                    ${sources.length > 0 ? `
                     <div style="border-top: 1px solid #E5E7EB; padding-top: 24px; margin-top: 24px;">
                         <h3 style="color: #1A1A1A; margin-bottom: 16px; font-size: 1.2rem;">Top Sources</h3>
                         <div style="display: flex; flex-direction: column; gap: 12px;">
-                            ${data.sources.slice(0, 10).map(source => `
-                                <div style="border: 1px solid #E5E7EB; border-radius: 8px; padding: 16px;">
-                                    <div style="font-weight: 600; color: #1A1A1A; margin-bottom: 8px;">${escapeHtml(source.title)}</div>
-                                    ${source.url ? `<div style="margin-bottom: 8px;"><a href="${escapeHtml(source.url)}" target="_blank" style="color: #6366f1; text-decoration: none;">${escapeHtml(source.url)}</a></div>` : ''}
+                            ${sources.slice(0, 20).map(source => {
+                                const title = source.title || 'Untitled Source';
+                                const url = source.url || '';
+                                const credibility = (source.credibility_score || 0) * 100;
+                                const category = source.credibility_category || 'Unknown';
+                                const sourceType = source.source_type || 'unknown';
+                                
+                                return `
+                                <div style="border: 1px solid #E5E7EB; border-radius: 8px; padding: 16px; transition: all 0.2s;">
+                                    <div style="font-weight: 600; color: #1A1A1A; margin-bottom: 8px;">
+                                        ${url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" style="color: #6366f1; text-decoration: none; hover: underline;">${escapeHtml(title)}</a>` : escapeHtml(title)}
+                                    </div>
+                                    ${url ? `<div style="margin-bottom: 8px;"><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" style="color: #6B7280; text-decoration: none; font-size: 0.9rem; word-break: break-all;">${escapeHtml(url)}</a></div>` : ''}
                                     <div style="color: #6B7280; font-size: 0.9rem;">
-                                        Credibility: ${(source.credibility_score * 100).toFixed(0)}% (${escapeHtml(source.credibility_category)}) | Type: ${escapeHtml(source.source_type)}
+                                        Credibility: ${credibility.toFixed(0)}%${category && category !== 'Unknown source' ? ` (${escapeHtml(category)})` : ''} | Type: ${escapeHtml(sourceType)}
                                     </div>
                                 </div>
-                            `).join('')}
+                            `;
+                            }).join('')}
                         </div>
                     </div>
                     ` : ''}
