@@ -28,8 +28,9 @@ Deterministic Decision Tree (pattern matching)
     │   ├─→ Phase 3: Execute with Codestral
     │   └─→ Phase 4: Lint & validate
     │
-    ├─→ CODE WORKFLOW (code generation)
-    │   └─→ Codestral specialist model
+    ├─→ CODE WORKFLOW (/code - generation or editing)
+    │   ├─→ File detected? → Edit workflow (read → OLD/NEW → edit_file)
+    │   └─→ No file? → Generation workflow (plan → generate)
     │
     ├─→ FILE OPERATIONS (save/load/list)
     │   └─→ Research or filesystem operations
@@ -173,11 +174,29 @@ Query
 Result (with [Newsroom] and [Web] tags)
 ```
 
-### Code Workflow
+### Code Workflow (`/code`)
 
 ```
-Query → Codestral specialist model → Formatted code output
+/code <prompt>
+  ↓
+Detect file in input (pattern matching)
+  ↓
+  ├─→ [File detected] → Edit Workflow
+  │   ├─→ Read file with line numbers
+  │   ├─→ Build edit prompt (OLD_CODE/NEW_CODE format)
+  │   ├─→ Call coding model directly (no planning phase)
+  │   ├─→ Parse OLD_CODE/NEW_CODE from response
+  │   └─→ Apply edit_file (with retry loop, up to 3 attempts)
+  │
+  └─→ [No file] → Generation Workflow
+      ├─→ Planning phase (with approval)
+      └─→ Generate code with Codestral
 ```
+
+**File Detection Patterns:**
+- `"update script.py from X to Y"` → detects `script.py`
+- `"edit config.json"` → detects `config.json`
+- `"change in utils.py"` → detects `utils.py`
 
 ### Development Workflow
 

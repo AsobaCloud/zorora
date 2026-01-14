@@ -103,36 +103,55 @@ Commands that force specific workflows, bypassing automatic routing.
 
 ### /code
 
-**Force code generation with Codestral**
+**Code generation or file editing**
 
 ```bash
 /code <prompt>
 ```
 
 **What it does:**
-- Routes directly to Codestral specialist model
+- **File editing:** If an existing file is mentioned, reads it and applies targeted edits
+- **Code generation:** If no file is detected, generates new code with planning phase
+
+**File Editing Mode (auto-detected):**
+- Detects file paths in your prompt (e.g., "script.py", "config.json")
+- Reads file with line numbers
+- Uses OLD_CODE/NEW_CODE format for precise edits
+- Applies `edit_file` with retry loop (up to 3 attempts)
+- No planning phase (fast, direct edit)
+
+**Code Generation Mode:**
+- Planning phase with user approval
 - Generates code with explanations
 - Returns formatted code blocks
-- No research or web search
 
 **When to use:**
+- Quick single-file edits
 - Writing functions, classes, or scripts
 - Code refactoring
 - Algorithm implementation
-- Quick code snippets
 
 **Examples:**
 ```bash
+# File editing (file detected)
+/code update script.py from "goodbye world" to "hello world"
+/code fix the typo in utils.py line 15
+/code change config.json to use port 8080
+
+# Code generation (no file detected)
 /code write a function to parse JSON files with error handling
 /code create a REST API endpoint for user authentication
-/code refactor this function to use async/await
 ```
+
+**vs /develop:**
+- Use `/code` for quick single-file edits or snippets
+- Use `/develop` for multi-file features needing codebase exploration
 
 **Model used:** Codestral (local or HuggingFace endpoint)
 - Local: qwen/qwen3-vl-4b (fast, basic)
 - HF: Qwen2.5-Coder-32B-Instruct (high quality, slower)
 
-**Saving output:**
+**Saving generated output:**
 ```bash
 > /code write a CSV parser
 [Code generated...]

@@ -40,23 +40,40 @@ Result (with [Newsroom] and [Web] tags)
 
 ### 2. Code Workflow
 
-**When triggered:** Requests to write, generate, or create code
+**When triggered:** Requests to write, generate, create, or edit code
 
 **What happens:**
-1. Route to Codestral specialist model
-2. Generate code with explanation
-3. Return formatted code
+
+For **new code generation**:
+1. Planning phase (with user approval)
+2. Route to Codestral specialist model
+3. Generate code with explanation
+4. Return formatted code
+
+For **file editing** (auto-detected when file exists):
+1. Detect file path in user input
+2. Read file with line numbers
+3. Build edit prompt (OLD_CODE/NEW_CODE format)
+4. Call coding model directly (no planning phase)
+5. Parse and apply edit with retry loop (up to 3 attempts)
 
 **Examples:**
 ```
+# Code generation (no file detected)
 > Write a Python function to validate email addresses
 > Create a script that generates interactive charts
-> Generate a class for parsing CSV files
+
+# File editing (file detected)
+> /code update script.py from "goodbye" to "hello"
+> /code fix the bug in utils.py line 42
+> /code change config.json to use port 8080
 ```
 
 **Model:** Local or remote Codestral (configurable via `/models`)
 
 **Force with:** `/code <prompt>`
+
+**vs /develop:** Use `/code` for quick single-file edits. Use `/develop` for multi-file features that need codebase exploration and planning.
 
 ### 3. File Operations Workflow
 

@@ -194,8 +194,8 @@ curl http://localhost:5000/api/research/<research_id>
 
 - **`/search <query>`** - Force deep research workflow (academic + web + newsroom + synthesis)
 - **`/ask <query>`** - Force conversational mode (no web search)
-- **`/code <prompt>`** - Force code generation with Codestral
-- **`/develop <request>`** - Multi-step code development workflow
+- **`/code <prompt>`** - Code generation or file editing (auto-detects existing files)
+- **`/develop <request>`** - Multi-step code development workflow (explore → plan → execute → lint)
 - **`/image <prompt>`** - Generate image with FLUX
 - **`/vision <path> [task]`** - Analyze image with vision model
 
@@ -442,13 +442,10 @@ zorora/
 
 - **[COMMANDS.md](COMMANDS.md)** - Complete command reference
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** - Detailed architecture explanation
-- **[docs/DEEP_RESEARCH_IMPLEMENTATION.md](docs/DEEP_RESEARCH_IMPLEMENTATION.md)** - Deep research feature roadmap
-- **[docs/SETTINGS_MODAL_IMPLEMENTATION.md](docs/SETTINGS_MODAL_IMPLEMENTATION.md)** - Settings modal implementation guide
-- **[docs/MULTI_PROVIDER_API_IMPLEMENTATION.md](docs/MULTI_PROVIDER_API_IMPLEMENTATION.md)** - Multi-provider API support details
 - **[docs/WORKFLOWS.md](docs/WORKFLOWS.md)** - Workflow documentation
+- **[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)** - Development guide
 - **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** - Troubleshooting guide
 - **[docs/BEST_PRACTICES.md](docs/BEST_PRACTICES.md)** - Best practices
-- **[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)** - Development workflow details
 
 ## Performance
 
@@ -519,11 +516,33 @@ See LICENSE file.
 
 **Repository:** https://github.com/AsobaCloud/zorora
 **EnergyAnalyst:** https://huggingface.co/asoba/EnergyAnalyst-v0.1
-**Version:** 2.2.0 (Modular Tool Registry & Offline Coding Improvements)
+**Version:** 2.3.0 (Enhanced /code File Editing)
 
 ---
 
 ## Changelog
+
+### Version 2.3.0 - Enhanced /code File Editing
+
+**Major Features:**
+- `/code` now auto-detects existing files and uses `edit_file` workflow
+- File detection via pattern matching (e.g., "update script.py from X to Y")
+- Direct model call for edits (bypasses planning phase for simple edits)
+- OLD_CODE/NEW_CODE parsing with retry loop (up to 3 attempts)
+
+**Workflow Comparison:**
+| Command | Scope | Phases | Best For |
+|---------|-------|--------|----------|
+| `/code` | Single file/snippet | 1-2 (plan + generate/edit) | Quick edits, snippets |
+| `/develop` | Entire codebase | 5 (preflight → explore → plan → execute → lint) | Features, refactoring |
+
+**ONA Platform Commands:**
+- Fixed routing for `ml-` commands (works with or without leading `/`)
+- Added internal docs pattern to `.gitignore`
+
+**Documentation Cleanup:**
+- Moved implementation plans to `docs/deprecated/`
+- Streamlined public documentation
 
 ### Version 2.2.0 - Modular Tool Registry & Offline Coding Improvements
 
