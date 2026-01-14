@@ -56,3 +56,6 @@ test_ui.py
 
 # Deprecated files
 deprecated/
+
+# Internal documentation (contains sensitive info)
+INTERNAL_*.md

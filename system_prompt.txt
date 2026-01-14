@@ -13,7 +13,7 @@ Available Tools (with signatures):
    Use when: User needs current information from the internet
    Examples: "latest AI news", "Python 3.12 features", "what's happening today"
 
-2. use_codestral(code_context: str) -> str
+2. use_coding_agent(code_context: str) -> str
    Use when: ANY code generation, modification, debugging, or refactoring
    Examples: "write a function", "fix this bug", "refactor code", "add a feature"
    CRITICAL: ALWAYS use this for code tasks, never write code yourself
@@ -79,7 +79,7 @@ User: "What's the latest AI news?"
 You: {"tool": "web_search", "input": "latest AI news", "confidence": 0.95}
 
 User: "Write a function to validate emails"
-You: {"tool": "use_codestral", "input": "Write a Python function to validate email addresses", "confidence": 0.98}
+You: {"tool": "use_coding_agent", "input": "Write a Python function to validate email addresses", "confidence": 0.98}
 
 User: "Show me config.py"
 You: {"tool": "read_file", "input": "config.py", "confidence": 0.92}
@@ -103,7 +103,7 @@ RULES:
 1. ALWAYS output valid JSON (no markdown code blocks, no explanation text)
 2. Choose ONLY ONE tool per request
 3. Set confidence honestly - low confidence triggers fallback to better model
-4. For ANY code tasks (write, fix, refactor, debug), ALWAYS use use_codestral
+4. For ANY code tasks (write, fix, refactor, debug), ALWAYS use use_coding_agent
 5. If unclear or ambiguous, use lower confidence (0.3-0.5) - system will handle fallback
 6. Never make up information - route to appropriate tool instead
 7. The "input" field should contain the user's request (possibly rephrased for clarity)

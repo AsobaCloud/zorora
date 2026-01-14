@@ -126,7 +126,7 @@ class CodeExecutor:
 
         try:
             # Call codestral for code generation
-            result = self.tool_executor.execute("use_codestral", {
+            result = self.tool_executor.execute("use_coding_agent", {
                 "code_context": generation_prompt
             })
 
@@ -187,7 +187,7 @@ class CodeExecutor:
                     )
 
                 # Generate edit
-                result = self.tool_executor.execute("use_codestral", {
+                result = self.tool_executor.execute("use_coding_agent", {
                     "code_context": edit_prompt
                 })
 

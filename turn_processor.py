@@ -5,11 +5,13 @@ import re
 import logging
 import time
 import json
+from pathlib import Path
 
 from conversation import ConversationManager
 from llm_client import LLMClient
 from tool_executor import ToolExecutor
-from tools.registry import ToolRegistry, SPECIALIST_TOOLS
+from tools.registry import ToolRegistry, SPECIALIST_TOOLS, edit_file, read_file
+from tools.specialist.client import create_specialist_client
 from simplified_router import SimplifiedRouter
 from research_workflow import ResearchWorkflow
 from research_persistence import ResearchPersistence
@@ -147,7 +149,7 @@ class TurnProcessor:
         param_name = None
         if tool_name == "write_file":
             param_name = "content"
-        elif tool_name == "use_codestral":
+        elif tool_name == "use_coding_agent":
             param_name = "code_context"
         elif tool_name == "use_reasoning_model":
             param_name = "task"
@@ -430,7 +432,7 @@ class TurnProcessor:
             return result
 
         # Handle specialist tools by passing user input as parameter
-        elif tool_name in ["use_codestral", "use_reasoning_model", "use_search_model", "use_energy_analyst", "web_search"]:
+        elif tool_name in ["use_coding_agent", "use_reasoning_model", "use_search_model", "use_energy_analyst", "web_search"]:
             return self._execute_specialist_tool(tool_name, user_input)
 
         return None
@@ -555,7 +557,7 @@ class TurnProcessor:
 
         # Determine the parameter name for each specialist tool
         param_mapping = {
-            "use_codestral": "code_context",
+            "use_coding_agent": "code_context",
             "use_reasoning_model": "task",
             "use_search_model": "query",
             "use_energy_analyst": "query",
@@ -569,7 +571,7 @@ class TurnProcessor:
             return None
 
         # For codestral, if we have recent context about files, include it
-        if tool_name == "use_codestral":
+        if tool_name == "use_coding_agent":
             context_parts = [user_input]
             if self.last_specialist_output and len(self.last_specialist_output) > 0:
                 # Add reference to last output for context
@@ -595,8 +597,246 @@ class TurnProcessor:
             if len(self.recent_tool_outputs) > self.max_context_tools:
                 self.recent_tool_outputs.pop(0)
             logger.info(f"Added {tool_name} result to recent_tool_outputs for context injection")
-        
+
         return result
+
+    def _detect_file_in_input(self, user_input: str) -> Optional[str]:
+        """
+        Detect if user mentions a file path that exists.
+
+        Returns:
+            Path to existing file, or None if no file detected/exists
+        """
+        # Common file path patterns
+        patterns = [
+            r'(?:update|edit|modify|change|fix)\s+([^\s"\']+\.[a-zA-Z0-9]+)',  # "update file.py"
+            r'([^\s"\']+\.[a-zA-Z0-9]+)\s+(?:from|to)',  # "file.py from X to Y"
+            r'(?:in|on)\s+([^\s"\']+\.[a-zA-Z0-9]+)',  # "in file.py"
+            r'"([^"]+\.[a-zA-Z0-9]+)"',  # "file.py" (quoted)
+            r"'([^']+\.[a-zA-Z0-9]+)'",  # 'file.py' (quoted)
+            r'([a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z0-9]+)',  # Simple filename like script.py
+        ]
+
+        working_dir = self.tool_executor.working_directory
+
+        for pattern in patterns:
+            matches = re.findall(pattern, user_input, re.IGNORECASE)
+            for match in matches:
+                # Try as-is first
+                full_path = Path(working_dir) / match
+                if full_path.exists() and full_path.is_file():
+                    return str(match)
+
+                # Try with common extensions if no extension
+                if '.' not in match:
+                    for ext in ['.py', '.js', '.ts', '.json', '.yaml', '.yml', '.md']:
+                        full_path = Path(working_dir) / (match + ext)
+                        if full_path.exists():
+                            return str(match + ext)
+
+        return None
+
+    def _execute_code_edit(self, user_input: str, file_path: str, max_retries: int = 3) -> str:
+        """
+        Execute a file edit using the coding model and edit_file tool.
+
+        This provides the proper edit workflow:
+        1. Read the file with line numbers
+        2. Build an edit prompt for the coding model
+        3. Parse OLD_CODE/NEW_CODE from response
+        4. Apply edit_file with retry on failure
+
+        Args:
+            user_input: User's edit request
+            file_path: Path to the file to edit
+            max_retries: Maximum retry attempts
+
+        Returns:
+            Result message
+        """
+        working_dir = self.tool_executor.working_directory
+        full_path = Path(working_dir) / file_path
+
+        if not full_path.exists():
+            return f"Error: File {file_path} does not exist"
+
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                # Read file with line numbers
+                current_content = full_path.read_text(encoding='utf-8')
+                numbered_content = self._add_line_numbers(current_content)
+
+                # Truncate if very large
+                if len(numbered_content) > 15000:
+                    lines = numbered_content.split('\n')
+                    numbered_content = '\n'.join(lines[:200]) + '\n... (truncated) ...\n' + '\n'.join(lines[-100:])
+
+                # Build prompt (include error context on retry)
+                if attempt == 0:
+                    prompt = self._build_edit_prompt(user_input, file_path, numbered_content)
+                else:
+                    prompt = self._build_retry_edit_prompt(user_input, file_path, numbered_content, last_error, attempt)
+
+                # Call coding model directly (bypass planning phase for simple edits)
+                model_config = config.SPECIALIZED_MODELS["codestral"]
+                client = create_specialist_client("codestral", model_config)
+
+                messages = [
+                    {
+                        "role": "system",
+                        "content": "You are a code editor. Your ONLY job is to output OLD_CODE and NEW_CODE blocks. Do not explain or discuss - just output the exact format requested."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ]
+
+                response = client.chat_complete(messages, tools=None)
+                result = client.extract_content(response)
+
+                if not result or result.startswith("Error"):
+                    last_error = result or "No response from coding model"
+                    logger.warning(f"Edit attempt {attempt+1}: {last_error}")
+                    continue
+
+                # Parse OLD_CODE/NEW_CODE from response
+                edit_instructions = self._extract_edit_instructions(result, current_content)
+
+                if not edit_instructions:
+                    last_error = "Could not parse OLD_CODE/NEW_CODE from model response"
+                    logger.warning(f"Edit attempt {attempt+1}: {last_error}")
+                    continue
+
+                old_code = edit_instructions["old"]
+                new_code = edit_instructions["new"]
+
+                # Apply edit
+                edit_result = edit_file(file_path, old_code, new_code, working_dir)
+
+                if not edit_result.startswith("Error"):
+                    # Success!
+                    if attempt > 0:
+                        logger.info(f"Edit succeeded on attempt {attempt+1}")
+                    return f"Successfully edited {file_path}:\n{edit_result}"
+
+                # Failed - capture error for next attempt
+                last_error = edit_result
+                logger.warning(f"Edit attempt {attempt+1} failed: {edit_result}")
+
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(f"Edit attempt {attempt+1} exception: {e}")
+
+        return f"Error: Failed to edit {file_path} after {max_retries} attempts. Last error: {last_error}"
+
+    def _add_line_numbers(self, content: str) -> str:
+        """Add line numbers to content for reference."""
+        lines = content.splitlines()
+        numbered = [f"{i:4d} | {line}" for i, line in enumerate(lines, 1)]
+        return "\n".join(numbered)
+
+    def _build_edit_prompt(self, user_input: str, file_path: str, numbered_content: str) -> str:
+        """Build prompt for editing a file."""
+        return f"""You need to edit a file based on the user's request.
+
+FILE: {file_path}
+
+CURRENT CONTENT (with line numbers for reference):
+{numbered_content}
+
+USER REQUEST: {user_input}
+
+IMPORTANT:
+1. The OLD_CODE must match EXACTLY what's in the file (including whitespace/indentation)
+2. Copy the text precisely from the content above (do NOT include line numbers)
+3. If string appears multiple times, include enough context to make it unique
+4. Make minimal changes - only change what's necessary
+
+Output your response in this EXACT format:
+OLD_CODE:
+```
+[exact code to replace - copy from above, without line numbers]
+```
+
+NEW_CODE:
+```
+[replacement code]
+```"""
+
+    def _build_retry_edit_prompt(self, user_input: str, file_path: str, numbered_content: str,
+                                  previous_error: str, attempt: int) -> str:
+        """Build prompt for retry attempt with error context."""
+        return f"""RETRY ATTEMPT {attempt + 1}: Your previous edit failed.
+
+ERROR: {previous_error}
+
+FILE: {file_path}
+
+CURRENT CONTENT (with line numbers - use these for reference):
+{numbered_content}
+
+USER REQUEST: {user_input}
+
+IMPORTANT:
+1. The OLD_CODE must match EXACTLY what's in the file (including whitespace)
+2. Copy the exact text from the file above, preserving indentation
+3. If the string appears multiple times, include more context to make it unique
+4. Do NOT include line numbers in your OLD_CODE - just the actual code
+
+Output in this EXACT format:
+OLD_CODE:
+```
+[exact code to replace - copy from file above, without line numbers]
+```
+
+NEW_CODE:
+```
+[replacement code]
+```"""
+
+    def _extract_edit_instructions(self, response: str, current_content: str) -> Optional[Dict[str, str]]:
+        """Extract OLD_CODE and NEW_CODE from model response."""
+        try:
+            if "OLD_CODE:" not in response or "NEW_CODE:" not in response:
+                return None
+
+            old_start = response.find("OLD_CODE:") + 9
+            old_end = response.find("NEW_CODE:")
+            new_start = response.find("NEW_CODE:") + 9
+
+            old_section = response[old_start:old_end].strip()
+            new_section = response[new_start:].strip()
+
+            # Remove code block markers
+            old_code = self._extract_code_block(old_section)
+            new_code = self._extract_code_block(new_section)
+
+            # Verify old_code exists in current content
+            if old_code and old_code in current_content:
+                return {"old": old_code, "new": new_code}
+            else:
+                logger.warning("OLD_CODE not found in current file content")
+                return None
+
+        except Exception as e:
+            logger.error(f"Error extracting edit instructions: {e}")
+            return None
+
+    def _extract_code_block(self, text: str) -> str:
+        """Extract code from markdown code block."""
+        if "```" in text:
+            start = text.find("```")
+            # Skip language identifier
+            newline = text.find("\n", start)
+            if newline >= 0:
+                start = newline + 1
+                end = text.find("```", start)
+                if end >= 0:
+                    return text[start:end].strip()
+        return text.strip()
 
     def _inject_context(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -623,7 +863,7 @@ class TurnProcessor:
             param_name = "task"
         elif tool_name == "use_search_model":
             param_name = "query"
-        elif tool_name == "use_codestral":
+        elif tool_name == "use_coding_agent":
             param_name = "code_context"
         elif tool_name == "analyze_image":
             param_name = "task"
@@ -733,12 +973,24 @@ class TurnProcessor:
             return result, time.time() - total_start_time
 
         elif workflow == "code":
-            # Code generation with codestral
-            tool = "use_codestral" if forced_workflow else routing.get("tool", "use_codestral")
-            result = self._execute_specialist_tool(tool, user_input)
+            # Code generation or file editing with coding model
+            # First, check if user wants to edit an existing file
+            detected_file = self._detect_file_in_input(user_input)
+
+            if detected_file:
+                # User mentioned an existing file - use edit workflow
+                logger.info(f"Detected file edit request for: {detected_file}")
+                if self.ui:
+                    self.ui.console.print(f"[cyan]Detected file: {detected_file} - using edit workflow...[/cyan]")
+                result = self._execute_code_edit(user_input, detected_file)
+            else:
+                # No file detected - use standard code generation
+                tool = "use_coding_agent" if forced_workflow else routing.get("tool", "use_coding_agent")
+                result = self._execute_specialist_tool(tool, user_input)
+
             if result:
                 self.conversation.add_assistant_message(content=result)
-            return (result or "Error executing code generation"), time.time() - total_start_time
+            return (result or "Error executing code operation"), time.time() - total_start_time
 
         elif workflow == "file_op":
             # File operations (read, write, list)

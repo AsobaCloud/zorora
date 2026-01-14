@@ -1,23 +1,24 @@
 # Zorora Tool Improvement Action Plan
 
 > **Created**: January 2026
-> **Status**: Ready for Implementation
+> **Status**: ✅ **COMPLETED** (All 6 tasks implemented)
+> **Completed**: January 2026
 > **Context**: Derived from MCP migration analysis and offline coding reliability analysis
 
 ---
 
 ## Overview
 
-Six improvements identified that address real pain points:
+Six improvements that address real pain points - **all completed**:
 
-| Priority | Task | Effort | Impact |
-|----------|------|--------|--------|
-| 1 | Add `/deep` command to terminal UI | Small | High - feature parity with Web UI |
-| 2 | Improve file editing reliability | Medium | **Critical** - enables offline coding |
-| 3 | Add retry loop to CodeExecutor | Medium | High - error recovery |
-| 4 | Rename `use_codestral` → `use_coding_agent` | Small | Medium - clarity and accuracy |
-| 5 | Complete tool registry migration | Medium | Medium - code hygiene |
-| 6 | Full file context in edit prompts | Small | Medium - accuracy improvement |
+| Priority | Task | Effort | Impact | Status |
+|----------|------|--------|--------|--------|
+| 1 | Add `/deep` command to terminal UI | Small | High - feature parity with Web UI | ✅ Done |
+| 2 | Improve file editing reliability | Medium | **Critical** - enables offline coding | ✅ Done |
+| 3 | Add retry loop to CodeExecutor | Medium | High - error recovery | ✅ Done |
+| 4 | Rename `use_codestral` → `use_coding_agent` | Small | Medium - clarity and accuracy | ✅ Done |
+| 5 | Complete tool registry migration | Medium | Medium - code hygiene | ✅ Done |
+| 6 | Full file context in edit prompts | Small | Medium - accuracy improvement | ✅ Done |
 
 ---
 
@@ -719,85 +720,85 @@ def _extract_edit_region(self, content: str, task: Dict) -> str:
 
 ---
 
-## Implementation Order
+## Implementation Order (Completed)
 
-Recommended sequence:
+All tasks were implemented in sequence:
 
 ```
-Week 1: Tasks 1-2
-        ├── Task 1: /deep command (small, high impact)
-        └── Task 2: File editing reliability (critical for offline coding)
-            ├── 2.1 Read-before-edit enforcement
-            ├── 2.2 Line numbers in file reads
-            ├── 2.3 replace_all option
-            └── 2.4 Actionable error messages
+✅ Tasks 1-2: Completed
+   ├── Task 1: /deep command added to repl.py
+   └── Task 2: File editing reliability improvements
+       ├── 2.1 Read-before-edit enforcement in tool_executor.py
+       ├── 2.2 Line numbers in read_file by default
+       ├── 2.3 replace_all option in edit_file
+       └── 2.4 Actionable error messages with similar text hints
 
-Week 2: Tasks 3, 6
-        ├── Task 3: Retry loop in CodeExecutor (enables error recovery)
-        └── Task 6: Full file context (improves edit accuracy)
+✅ Tasks 3, 6: Completed
+   ├── Task 3: Retry loop in code_executor.py (up to 3 attempts)
+   └── Task 6: Smart file truncation with keyword-based extraction
 
-Week 3: Task 4
-        └── Task 4: Rename use_codestral → use_coding_agent
-            (Can be done standalone or with Task 5 Phase 4)
+✅ Task 4: Completed
+   └── Renamed use_codestral → use_coding_agent with backward-compat alias
 
-Weeks 4-7: Task 5 (registry migration)
-        ├── Phase 2: File ops
-        ├── Phase 3: Shell ops
-        ├── Phase 4: Specialist (includes rename if not done in Week 3)
-        ├── Phase 5: Image tools
-        └── Phase 6: Cleanup
+✅ Task 5: Completed (19 tools migrated)
+   ├── Phase 2: tools/file_ops/ (6 tools)
+   ├── Phase 3: tools/shell/ (2 tools)
+   ├── Phase 4: tools/specialist/ (5 tools)
+   ├── Phase 5: tools/image/ (3 tools)
+   └── Phase 6: Updated registry, kept legacy for backward compat
 ```
 
 ---
 
 ## Success Criteria
 
-### Task 1: `/deep` Command
-- [ ] Command accessible in terminal REPL
-- [ ] Output includes credibility scores
-- [ ] Research persisted to SQLite
-- [ ] Documentation updated
+### Task 1: `/deep` Command ✅
+- [x] Command accessible in terminal REPL
+- [x] Output includes credibility scores
+- [x] Research persisted to SQLite
+- [x] Documentation updated
 
-### Task 2: File Editing Reliability
-- [ ] Read-before-edit enforcement active
-- [ ] Line numbers shown in file reads
-- [ ] `replace_all` option works
-- [ ] Error messages show similar text / line numbers
-- [ ] Tool definition updated
+### Task 2: File Editing Reliability ✅
+- [x] Read-before-edit enforcement active
+- [x] Line numbers shown in file reads
+- [x] `replace_all` option works
+- [x] Error messages show similar text / line numbers
+- [x] Tool definition updated
 
-### Task 3: Retry Loop
-- [ ] Failed edits trigger retry (up to 3 attempts)
-- [ ] Retry prompt includes error context
-- [ ] Line numbers in retry prompts
-- [ ] Logging shows retry attempts
+### Task 3: Retry Loop ✅
+- [x] Failed edits trigger retry (up to 3 attempts)
+- [x] Retry prompt includes error context
+- [x] Line numbers in retry prompts
+- [x] Logging shows retry attempts
 
-### Task 4: Rename
-- [ ] All files updated to `use_coding_agent`
-- [ ] Backward-compatible alias works
-- [ ] No broken imports
-- [ ] Documentation updated
+### Task 4: Rename ✅
+- [x] All files updated to `use_coding_agent`
+- [x] Backward-compatible alias works
+- [x] No broken imports
+- [x] Documentation updated
 
-### Task 5: Migration
-- [ ] `tool_registry_legacy.py` deleted
-- [ ] All tools in modular `tools/` structure
-- [ ] No functionality regression
-- [ ] Cleaner import structure
+### Task 5: Migration ✅
+- [x] ~~`tool_registry_legacy.py` deleted~~ (kept for backward compat)
+- [x] All tools in modular `tools/` structure (19 tools migrated)
+- [x] No functionality regression
+- [x] Cleaner import structure (`from tools.registry import ...`)
 
-### Task 6: Full File Context
-- [ ] Small files (<8KB) show full content
-- [ ] Medium files show smart truncation
-- [ ] Large files show focused extraction
-- [ ] Line numbers always included
+### Task 6: Full File Context ✅
+- [x] Small files (<8KB) show full content
+- [x] Medium files show smart truncation
+- [x] Large files show focused extraction
+- [x] Line numbers always included
 
 ---
 
 ## Notes
 
-- Tasks 2, 3, 6 are **critical for offline coding reliability**
-- Task 4 can be combined with Task 5 Phase 4 for efficiency
-- Each phase should be a separate commit for easy rollback
-- Web UI and REPL should be tested after each change
+- ✅ All tasks completed as of January 2026
+- Tasks 2, 3, 6 were **critical for offline coding reliability** - now implemented
+- Task 4 was combined with Task 5 Phase 4 for efficiency
+- `tool_registry_legacy.py` kept for backward compatibility (deprecation warning added)
 - For best offline coding results, use 32B+ models (Q4_K_M quantization)
+- Import from `tools.registry` for new code (old imports still work with deprecation warning)
 
 ---
 
@@ -805,3 +806,4 @@ Weeks 4-7: Task 5 (registry migration)
 
 - `docs/OFFLINE_CODING_RELIABILITY_ANALYSIS.md` - Detailed analysis of Claude Code patterns
 - `docs/MCP_MIGRATION_ANALYSIS.md` - Why MCP was not adopted
+- `docs/ARCHITECTURE.md` - Updated module structure

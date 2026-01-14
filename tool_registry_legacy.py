@@ -16,7 +16,7 @@ logging.getLogger("bs4.dammit").setLevel(logging.ERROR)
 # Specialist tools that should return their results directly to the user
 # instead of continuing the orchestrator iteration loop
 SPECIALIST_TOOLS = [
-    "use_codestral",
+    "use_coding_agent",
     "use_reasoning_model",
     "use_search_model",
     "use_intent_detector",  # Internal routing tool (not shown to user)
@@ -706,9 +706,12 @@ def apply_patch(path: str, unified_diff: str) -> str:
         return f"Error applying patch: {e}"
 
 
-def use_codestral(code_context: str, ui=None) -> str:
+def use_coding_agent(code_context: str, ui=None) -> str:
     """
-    Generate or refactor code using Codestral-22B model with planning approval.
+    Generate or refactor code using the configured coding model with planning approval.
+
+    This is a model-agnostic coding agent that uses whatever model is configured
+    for the 'codestral' role (can be local 4B, HuggingFace 32B, etc.).
 
     Args:
         code_context: Description of code to generate, existing code to refactor,
@@ -730,7 +733,7 @@ def use_codestral(code_context: str, ui=None) -> str:
         from rich.prompt import Prompt
         from rich.markdown import Markdown
 
-        logger.info(f"Delegating to Codestral: {code_context[:100]}...")
+        logger.info(f"Delegating to coding_agent: {code_context[:100]}...")
 
         # PHASE 1: Generate implementation plan (if UI is available)
         plan_approved = False
@@ -1053,7 +1056,7 @@ Available tools:
 - list_files: User wants to list directory contents (keywords: "list files", "show files", "ls", "what files", "directory contents")
 - analyze_image: User wants to analyze/OCR/convert an EXISTING image (keywords: "analyze image", "convert image", "OCR", "extract text from image", ".png", ".jpg", "image to markdown", "what's in this image")
 - generate_image: User wants to CREATE/GENERATE a new image from text (keywords: "generate image", "create image", "make an image", "draw", "visualize", "illustration of", "picture of")
-- use_codestral: User wants to generate/modify code (keywords: "write function", "create script", "generate code")
+- use_coding_agent: User wants to generate/modify code (keywords: "write function", "create script", "generate code")
 - use_reasoning_model: User wants analysis/planning/thinking (keywords: "analyze", "deep dive", "implications", "think deeply", "examine", "investigate") - PRIORITIZE this over read_file if analysis keywords present
 - web_search: User wants current web information (keywords: "search", "latest", "current news", "what's happening")
 - get_newsroom_headlines: User wants today's news from Asoba newsroom (keywords: "today's news", "newsroom", "headlines today")
@@ -1097,7 +1100,7 @@ Input: "generate an image of a sunset over mountains"
 Output: {"tool": "generate_image", "confidence": "high", "reasoning": "text-to-image generation request"}
 
 Input: "create a python script for clustering"
-Output: {"tool": "use_codestral", "confidence": "high", "reasoning": "code generation request"}
+Output: {"tool": "use_coding_agent", "confidence": "high", "reasoning": "code generation request"}
 
 Input: "save the plan to plan.md"
 Output: {"tool": "write_file", "confidence": "high", "reasoning": "save/write with filename"}
@@ -2976,7 +2979,8 @@ TOOL_FUNCTIONS: Dict[str, Callable[..., str]] = {
     "generate_image": generate_image,
     "run_shell": run_shell,
     "apply_patch": apply_patch,
-    "use_codestral": use_codestral,
+    "use_coding_agent": use_coding_agent,
+    "use_codestral": use_coding_agent,  # Backward compat alias
     "use_reasoning_model": use_reasoning_model,
     "use_search_model": use_search_model,
     "use_intent_detector": use_intent_detector,
@@ -2986,7 +2990,7 @@ TOOL_FUNCTIONS: Dict[str, Callable[..., str]] = {
     "academic_search": academic_search,
     "get_newsroom_headlines": get_newsroom_headlines,
     "search": use_search_model,  # Simple alias
-    "generate_code": use_codestral,  # Simple alias
+    "generate_code": use_coding_agent,  # Simple alias
     "plan": use_reasoning_model,  # Simple alias
     "pwd": get_working_directory,  # Shell alias
 }
@@ -3000,7 +3004,8 @@ TOOL_ALIASES: Dict[str, str] = {
     "ls": "list_files",
     "cat": "read_file",
     "open": "read_file",
-    "code": "use_codestral",
+    "code": "use_coding_agent",
+    "use_codestral": "use_coding_agent",  # Backward compat
     "plan": "use_reasoning_model",
     "research": "use_search_model",
 }
@@ -3191,8 +3196,8 @@ TOOLS_DEFINITION: List[DictType[str, Any]] = [
     {
         "type": "function",
         "function": {
-            "name": "use_codestral",
-            "description": "Generate or refactor code",
+            "name": "use_coding_agent",
+            "description": "Generate or refactor code using the configured coding model",
             "parameters": {
                 "type": "object",
                 "properties": {

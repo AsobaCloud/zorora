@@ -80,8 +80,8 @@ class ToolExecutor:
             ))
 
         try:
-            # Special handling for use_codestral - pass UI for interactive planning
-            if tool_name == "use_codestral" and self.ui is not None:
+            # Special handling for use_coding_agent - pass UI for interactive planning
+            if tool_name == "use_coding_agent" and self.ui is not None:
                 arguments['ui'] = self.ui
 
             # Pass working directory to file operations and navigation tools
@@ -221,7 +221,7 @@ class ToolExecutor:
             "read_file": {"task": "path", "file": "path", "filename": "path"},
             "write_file": {"task": "path", "file": "path", "filename": "path"},
             "list_files": {"task": "path", "dir": "path", "directory": "path"},
-            "use_codestral": {"task": "code_context", "prompt": "code_context"},
+            "use_coding_agent": {"task": "code_context", "prompt": "code_context"},
             "use_reasoning_model": {"prompt": "task", "question": "task"},
             "use_search_model": {"task": "query", "question": "query", "search": "query"},
         }
@@ -327,7 +327,7 @@ class ToolExecutor:
             # Map input to correct parameter name for each tool
             param_mapping = {
                 "web_search": "query",
-                "use_codestral": "code_context",
+                "use_coding_agent": "code_context",
                 "use_reasoning_model": "task",
                 "use_search_model": "query",
                 "use_energy_analyst": "query",

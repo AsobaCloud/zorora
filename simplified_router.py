@@ -47,11 +47,11 @@ class SimplifiedRouter:
 
         # 2. Code generation (explicit keywords)
         if self._is_code_request(user_lower):
-            logger.info("Routing to code generation (codestral)")
+            logger.info("Routing to code generation (coding_agent)")
             return {
                 "workflow": "code",
                 "action": "generate_code",
-                "tool": "use_codestral",
+                "tool": "use_coding_agent",
                 "confidence": 1.0
             }
 

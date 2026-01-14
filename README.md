@@ -371,11 +371,11 @@ zorora/
 ├── repl.py                      # REPL loop and slash commands
 ├── web_main.py                  # Web UI entry point
 ├── config.py                    # Configuration
-├── simplified_router.py          # Deterministic routing
+├── simplified_router.py         # Deterministic routing
 ├── research_workflow.py         # Legacy research pipeline
 ├── turn_processor.py            # Workflow orchestration
 ├── tool_executor.py             # Tool execution
-├── tool_registry.py             # Tool registry (shim for backward compat)
+├── tool_registry.py             # Backward-compat shim (deprecated)
 ├── tool_registry_legacy.py      # Original tool registry (backup)
 │
 ├── engine/                      # Deep research engine
@@ -383,20 +383,44 @@ zorora/
 │   ├── storage.py               # SQLite storage layer
 │   └── research_engine.py       # High-level research API
 │
-├── tools/                       # Modular tool registry
-│   ├── registry.py              # Central tool registry
+├── tools/                       # Modular tool registry (v2.2.0+)
+│   ├── registry.py              # Central registry - import from here
+│   │
 │   ├── research/                # Research tools
 │   │   ├── academic_search.py   # Academic search (7 sources)
 │   │   ├── web_search.py        # Web search (Brave + DDG)
 │   │   └── newsroom.py          # Newsroom API integration
-│   ├── code/                    # Code tools (future)
-│   └── specialist/              # Specialist tools (future)
+│   │
+│   ├── file_ops/                # File operations
+│   │   ├── utils.py             # Path resolution & validation
+│   │   ├── read.py              # read_file (with line numbers)
+│   │   ├── write.py             # write_file
+│   │   ├── edit.py              # edit_file (with replace_all)
+│   │   └── directory.py         # make_directory, list_files, get_working_directory
+│   │
+│   ├── shell/                   # Shell operations
+│   │   ├── run.py               # run_shell (whitelist-secured)
+│   │   └── patch.py             # apply_patch (unified diff)
+│   │
+│   ├── specialist/              # Specialist LLM tools
+│   │   ├── client.py            # Specialist client factory
+│   │   ├── coding.py            # use_coding_agent (model-agnostic)
+│   │   ├── reasoning.py         # use_reasoning_model
+│   │   ├── search.py            # use_search_model
+│   │   ├── intent.py            # use_intent_detector
+│   │   └── energy.py            # use_energy_analyst (RAG)
+│   │
+│   └── image/                   # Image tools
+│       ├── analyze.py           # analyze_image (vision model)
+│       ├── generate.py          # generate_image (Flux Schnell)
+│       └── search.py            # web_image_search (Brave)
 │
 ├── workflows/                   # Multi-step workflows
 │   ├── develop_workflow.py      # Development workflow
 │   ├── codebase_explorer.py     # Codebase exploration
 │   ├── code_planner.py          # Code planning
-│   ├── code_executor.py         # Code execution
+│   ├── code_executor.py         # Code execution (with retry loop)
+│   ├── code_tools.py            # File operations & linting
 │   └── deep_research/           # Deep research workflow
 │       ├── aggregator.py        # Source aggregation
 │       ├── credibility.py       # Credibility scoring
@@ -493,13 +517,45 @@ See LICENSE file.
 
 ---
 
-**Repository:** https://github.com/AsobaCloud/zorora  
-**EnergyAnalyst:** https://huggingface.co/asoba/EnergyAnalyst-v0.1  
-**Version:** 2.1.0 (Settings Modal & Multi-Provider Support)
+**Repository:** https://github.com/AsobaCloud/zorora
+**EnergyAnalyst:** https://huggingface.co/asoba/EnergyAnalyst-v0.1
+**Version:** 2.2.0 (Modular Tool Registry & Offline Coding Improvements)
 
 ---
 
 ## Changelog
+
+### Version 2.2.0 - Modular Tool Registry & Offline Coding Improvements
+
+**Major Features:**
+- Complete modular tool registry migration (`tools/` directory)
+- Renamed `use_codestral` → `use_coding_agent` (model-agnostic)
+- Added `/deep` command for deep research in terminal
+- Improved file editing reliability with read-before-edit enforcement
+- Added retry loop to CodeExecutor for self-correcting edits
+- Full file context in edit prompts with smart truncation
+
+**Tool Registry Migration (19 tools migrated):**
+- `tools/research/` - academic_search, web_search, get_newsroom_headlines
+- `tools/file_ops/` - read_file, write_file, edit_file, make_directory, list_files, get_working_directory
+- `tools/shell/` - run_shell, apply_patch
+- `tools/specialist/` - use_coding_agent, use_reasoning_model, use_search_model, use_intent_detector, use_energy_analyst
+- `tools/image/` - analyze_image, generate_image, web_image_search
+
+**File Editing Improvements:**
+- Line numbers now included by default in read_file output
+- `replace_all` parameter for edit_file to replace all occurrences
+- Better error messages showing similar text and line numbers
+- Read-before-edit enforcement in tool_executor
+
+**Code Executor Improvements:**
+- Retry loop (up to 3 attempts) with error context
+- Smart file truncation for large files (keyword-based region extraction)
+- Line numbers in edit prompts for precise matching
+
+**Breaking Changes:**
+- `use_codestral` renamed to `use_coding_agent` (alias provided for backward compatibility)
+- Import from `tools.registry` instead of `tool_registry` (deprecation warning added)
 
 ### Version 2.1.0 - Settings Modal & Multi-Provider Support
 

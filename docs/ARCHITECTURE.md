@@ -71,7 +71,7 @@ def route(self, user_input: str) -> Dict[str, Any]:
 
     # Priority 2: Code generation (write, create, generate + code)
     if re.search(r'\b(write|create|generate).*\b(function|class|script|code)', user_input.lower()):
-        return {"workflow": "code", "tool": "use_codestral"}
+        return {"workflow": "code", "tool": "use_coding_agent"}
 
     # Priority 3: Research (questions, multi-source queries)
     if re.search(r'\b(what|why|how|tell me|based on|newsroom|web search)\b', user_input.lower()):
@@ -112,13 +112,41 @@ Main workflow orchestration that:
 - Executes tools
 - Manages conversation context
 
-### 4. Tool Registry (`tool_registry.py`)
+### 4. Tool Registry (`tools/registry.py`)
 
-Defines all available tools:
-- Research tools: `web_search()`, `get_newsroom_headlines()`
-- Code tools: `use_codestral()`
-- File tools: `save_research()`, `load_research()`, `list_research()`
-- General tools: `use_reasoning_model()`, `analyze_image()`, `generate_image()`
+Modular tool registry with 19+ tools organized by category:
+
+```
+tools/
+├── registry.py              # Central registry - import from here
+├── research/                # Research tools
+│   ├── academic_search.py   # academic_search (7 sources)
+│   ├── web_search.py        # web_search (Brave + DDG)
+│   └── newsroom.py          # get_newsroom_headlines
+├── file_ops/                # File operations
+│   ├── read.py              # read_file (with line numbers)
+│   ├── write.py             # write_file
+│   ├── edit.py              # edit_file (with replace_all)
+│   └── directory.py         # make_directory, list_files, get_working_directory
+├── shell/                   # Shell operations
+│   ├── run.py               # run_shell (whitelist-secured)
+│   └── patch.py             # apply_patch
+├── specialist/              # Specialist LLM tools
+│   ├── coding.py            # use_coding_agent (model-agnostic)
+│   ├── reasoning.py         # use_reasoning_model
+│   ├── search.py            # use_search_model
+│   ├── intent.py            # use_intent_detector
+│   └── energy.py            # use_energy_analyst (RAG)
+└── image/                   # Image tools
+    ├── analyze.py           # analyze_image (vision model)
+    ├── generate.py          # generate_image (Flux Schnell)
+    └── search.py            # web_image_search (Brave)
+```
+
+**Usage:** Import from `tools.registry`:
+```python
+from tools.registry import read_file, edit_file, use_coding_agent
+```
 
 ### 5. Workflows (`workflows/`)
 
@@ -250,20 +278,29 @@ zorora/
 ├── ui.py                       # Rich terminal UI
 │
 ├── simplified_router.py        # Deterministic decision tree
-├── research_workflow.py        # Hardcoded research pipeline
+├── research_workflow.py        # Legacy research pipeline
 ├── research_persistence.py     # Save/load research findings
 │
 ├── turn_processor.py           # Main workflow orchestration
-├── tool_executor.py            # Tool execution engine
-├── tool_registry.py            # Tool definitions and functions
+├── tool_executor.py            # Tool execution engine (with read-before-edit)
+├── tool_registry.py            # Backward-compat shim (deprecated)
+├── tool_registry_legacy.py     # Original tool registry (backup)
 ├── model_selector.py           # Interactive model configuration (terminal)
+│
+├── tools/                      # Modular tool registry (v2.2.0+)
+│   ├── registry.py             # Central registry - import from here
+│   ├── research/               # Research tools (3 tools)
+│   ├── file_ops/               # File operations (6 tools)
+│   ├── shell/                  # Shell operations (2 tools)
+│   ├── specialist/             # Specialist LLM tools (5 tools)
+│   └── image/                  # Image tools (3 tools)
 │
 ├── workflows/                  # Multi-step development workflows
 │   ├── __init__.py
 │   ├── develop_workflow.py     # /develop orchestrator
 │   ├── codebase_explorer.py    # Phase 1: Code exploration
 │   ├── code_planner.py         # Phase 2: Planning with approval
-│   ├── code_executor.py        # Phase 4: Code execution
+│   ├── code_executor.py        # Phase 3: Code execution (with retry loop)
 │   └── code_tools.py           # File operations and linting
 │
 └── ui/web/                     # Web UI (Flask application)

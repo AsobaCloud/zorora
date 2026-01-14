@@ -179,16 +179,18 @@ class REPL:
         Returns tuple of (response, execution_time) if handled, None otherwise.
         """
         cmd_lower = command.lower().strip()
-        
+
         # Check for remote commands first (before slash commands)
-        # Remote commands use format: ml-<command> <args>
-        if cmd_lower.startswith('ml-'):
+        # Remote commands use format: ml-<command> <args> (with or without leading /)
+        if cmd_lower.startswith('ml-') or cmd_lower.startswith('/ml-'):
             if RemoteCommand is None:
                 self.ui.console.print("[red]Error: Remote command support not available[/red]")
                 return None
-            
-            parts = command.split(None, 1)
-            cmd_name = parts[0] if parts else command
+
+            # Strip leading slash if present
+            cmd_to_parse = command.lstrip('/')
+            parts = cmd_to_parse.split(None, 1)
+            cmd_name = parts[0] if parts else cmd_to_parse
             
             if cmd_name in self.remote_commands:
                 remote_cmd = self.remote_commands[cmd_name]
@@ -566,14 +568,15 @@ class REPL:
             help_text += """
 [bold cyan]ONA Platform Commands:[/bold cyan] (Optional - requires ONA integration)
 
-  [cyan]ml-list-challengers <customer_id>[/cyan]     - List challenger models for a customer
-  [cyan]ml-show-metrics <model_id>[/cyan]            - Show evaluation metrics for a model
-  [cyan]ml-diff <challenger_id> <production_id>[/cyan] - Compare challenger vs production model
-  [cyan]ml-promote <customer_id> <model_id> <reason> [--force][/cyan] - Promote challenger to production
-  [cyan]ml-rollback <customer_id> <reason>[/cyan]   - Rollback production model to previous version
-  [cyan]ml-audit-log <customer_id>[/cyan]            - Get audit log for a customer
+  [cyan]/ml-list-challengers <customer_id>[/cyan]    - List challenger models for a customer
+  [cyan]/ml-show-metrics <model_id>[/cyan]           - Show evaluation metrics for a model
+  [cyan]/ml-diff <challenger_id> <production_id>[/cyan] - Compare challenger vs production model
+  [cyan]/ml-promote <customer_id> <model_id> <reason> [--force][/cyan] - Promote challenger to production
+  [cyan]/ml-rollback <customer_id> <reason>[/cyan]  - Rollback production model to previous version
+  [cyan]/ml-audit-log <customer_id>[/cyan]           - Get audit log for a customer
 
-[dim]Note: ONA platform commands require ONA_API_BASE_URL and ONA_API_TOKEN environment variables.[/dim]
+[dim]Note: ONA commands require ONA_API_BASE_URL and ONA_API_TOKEN environment variables.
+      The leading / is optional (both /ml-list-challengers and ml-list-challengers work).[/dim]
 """
         help_text += """
 [dim]Note: By default, all queries trigger web search. Use /ask for follow-ups without search.[/dim]
@@ -729,9 +732,9 @@ class REPL:
                     self.ui.cleanup()
                     break
 
-                # Handle slash commands
-                if user_input.startswith("/"):
-                    # Check if it's a workflow-forcing command
+                # Handle slash commands and ml- remote commands
+                if user_input.startswith("/") or user_input.lower().startswith("ml-"):
+                    # Check if it's a workflow-forcing or remote command
                     workflow_result = self._handle_workflow_command(user_input)
                     if workflow_result is not None:
                         # Workflow command processed - display result
