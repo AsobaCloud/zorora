@@ -516,11 +516,35 @@ See LICENSE file.
 
 **Repository:** https://github.com/AsobaCloud/zorora
 **EnergyAnalyst:** https://huggingface.co/asoba/EnergyAnalyst-v0.1
-**Version:** 2.3.0 (Enhanced /code File Editing)
+**Version:** 2.5.0 (ONA Platform Integration & Enhanced Editing)
 
 ---
 
 ## Changelog
+
+### Version 2.5.0 - ONA Platform Integration & Enhanced Editing
+
+**Major Features:**
+- ONA Platform Integration - Remote ML model observation commands (`/ml-*`)
+- Beautiful progress display with hierarchical tool visualization
+- Boxed input UI using prompt_toolkit
+- Complete modular tool registry migration (19 tools)
+
+**Enhanced /code:**
+- Auto-detects existing files and uses `edit_file` workflow
+- Direct model call for edits (bypasses planning phase)
+- Retry loop with error context (up to 3 attempts)
+
+**Improvements:**
+- SQLite threading fixes
+- `/deep` command for terminal deep research
+- Model-agnostic coding (`use_codestral` → `use_coding_agent`)
+
+**Documentation:**
+- Moved 21 internal docs to `docs/deprecated/`
+- Streamlined to 6 essential public docs
+
+See [docs/RELEASE_NOTES_v2.5.0.md](docs/RELEASE_NOTES_v2.5.0.md) for full details.
 
 ### Version 2.3.0 - Enhanced /code File Editing
 
