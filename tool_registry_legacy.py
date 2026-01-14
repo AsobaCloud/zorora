@@ -185,8 +185,18 @@ def _validate_path(path: str) -> tuple[bool, str]:
         return False, f"Error: Invalid path '{path}': {e}"
 
 
-def read_file(path: str, working_directory=None) -> str:
-    """Read contents of a file."""
+def read_file(path: str, working_directory=None, show_line_numbers: bool = True) -> str:
+    """
+    Read contents of a file with line numbers for precise editing.
+
+    Args:
+        path: Path to the file to read
+        working_directory: Optional working directory for path resolution
+        show_line_numbers: If True, prefix each line with line number (default: True)
+
+    Returns:
+        File contents with line numbers (format: "   123\t<content>")
+    """
     # Resolve path against working directory if provided
     resolved_path = _resolve_path(path, working_directory)
 
@@ -206,7 +216,17 @@ def read_file(path: str, working_directory=None) -> str:
         return f"Error: File '{path}' too large (>10MB)"
 
     try:
-        return file_path.read_text()
+        content = file_path.read_text()
+
+        if show_line_numbers:
+            lines = content.splitlines()
+            # Format like cat -n: right-aligned line number + tab + content
+            numbered = []
+            for i, line in enumerate(lines, 1):
+                numbered.append(f"{i:6d}\t{line}")
+            return "\n".join(numbered)
+        else:
+            return content
     except UnicodeDecodeError:
         return f"Error: File '{path}' is not a text file"
     except Exception as e:
@@ -257,14 +277,19 @@ def make_directory(path: str, working_directory=None) -> str:
         return f"Error creating directory: {e}"
 
 
-def edit_file(path: str, old_string: str, new_string: str, working_directory=None) -> str:
+def edit_file(path: str, old_string: str, new_string: str,
+              replace_all: bool = False, working_directory=None) -> str:
     """
     Edit a file by replacing exact string match.
 
+    You MUST read the file first with read_file before editing.
+    The old_string must match exactly including whitespace and indentation.
+
     Args:
         path: Path to the file to edit
-        old_string: Exact string to find and replace
+        old_string: Exact string to find and replace (must be unique or use replace_all)
         new_string: String to replace with
+        replace_all: If True, replace all occurrences (default: False)
         working_directory: Optional working directory for path resolution
 
     Returns:
@@ -290,22 +315,84 @@ def edit_file(path: str, old_string: str, new_string: str, working_directory=Non
 
         # Check if old_string exists
         if old_string not in content:
-            return f"Error: String not found in file. Make sure the old_string matches exactly (including whitespace)."
+            # Try to find similar text to help the user
+            similar = _find_similar_substring(content, old_string)
+            if similar:
+                return f"Error: Exact string not found. Similar text found:\n---\n{similar[:400]}\n---\nMake sure whitespace and indentation match exactly. Use read_file to see current content."
+            return "Error: String not found in file. Use read_file to see current content and copy the exact text."
 
         # Count occurrences
         occurrences = content.count(old_string)
-        if occurrences > 1:
-            return f"Error: String appears {occurrences} times in file. Use write_file for multiple replacements or be more specific."
+
+        if occurrences > 1 and not replace_all:
+            # Show line numbers where string appears
+            locations = _find_line_numbers(content, old_string)
+            return f"Error: String appears {occurrences} times at lines {locations}. Either:\n1. Include more surrounding context to make it unique, or\n2. Set replace_all=True to replace all occurrences"
 
         # Perform replacement
-        new_content = content.replace(old_string, new_string, 1)
-        file_path.write_text(new_content)
+        if replace_all:
+            new_content = content.replace(old_string, new_string)
+            file_path.write_text(new_content)
+            return f"OK: Replaced {occurrences} occurrence(s) in '{resolved_path}'"
+        else:
+            new_content = content.replace(old_string, new_string, 1)
+            file_path.write_text(new_content)
+            return f"OK: Replaced 1 occurrence in '{resolved_path}'"
 
-        return f"OK: Replaced 1 occurrence in '{resolved_path}'"
     except UnicodeDecodeError:
         return f"Error: File '{path}' is not a text file"
     except Exception as e:
         return f"Error editing file: {e}"
+
+
+def _find_similar_substring(content: str, target: str, context_chars: int = 100) -> str:
+    """
+    Find similar substring in content (handles whitespace differences).
+
+    Returns a snippet of similar text if found, empty string otherwise.
+    """
+    # Normalize whitespace for comparison
+    normalized_target = ' '.join(target.split())
+    normalized_content = ' '.join(content.split())
+
+    if len(normalized_target) < 10:
+        return ""  # Too short to meaningfully match
+
+    if normalized_target in normalized_content:
+        # Find approximate location in original content
+        # Search for first significant word from target
+        words = [w for w in target.split() if len(w) > 3]
+        if words:
+            first_word = words[0]
+            idx = content.find(first_word)
+            if idx >= 0:
+                start = max(0, idx - context_chars)
+                end = min(len(content), idx + len(target) + context_chars)
+                return content[start:end]
+    return ""
+
+
+def _find_line_numbers(content: str, substring: str) -> str:
+    """
+    Find line numbers where substring appears.
+
+    Returns comma-separated list of line numbers (truncated if >10).
+    """
+    lines = content.splitlines()
+    locations = []
+
+    # For multi-line substrings, find which lines contain the start
+    sub_first_line = substring.split('\n')[0] if '\n' in substring else substring
+
+    for i, line in enumerate(lines, 1):
+        if sub_first_line in line:
+            locations.append(str(i))
+        elif substring in line:
+            locations.append(str(i))
+
+    if len(locations) > 10:
+        return ", ".join(locations[:10]) + f"... ({len(locations)} total)"
+    return ", ".join(locations) if locations else "unknown"
 
 
 def list_files(path: str = ".", working_directory=None) -> str:
@@ -3021,7 +3108,7 @@ TOOLS_DEFINITION: List[DictType[str, Any]] = [
         "type": "function",
         "function": {
             "name": "edit_file",
-            "description": "Edit an existing file by replacing an exact string match. Use this when you need to modify part of a file without rewriting the entire file. The old_string must match exactly (including whitespace).",
+            "description": "Edit a file by replacing exact string match. You MUST read the file first with read_file. The old_string must match exactly including whitespace and indentation.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -3031,11 +3118,15 @@ TOOLS_DEFINITION: List[DictType[str, Any]] = [
                     },
                     "old_string": {
                         "type": "string",
-                        "description": "Exact string to find and replace (must match exactly including whitespace)"
+                        "description": "Exact string to find and replace (must be unique in file, or use replace_all=true)"
                     },
                     "new_string": {
                         "type": "string",
                         "description": "String to replace with"
+                    },
+                    "replace_all": {
+                        "type": "boolean",
+                        "description": "If true, replace all occurrences of old_string. Default is false (single replacement)."
                     }
                 },
                 "required": ["path", "old_string", "new_string"]

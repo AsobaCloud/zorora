@@ -319,6 +319,52 @@ class REPL:
                 self.conversation.add_assistant_message(content=result)
             return (result, 0.0) if result else None
 
+        # /deep <query> - Deep research with credibility scoring
+        elif cmd_lower.startswith("/deep "):
+            query = command[6:].strip()  # Remove "/deep "
+            if not query:
+                self.ui.console.print("[red]Usage: /deep <query>[/red]")
+                self.ui.console.print("[dim]Example: /deep impact of AI on renewable energy markets[/dim]")
+                self.ui.console.print("[dim]Example: /deep climate change mitigation strategies 2024[/dim]")
+                return None
+
+            self.ui.console.print(f"[cyan]Starting deep research (academic + web + newsroom + credibility scoring)...[/cyan]")
+
+            import time
+            start_time = time.time()
+
+            from workflows.deep_research.workflow import DeepResearchWorkflow
+            from engine.research_engine import ResearchEngine
+
+            workflow = DeepResearchWorkflow(max_depth=1)
+            state = workflow.execute(query)
+
+            # Format output
+            result = state.synthesis if state.synthesis else "No synthesis generated."
+
+            # Add source summary
+            if state.sources_checked:
+                high_cred = sum(1 for s in state.sources_checked if s.credibility_score and s.credibility_score >= 0.7)
+                med_cred = sum(1 for s in state.sources_checked if s.credibility_score and 0.4 <= s.credibility_score < 0.7)
+                low_cred = sum(1 for s in state.sources_checked if s.credibility_score and s.credibility_score < 0.4)
+                result += f"\n\n---\n**Sources**: {len(state.sources_checked)} total ({high_cred} high, {med_cred} medium, {low_cred} low credibility)"
+
+            # Save to research engine
+            try:
+                research_engine = ResearchEngine()
+                research_id = research_engine.save_research(state)
+                result += f"\n**Research ID**: {research_id}"
+            except Exception as e:
+                self.ui.console.print(f"[yellow]Warning: Could not save research: {e}[/yellow]")
+
+            execution_time = time.time() - start_time
+
+            if result:
+                self.turn_processor.last_specialist_output = result
+                self.conversation.add_assistant_message(content=result)
+
+            return (result, execution_time) if result else None
+
         # Not a workflow command
         return None
 
@@ -497,6 +543,7 @@ class REPL:
   [cyan]/ask <query>[/cyan]            - Force conversational mode (no web search)
   [cyan]/code <prompt>[/cyan]          - Force code generation with Codestral
   [cyan]/academic <query>[/cyan]       - Search academic papers (Scholar, PubMed, CORE, arXiv, bioRxiv, medRxiv, PMC + Sci-Hub)
+  [cyan]/deep <query>[/cyan]           - Deep research with credibility scoring (academic + web + newsroom)
   [cyan]/analyst <query>[/cyan]        - Query EnergyAnalyst RAG (energy policy documents)
   [cyan]/image <prompt>[/cyan]         - Generate image with FLUX (text-to-image)
   [cyan]/vision <path> [task][/cyan]   - Analyze image with vision model

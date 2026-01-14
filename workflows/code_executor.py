@@ -144,9 +144,16 @@ class CodeExecutor:
         except Exception as e:
             return f"Error generating file: {e}"
 
-    def _execute_edit_file(self, task: Dict, codebase_summary: Dict) -> str:
+    def _execute_edit_file(self, task: Dict, codebase_summary: Dict, max_retries: int = 3) -> str:
         """
-        Execute file edit task.
+        Execute file edit task with retry loop.
+
+        The model gets feedback on failed edits and can retry with corrected approach.
+
+        Args:
+            task: Task dict with file_path, description, details
+            codebase_summary: Codebase exploration results
+            max_retries: Maximum retry attempts (default: 3)
 
         Returns:
             Result message
@@ -155,41 +162,116 @@ class CodeExecutor:
         if not file_path:
             return "Error: No file_path specified"
 
-        # Read existing file
         full_path = Path(self.working_directory) / file_path
 
         if not full_path.exists():
             return f"Error: File {file_path} does not exist"
 
-        try:
-            current_content = full_path.read_text(encoding='utf-8')
+        last_error = None
 
-            # Use codestral to generate modification
-            edit_prompt = self._build_file_edit_prompt(task, current_content, codebase_summary)
+        for attempt in range(max_retries):
+            try:
+                # Always re-read file (content may have changed in previous attempt)
+                current_content = full_path.read_text(encoding='utf-8')
 
-            result = self.tool_executor.execute("use_codestral", {
-                "code_context": edit_prompt
-            })
+                # Build prompt (include error context on retry)
+                if attempt == 0:
+                    edit_prompt = self._build_file_edit_prompt(task, current_content, codebase_summary)
+                else:
+                    edit_prompt = self._build_retry_edit_prompt(
+                        task=task,
+                        current_content=current_content,
+                        codebase_summary=codebase_summary,
+                        previous_error=last_error,
+                        attempt=attempt
+                    )
 
-            # Extract old and new code from result
-            edit_instructions = self._extract_edit_instructions(result, current_content)
+                # Generate edit
+                result = self.tool_executor.execute("use_codestral", {
+                    "code_context": edit_prompt
+                })
 
-            if not edit_instructions:
-                return "Error: Could not determine file edits"
+                # Extract instructions
+                edit_instructions = self._extract_edit_instructions(result, current_content)
 
-            # Apply edit
-            old_content = edit_instructions["old"]
-            new_content = edit_instructions["new"]
+                if not edit_instructions:
+                    last_error = "Could not parse edit instructions from model response"
+                    logger.warning(f"Edit attempt {attempt+1}: {last_error}")
+                    continue
 
-            edit_result = edit_file(file_path, old_content, new_content, self.working_directory)
+                old_content = edit_instructions["old"]
+                new_content = edit_instructions["new"]
 
-            if not edit_result.startswith("Error"):
-                self.modified_files.append(file_path)
+                # Apply edit
+                edit_result = edit_file(file_path, old_content, new_content, self.working_directory)
 
-            return edit_result
+                if not edit_result.startswith("Error"):
+                    # Success!
+                    self.modified_files.append(file_path)
+                    if attempt > 0:
+                        logger.info(f"Edit succeeded on attempt {attempt+1}")
+                    return edit_result
 
-        except Exception as e:
-            return f"Error editing file: {e}"
+                # Failed - capture error for next attempt
+                last_error = edit_result
+                logger.warning(f"Edit attempt {attempt+1} failed: {edit_result}")
+
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(f"Edit attempt {attempt+1} exception: {e}")
+
+        return f"Error: Failed after {max_retries} attempts. Last error: {last_error}"
+
+    def _build_retry_edit_prompt(self, task: Dict, current_content: str,
+                                  codebase_summary: Dict, previous_error: str,
+                                  attempt: int) -> str:
+        """Build prompt for retry attempt with error context."""
+        file_path = task.get("file_path")
+        description = task.get("description", "")
+
+        # Add line numbers for precision
+        numbered_content = self._add_line_numbers(current_content)
+
+        # Truncate if very large
+        if len(numbered_content) > 15000:
+            lines = numbered_content.split('\n')
+            numbered_content = '\n'.join(lines[:200]) + '\n... (truncated) ...\n' + '\n'.join(lines[-100:])
+
+        prompt = f"""RETRY ATTEMPT {attempt + 1}: Your previous edit failed.
+
+ERROR: {previous_error}
+
+FILE: {file_path}
+
+CURRENT CONTENT (with line numbers - use these for reference):
+{numbered_content}
+
+TASK: {description}
+
+IMPORTANT:
+1. The OLD_CODE must match EXACTLY what's in the file (including whitespace)
+2. Copy the exact text from the file above, preserving indentation
+3. If the string appears multiple times, include more context to make it unique
+4. Do NOT include line numbers in your OLD_CODE - just the actual code
+
+Output in this format:
+OLD_CODE:
+```
+[exact code to replace - copy from file above, without line numbers]
+```
+
+NEW_CODE:
+```
+[replacement code]
+```"""
+
+        return prompt
+
+    def _add_line_numbers(self, content: str) -> str:
+        """Add line numbers to content for reference."""
+        lines = content.splitlines()
+        numbered = [f"{i:4d} | {line}" for i, line in enumerate(lines, 1)]
+        return "\n".join(numbered)
 
     def _execute_add_dependency(self, task: Dict, codebase_summary: Dict) -> str:
         """
@@ -236,48 +318,111 @@ Output ONLY the complete file content, no explanations or markdown formatting.""
         return prompt
 
     def _build_file_edit_prompt(self, task: Dict, current_content: str, codebase_summary: Dict) -> str:
-        """Build prompt for editing existing file."""
+        """Build prompt for editing existing file with smart truncation."""
         file_path = task.get("file_path")
         description = task.get("description", "")
         details = task.get("details", "")
 
-        # Truncate very long files
-        content_preview = current_content
-        if len(current_content) > 3000:
-            content_preview = current_content[:1500] + "\n... [middle truncated] ...\n" + current_content[-1500:]
+        # Smart truncation based on file size
+        truncation_note = ""
+        if len(current_content) <= 8000:
+            # Small-medium files: include full content with line numbers
+            content_section = self._add_line_numbers(current_content)
+        elif len(current_content) <= 20000:
+            # Large files: include relevant sections
+            content_section = self._smart_truncate_for_edit(current_content, task)
+            truncation_note = "\n[Note: File truncated to relevant sections. Line numbers preserved for reference.]"
+        else:
+            # Very large files: focused extraction
+            content_section = self._extract_edit_region(current_content, task)
+            truncation_note = f"\n[Note: Large file ({len(current_content)} chars) - showing region around edit target.]"
 
         prompt = f"""Modify an existing file in a {codebase_summary.get('project_type', 'software')} project.
 
 FILE: {file_path}
 
-CURRENT CONTENT:
-{content_preview}
+CURRENT CONTENT (with line numbers for reference):
+{content_section}
+{truncation_note}
 
 MODIFICATION NEEDED: {description}
 
 DETAILS: {details}
 
 REQUIREMENTS:
-1. Identify the exact section that needs to change
-2. Provide the OLD code (exactly as it appears in the file)
-3. Provide the NEW code (with modifications)
-4. Maintain existing code style and patterns
-5. Don't break existing functionality
+1. The OLD_CODE must match EXACTLY what's in the file (including whitespace/indentation)
+2. Copy the text precisely from the content above (do NOT include line numbers)
+3. If string appears multiple times, include enough context to make it unique
+4. Preserve existing code style
 
 Output in this format:
 OLD_CODE:
 ```
-[exact code to replace]
+[exact code to replace - copy from above, without line numbers]
 ```
 
 NEW_CODE:
 ```
 [replacement code]
-```
-
-Be precise - the OLD_CODE must match exactly."""
+```"""
 
         return prompt
+
+    def _smart_truncate_for_edit(self, content: str, task: Dict) -> str:
+        """Smart truncation that preserves edit-relevant context with line numbers."""
+        lines = content.splitlines()
+        numbered = []
+
+        # Always include first 50 lines (imports, class definitions)
+        for i, line in enumerate(lines[:50], 1):
+            numbered.append(f"{i:4d} | {line}")
+
+        if len(lines) > 100:
+            numbered.append("     | ... (middle section omitted) ...")
+
+        # Include last 50 lines
+        if len(lines) > 50:
+            start = max(50, len(lines) - 50)
+            for i, line in enumerate(lines[start:], start + 1):
+                numbered.append(f"{i:4d} | {line}")
+
+        return "\n".join(numbered)
+
+    def _extract_edit_region(self, content: str, task: Dict) -> str:
+        """Extract region around likely edit target for very large files."""
+        description = task.get("description", "").lower()
+        lines = content.splitlines()
+
+        # Try to find relevant function/class based on keywords
+        target_keywords = []
+        for word in description.split():
+            if len(word) > 3 and word.isalnum():
+                target_keywords.append(word)
+
+        # Find lines containing keywords
+        relevant_indices = set()
+        for i, line in enumerate(lines):
+            line_lower = line.lower()
+            if any(kw in line_lower for kw in target_keywords):
+                # Include context around match (20 lines before, 30 after)
+                for j in range(max(0, i - 20), min(len(lines), i + 30)):
+                    relevant_indices.add(j)
+
+        if relevant_indices:
+            relevant_indices = sorted(relevant_indices)
+            numbered = []
+            prev_idx = -2
+
+            for idx in relevant_indices:
+                if prev_idx >= 0 and idx > prev_idx + 1:
+                    numbered.append("     | ...")
+                numbered.append(f"{idx+1:4d} | {lines[idx]}")
+                prev_idx = idx
+
+            return "\n".join(numbered)
+
+        # Fallback to head/tail
+        return self._smart_truncate_for_edit(content, task)
 
     def _extract_code_from_response(self, response: str) -> str:
         """Extract code content from codestral response."""

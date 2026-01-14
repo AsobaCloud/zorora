@@ -25,6 +25,25 @@ class ToolExecutor:
         # Track current working directory for stateful navigation
         from pathlib import Path
         self.working_directory = Path.cwd()
+        # Track files read in this session for read-before-edit enforcement
+        self.files_read_this_session: set = set()
+
+    def clear_read_cache(self):
+        """Clear the read tracking cache. Call on /clear or new session."""
+        self.files_read_this_session.clear()
+
+    def _normalize_path(self, path: str) -> str:
+        """Normalize a path for comparison in read tracking."""
+        from pathlib import Path as P
+        try:
+            # Resolve against working directory if relative
+            if not P(path).is_absolute():
+                resolved = self.working_directory / path
+            else:
+                resolved = P(path)
+            return str(resolved.resolve())
+        except Exception:
+            return path
 
     def execute(self, tool_name: str, arguments: Dict[str, Any]) -> str:
         """
@@ -69,6 +88,22 @@ class ToolExecutor:
             file_ops = ["read_file", "write_file", "edit_file", "list_files", "make_directory", "get_working_directory", "pwd"]
             if tool_name in file_ops:
                 arguments['working_directory'] = self.working_directory
+
+            # Track file reads for read-before-edit enforcement
+            if tool_name == "read_file":
+                path = arguments.get("path", "")
+                if path:
+                    normalized = self._normalize_path(path)
+                    self.files_read_this_session.add(normalized)
+                    logger.debug(f"Tracking read: {normalized}")
+
+            # Enforce read-before-edit policy
+            if tool_name == "edit_file":
+                path = arguments.get("path", "")
+                if path:
+                    normalized = self._normalize_path(path)
+                    if normalized not in self.files_read_this_session:
+                        return "Error: You must read the file before editing. Use read_file first to see current content with line numbers."
 
             result = tool_func(**arguments)
 
