@@ -58,6 +58,14 @@ ENERGY_ANALYST = {
 #   export ONA_API_TOKEN="your-token-here"
 #   export ONA_USE_IAM="false"  # Set to "true" for IAM authentication
 
+# Newsroom API Configuration (Optional)
+# For accessing Ona platform newsroom articles in research workflows.
+# Get your JWT token from the Ona data-admin portal.
+# See docs/TROUBLESHOOTING.md for setup instructions.
+NEWSROOM_JWT_TOKEN = None  # Set to your JWT token string, or use env var NEWSROOM_JWT_TOKEN
+NEWSROOM_DAYS_BACK = 90  # Number of days of articles to search (90 = last quarter)
+NEWSROOM_MAX_RELEVANT = 25  # Max relevant articles to return after filtering
+
 # Brave Search API Configuration
 # Get your free API key at: https://brave.com/search/api/
 # Free tier: 2000 queries/month (~66/day)

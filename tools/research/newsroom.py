@@ -14,26 +14,65 @@ logger = logging.getLogger(__name__)
 NEWSROOM_API_URL = "https://pj1ud6q3uf.execute-api.af-south-1.amazonaws.com/prod/api/data-admin/newsroom/articles"
 NEWSROOM_API_TIMEOUT = 10
 
+# Error messages for common issues
+AUTH_ERROR_MSG = """⚠ Newsroom authentication failed (HTTP 401)
+
+To access the newsroom, you need a valid JWT token:
+1. Set NEWSROOM_JWT_TOKEN in config.py or as environment variable
+2. Get the token from Ona platform authentication (data-admin portal)
+3. Token format: Bearer <jwt_token>
+
+See docs/TROUBLESHOOTING.md for details."""
+
+FORBIDDEN_ERROR_MSG = """⚠ Newsroom access forbidden (HTTP 403)
+
+Your JWT token is valid but lacks permission to access newsroom articles.
+Contact the Ona platform admin to request newsroom access."""
+
+
+def _get_auth_headers() -> Dict[str, str]:
+    """Get authorization headers for newsroom API."""
+    import os
+
+    # Check config first, then environment variable
+    jwt_token = getattr(config, 'NEWSROOM_JWT_TOKEN', None) or os.environ.get('NEWSROOM_JWT_TOKEN')
+
+    if jwt_token:
+        # Support both "Bearer xxx" and raw token formats
+        if not jwt_token.startswith('Bearer '):
+            jwt_token = f'Bearer {jwt_token}'
+        return {'Authorization': jwt_token}
+
+    return {}
+
 
 def fetch_newsroom_api(query: str = None, days_back: int = 90, max_results: int = 25) -> List[Dict[str, Any]]:
     """
     Fetch newsroom articles via API and return structured data.
-    
+
     This function returns structured data (List[Dict]) for use in deep research.
     The data will be converted to Source objects in Phase 3.
-    
+
+    Requires NEWSROOM_JWT_TOKEN in config.py or environment variable.
+
     Args:
         query: Search query (optional)
         days_back: Number of days to search back (default: 90)
         max_results: Max results to return (default: 25)
-        
+
     Returns:
         List of article dictionaries with keys: headline, date, url, source, topic_tags, etc.
+        Returns empty list on error, with specific logging for auth failures.
     """
     try:
         # Calculate date range
         date_from = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
-        
+
+        # Get auth headers
+        headers = _get_auth_headers()
+        if not headers:
+            logger.warning("No NEWSROOM_JWT_TOKEN configured - newsroom will be unavailable")
+
         # Call newsroom API
         response = requests.get(
             NEWSROOM_API_URL,
@@ -42,19 +81,26 @@ def fetch_newsroom_api(query: str = None, days_back: int = 90, max_results: int 
                 'limit': max_results,
                 'date_from': date_from
             },
+            headers=headers,
             timeout=NEWSROOM_API_TIMEOUT
         )
-        
+
         if response.status_code == 200:
             data = response.json()
             articles = data.get('articles', [])
-            
+
             logger.info(f"✓ Newsroom: {len(articles)} articles (<500ms)")
             return articles
+        elif response.status_code == 401:
+            logger.error("Newsroom API returned 401 Unauthorized - check NEWSROOM_JWT_TOKEN")
+            return []
+        elif response.status_code == 403:
+            logger.error("Newsroom API returned 403 Forbidden - token lacks newsroom access")
+            return []
         else:
             logger.warning(f"Newsroom API returned {response.status_code}")
             return []
-            
+
     except Exception as e:
         logger.warning(f"Newsroom API error: {e}")
         return []
@@ -82,11 +128,17 @@ def get_newsroom_headlines(query: str = None, days_back: int = None, max_results
         max_results = getattr(config, 'NEWSROOM_MAX_RELEVANT', 25)
     
     try:
+        # Check if authentication is configured
+        headers = _get_auth_headers()
+        if not headers:
+            return AUTH_ERROR_MSG
+
         # Fetch articles from API
         articles = fetch_newsroom_api(query, days_back, max_results)
-        
+
         if not articles:
-            return f"No articles found in newsroom for last {days_back} days"
+            # Could be auth failure or genuinely no articles - check logs for details
+            return f"No articles found in newsroom for last {days_back} days (check logs if unexpected)"
         
         logger.info(f"Processing {len(articles)} articles from newsroom API")
         

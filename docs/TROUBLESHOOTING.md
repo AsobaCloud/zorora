@@ -45,8 +45,44 @@ Step 1/3: Fetching newsroom articles...
   ⚠ Newsroom unavailable, skipping
 ```
 
+**OR** the message:
+```
+⚠ Newsroom authentication failed (HTTP 401)
+```
+
 **Solution:**
-This is normal - workflow continues with web search only. Newsroom is optional and only used if configured.
+
+The newsroom API requires JWT authentication from the Ona platform.
+
+1. **Get a JWT token** from the Ona data-admin portal:
+   - Log in to the Ona platform data-admin interface
+   - Navigate to your profile/settings to get an API token
+   - The token is a JWT (JSON Web Token) issued by the Ona auth system
+
+2. **Configure the token** in one of these ways:
+
+   **Option A: config.py** (recommended)
+   ```python
+   # Newsroom Configuration
+   NEWSROOM_JWT_TOKEN = "your-jwt-token-here"
+   ```
+
+   **Option B: Environment variable**
+   ```bash
+   export NEWSROOM_JWT_TOKEN="your-jwt-token-here"
+   ```
+
+3. **Verify it works:**
+   ```bash
+   curl -H "Authorization: Bearer YOUR_TOKEN" \
+     "https://pj1ud6q3uf.execute-api.af-south-1.amazonaws.com/prod/api/data-admin/newsroom/articles?limit=1"
+   ```
+
+**Common Auth Errors:**
+- `401 Unauthorized`: Token missing, expired, or invalid
+- `403 Forbidden`: Token valid but lacks newsroom access permissions
+
+**Note:** If you don't need newsroom access, this is fine - research continues with web search only.
 
 ### Can't Save Research
 
