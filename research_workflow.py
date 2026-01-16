@@ -222,22 +222,40 @@ class ResearchWorkflow:
 
     def _fetch_newsroom(self, query: str) -> Optional[str]:
         """
-        Fetch newsroom headlines filtered by query relevance.
+        Fetch newsroom articles from cache for semantic filtering at synthesis.
+
+        Returns all cached articles as summaries - the LLM will filter
+        for relevance during synthesis.
 
         Args:
-            query: Search query for relevance filtering
+            query: Search query (used for logging only)
 
         Returns:
-            Headlines string, or None if unavailable
+            Article summaries string, or None if unavailable
         """
         try:
-            result = self.tool_executor.execute("get_newsroom_headlines", {"query": query})
-            if result and not result.startswith("Error:"):
-                logger.info(f"Newsroom fetched: {len(result)} chars")
-                return result
-            else:
-                logger.warning(f"Newsroom error: {result[:100]}")
+            from tools.research.newsroom import fetch_newsroom_cached
+
+            articles = fetch_newsroom_cached(max_results=100)
+
+            if not articles:
+                logger.warning("No articles in newsroom cache")
                 return None
+
+            # Format articles as summaries for LLM to filter
+            summaries = []
+            for art in articles:
+                headline = art.get('headline', 'No headline')
+                topics = ', '.join(art.get('topic_tags', [])[:3]) or 'No topics'
+                date = art.get('date', '')[:10]
+                url = art.get('url', '')
+                source = art.get('source', 'Unknown')
+                summaries.append(f"- [{date}] {headline}\n  Topics: {topics}\n  Source: {source}\n  URL: {url}")
+
+            result = "\n\n".join(summaries)
+            logger.info(f"Newsroom: {len(articles)} articles fetched from cache")
+            return result
+
         except Exception as e:
             logger.error(f"Newsroom fetch exception: {e}")
             return None
@@ -353,11 +371,14 @@ RESEARCH QUESTION:
 {query}
 
 INSTRUCTIONS:
-1. Synthesize key findings from ALL sources above
-2. Cite sources inline using [Newsroom] or [Web] tags after each claim
-3. When citing web results, mention the domain/site name when relevant
-4. Be concise but comprehensive
-5. Focus on answering the specific question
+1. First, identify which Newsroom articles are semantically relevant to the research question
+   - The Newsroom contains many articles; only use those actually related to the query
+   - Consider topic relevance, not just keyword matches
+   - Ignore irrelevant articles completely
+2. Synthesize findings from the RELEVANT newsroom articles and web results
+3. Cite sources inline using [Newsroom] or [Web] tags after each claim
+4. When citing web results, mention the domain/site name when relevant
+5. Be concise but comprehensive - focus on answering the specific question
 6. If sources conflict, note the discrepancy
 7. Structure your answer with clear sections if covering multiple topics
 8. Use the current date ({current_date}) when interpreting temporal references

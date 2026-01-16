@@ -46,6 +46,90 @@ def _get_auth_headers() -> Dict[str, str]:
     return {}
 
 
+def fetch_newsroom_cached(max_results: int = 100) -> List[Dict[str, Any]]:
+    """
+    Fetch newsroom articles with caching (7-day rolling window).
+
+    Uses local cache to avoid repeated API calls. Cache refreshes
+    daily (24-hour TTL) since newsroom updates ~400 articles/day.
+
+    Args:
+        max_results: Max articles to return (default: 100)
+
+    Returns:
+        List of article dicts from cache or fresh API call
+    """
+    from tools.utils.newsroom_cache import get_cache
+
+    cache = get_cache()
+
+    if cache.is_fresh():
+        articles = cache.get_articles()
+        logger.info(f"Newsroom cache hit: {len(articles)} articles (age: {int(cache.get_age_seconds())}s)")
+        return articles[:max_results]
+
+    # Cache is stale - fetch fresh data
+    logger.info("Newsroom cache stale, fetching fresh data...")
+    articles = _fetch_newsroom_api_raw(days_back=7, max_results=500)
+
+    if articles:
+        cache.update(articles)
+        return articles[:max_results]
+
+    # API failed - try to use stale cache as fallback
+    stale_articles = cache.get_articles()
+    if stale_articles:
+        logger.warning(f"API failed, using stale cache: {len(stale_articles)} articles")
+        return stale_articles[:max_results]
+
+    return []
+
+
+def _fetch_newsroom_api_raw(days_back: int = 7, max_results: int = 500) -> List[Dict[str, Any]]:
+    """
+    Raw API fetch without caching. Used by cache refresh.
+
+    Args:
+        days_back: Days to fetch (default: 7)
+        max_results: Max articles (default: 500 for cache population)
+
+    Returns:
+        List of article dicts from API
+    """
+    try:
+        date_from = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
+
+        headers = _get_auth_headers()
+        if not headers:
+            logger.warning("No NEWSROOM_JWT_TOKEN configured")
+            return []
+
+        response = requests.get(
+            NEWSROOM_API_URL,
+            params={'limit': max_results, 'date_from': date_from},
+            headers=headers,
+            timeout=NEWSROOM_API_TIMEOUT
+        )
+
+        if response.status_code == 200:
+            data = response.json()
+            articles = data.get('articles', [])
+            logger.info(f"✓ Newsroom API: {len(articles)} articles fetched")
+            return articles
+        elif response.status_code == 401:
+            logger.error("Newsroom API 401 - check NEWSROOM_JWT_TOKEN")
+        elif response.status_code == 403:
+            logger.error("Newsroom API 403 - token lacks newsroom access")
+        else:
+            logger.warning(f"Newsroom API returned {response.status_code}")
+
+        return []
+
+    except Exception as e:
+        logger.warning(f"Newsroom API error: {e}")
+        return []
+
+
 def fetch_newsroom_api(query: str = None, days_back: int = 90, max_results: int = 25) -> List[Dict[str, Any]]:
     """
     Fetch newsroom articles via API and return structured data.
@@ -56,7 +140,8 @@ def fetch_newsroom_api(query: str = None, days_back: int = 90, max_results: int 
     Requires NEWSROOM_JWT_TOKEN in config.py or environment variable.
 
     Args:
-        query: Search query (optional)
+        query: Single-word search term (optional) - for multi-word/natural language
+               queries, use semantic_search_newsroom() instead
         days_back: Number of days to search back (default: 90)
         max_results: Max results to return (default: 25)
 
@@ -73,14 +158,18 @@ def fetch_newsroom_api(query: str = None, days_back: int = 90, max_results: int 
         if not headers:
             logger.warning("No NEWSROOM_JWT_TOKEN configured - newsroom will be unavailable")
 
+        # Build params - only pass single-word queries to API (multi-word fails)
+        params = {
+            'limit': max_results,
+            'date_from': date_from
+        }
+        if query and ' ' not in query.strip():
+            params['search'] = query.strip()
+
         # Call newsroom API
         response = requests.get(
             NEWSROOM_API_URL,
-            params={
-                'search': query,
-                'limit': max_results,
-                'date_from': date_from
-            },
+            params=params,
             headers=headers,
             timeout=NEWSROOM_API_TIMEOUT
         )
@@ -106,43 +195,38 @@ def fetch_newsroom_api(query: str = None, days_back: int = 90, max_results: int 
         return []
 
 
-def get_newsroom_headlines(query: str = None, days_back: int = None, max_results: int = None) -> str:
+def get_newsroom_headlines(query: str = None, max_results: int = None) -> str:
     """
-    Fetch newsroom articles via API and return formatted string for REPL display.
-    
-    This function maintains backward compatibility with existing REPL commands.
-    It calls fetch_newsroom_api() and formats the results as a string.
-    
+    Fetch newsroom articles from cache and return formatted string for REPL display.
+
+    Uses 7-day rolling cache. For queries, does simple keyword filtering.
+    For full semantic search, use /search which handles filtering at synthesis.
+
     Args:
-        query: Search query to filter articles by relevance (optional)
-        days_back: Number of days to search back (default from config)
-        max_results: Max relevant articles to return (default from config)
-        
+        query: Optional keyword filter (simple matching, not semantic)
+        max_results: Max articles to return (default from config)
+
     Returns:
         Formatted string with article headlines, sources, and URLs
     """
-    # Get configuration
-    if days_back is None:
-        days_back = getattr(config, 'NEWSROOM_DAYS_BACK', 90)
     if max_results is None:
         max_results = getattr(config, 'NEWSROOM_MAX_RELEVANT', 25)
-    
+
     try:
         # Check if authentication is configured
         headers = _get_auth_headers()
         if not headers:
             return AUTH_ERROR_MSG
 
-        # Fetch articles from API
-        articles = fetch_newsroom_api(query, days_back, max_results)
+        # Fetch from cache (7-day rolling window)
+        articles = fetch_newsroom_cached(max_results=200)
 
         if not articles:
-            # Could be auth failure or genuinely no articles - check logs for details
-            return f"No articles found in newsroom for last {days_back} days (check logs if unexpected)"
-        
-        logger.info(f"Processing {len(articles)} articles from newsroom API")
-        
-        # Convert API articles to headline format (for compatibility with existing code)
+            return "No articles found in newsroom cache (check logs if unexpected)"
+
+        logger.info(f"Processing {len(articles)} articles from cache")
+
+        # Convert to headline format
         headlines = []
         for article in articles:
             headline = {
@@ -157,25 +241,27 @@ def get_newsroom_headlines(query: str = None, days_back: int = None, max_results
                 "date": article.get("date", "")
             }
             headlines.append(headline)
-        
-        # Filter by relevance if query provided (simplified - just keyword matching)
+
+        # Simple keyword filtering if query provided
         if query:
-            query_lower = query.lower()
+            query_words = [w.lower() for w in query.split() if len(w) >= 3]
             filtered = []
             for h in headlines:
                 title_lower = h['title'].lower()
-                # Simple keyword matching
-                if any(word in title_lower for word in query_lower.split() if len(word) > 3):
+                # Match if any query word appears in title or topics
+                topics_str = ' '.join(str(t) for t in h['tags'].get('core_topics', []))
+                searchable = f"{title_lower} {topics_str}".lower()
+                if any(word in searchable for word in query_words):
                     filtered.append(h)
             headlines = filtered[:max_results]
-            logger.info(f"Filtered to {len(headlines)} most relevant articles for query: {query[:60]}...")
+            logger.info(f"Filtered to {len(headlines)} articles matching: {query[:50]}")
         else:
-            # No query - return most recent articles up to max_results
+            # No query - return most recent
             headlines = sorted(headlines, key=lambda x: x.get('date', ''), reverse=True)[:max_results]
-            logger.info(f"No query provided - returning {len(headlines)} most recent articles")
+            logger.info(f"Returning {len(headlines)} most recent articles")
         
         if not headlines:
-            return f"No articles found in newsroom for last {days_back} days"
+            return "No matching articles found in newsroom"
         
         # Calculate tag distribution for overview
         all_topics = []
