@@ -367,6 +367,53 @@ class REPL:
 
             return (result, execution_time) if result else None
 
+        # /digest <days> [topic] - Generate news trend digest by continent
+        elif cmd_lower.startswith("/digest "):
+            import time
+            start_time = time.time()
+
+            args = command[8:].strip()  # Remove "/digest "
+            parts = args.split(None, 1)  # Split into [days, optional_topic]
+
+            if not parts:
+                self.ui.console.print("[red]Usage: /digest <days> [topic][/red]")
+                self.ui.console.print("[dim]Example: /digest 14[/dim]")
+                self.ui.console.print("[dim]Example: /digest 7 crude oil[/dim]")
+                return None
+
+            try:
+                days_back = int(parts[0])
+                if days_back <= 0:
+                    raise ValueError()
+                days_back = min(days_back, 90)  # Cap at 90 days
+            except ValueError:
+                self.ui.console.print("[red]Error: First argument must be a positive number of days[/red]")
+                return None
+
+            topic = parts[1] if len(parts) > 1 else None
+
+            if topic:
+                self.ui.console.print(f"[cyan]Generating {days_back}-day digest focused on '{topic}'...[/cyan]")
+            else:
+                self.ui.console.print(f"[cyan]Generating {days_back}-day news digest...[/cyan]")
+
+            from workflows.digest_workflow import DigestWorkflow
+            workflow = DigestWorkflow(llm_client=self.llm_client)
+
+            # Auto-save to file
+            topic_slug = topic.replace(" ", "_")[:20] if topic else ""
+            output_path = f"newsroom_digest_{days_back}d{'_' + topic_slug if topic_slug else ''}.md"
+            result = workflow.execute(days_back, topic=topic, output_path=output_path)
+
+            execution_time = time.time() - start_time
+
+            if result and not result.startswith("Error:"):
+                self.ui.console.print(f"[green]✓ Digest saved to {output_path}[/green]")
+                # Add to conversation history
+                self.conversation.add_assistant_message(content=result)
+
+            return (result, execution_time) if result else None
+
         # Not a workflow command
         return None
 
@@ -550,6 +597,7 @@ class REPL:
   [cyan]/image <prompt>[/cyan]         - Generate image with FLUX (text-to-image)
   [cyan]/vision <path> [task][/cyan]   - Analyze image with vision model
   [cyan]/develop <request>[/cyan]      - Multi-step code development (explore, plan, execute, lint)
+  [cyan]/digest <days> [topic][/cyan] - Generate news trend digest by continent
 
 [bold cyan]System Commands:[/bold cyan]
 
