@@ -242,14 +242,14 @@ class REPL:
             self.ui.console.print(f"[cyan]Forcing code generation...[/cyan]")
             return self.turn_processor.process(prompt, forced_workflow="code")
 
-        # /analyst <query> - Force EnergyAnalyst RAG query
+        # /analyst <query> - Force Nehanda RAG query
         elif cmd_lower.startswith("/analyst "):
             query = command[9:].strip()  # Remove "/analyst "
             if not query:
                 self.ui.console.print("[red]Usage: /analyst <query>[/red]")
                 self.ui.console.print("[dim]Example: /analyst FERC Order 2222 requirements[/dim]")
                 return None
-            self.ui.console.print(f"[cyan]Querying EnergyAnalyst RAG...[/cyan]")
+            self.ui.console.print(f"[cyan]Querying Nehanda RAG...[/cyan]")
             return self.turn_processor.process(query, forced_workflow="energy")
 
         # /image <prompt> - Force image generation
@@ -593,7 +593,7 @@ class REPL:
   [cyan]/code <prompt>[/cyan]          - Force code generation with Codestral
   [cyan]/academic <query>[/cyan]       - Search academic papers (Scholar, PubMed, CORE, arXiv, bioRxiv, medRxiv, PMC + Sci-Hub)
   [cyan]/deep <query>[/cyan]           - Deep research with credibility scoring (academic + web + newsroom)
-  [cyan]/analyst <query>[/cyan]        - Query EnergyAnalyst RAG (energy policy documents)
+  [cyan]/analyst <query>[/cyan]        - Query Nehanda RAG (energy policy documents)
   [cyan]/image <prompt>[/cyan]         - Generate image with FLUX (text-to-image)
   [cyan]/vision <path> [task][/cyan]   - Analyze image with vision model
   [cyan]/develop <request>[/cyan]      - Multi-step code development (explore, plan, execute, lint)

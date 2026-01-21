@@ -163,14 +163,14 @@ Saved to: csv_parser.py
 
 ### /analyst
 
-**Query EnergyAnalyst RAG for energy policy documents**
+**Query Nehanda RAG for energy policy documents**
 
 ```bash
 /analyst <query>
 ```
 
 **What it does:**
-- Routes to EnergyAnalyst RAG system
+- Routes to Nehanda RAG system
 - Searches policy documents (FERC orders, ISO/RTO filings, regulations)
 - Returns answers with document citations
 - No web search (uses local policy database only)
@@ -189,8 +189,8 @@ Saved to: csv_parser.py
 ```
 
 **Requirements:**
-- EnergyAnalyst API server must be running (http://localhost:8000)
-- See [EnergyAnalyst setup](https://huggingface.co/asoba/EnergyAnalyst-v0.1)
+- Nehanda API server must be running (http://localhost:8000)
+- See [Nehanda model](https://huggingface.co/asoba/nehanda-v1-7b)
 
 **Output format:**
 - Policy analysis with document citations

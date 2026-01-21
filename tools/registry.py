@@ -39,7 +39,8 @@ from tools.specialist import (
     use_reasoning_model,
     use_search_model,
     use_intent_detector,
-    use_energy_analyst,
+    use_nehanda,
+    use_energy_analyst,  # backwards compat alias
 )
 
 # Import image tools (from modules)
@@ -76,7 +77,8 @@ TOOL_FUNCTIONS: Dict[str, Callable[..., str]] = {
     "use_reasoning_model": use_reasoning_model,
     "use_search_model": use_search_model,
     "use_intent_detector": use_intent_detector,
-    "use_energy_analyst": use_energy_analyst,
+    "use_nehanda": use_nehanda,
+    "use_energy_analyst": use_energy_analyst,  # backwards compat alias
     # Image tools (from modules)
     "analyze_image": analyze_image,
     "generate_image": generate_image,
@@ -353,8 +355,8 @@ TOOLS_DEFINITION: List[DictType[str, Any]] = [
     {
         "type": "function",
         "function": {
-            "name": "use_energy_analyst",
-            "description": "Analyze energy policy and regulatory compliance using EnergyAnalyst RAG.",
+            "name": "use_nehanda",
+            "description": "Analyze energy policy and regulatory compliance using Nehanda RAG.",
             "parameters": {
                 "type": "object",
                 "properties": {

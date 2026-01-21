@@ -41,15 +41,16 @@ SPECIALIZED_MODELS = {
     }
 }
 
-# External API Configuration
-ENERGY_ANALYST = {
+# Nehanda RAG Configuration (Energy Policy Analysis)
+NEHANDA = {
     "endpoint": "http://localhost:8000",  # Local or Production endpoint
     "timeout": 180,  # 3 minutes for slower LLM inference
-    "enabled": True,  # Set to False to disable energy analyst tool
+    "enabled": True,  # Set to False to disable Nehanda RAG tool
 }
 # Available endpoints:
 # - Local: http://localhost:8000
-# - Production: https://energyanalystragservice-production.up.railway.app
+# - Production: https://nehandarag-production.up.railway.app
+# Model: https://huggingface.co/asoba/nehanda-v1-7b
 
 # ONA Platform API Configuration (Optional)
 # For ML model observation workflows (ml-list-challengers, ml-show-metrics, etc.)

@@ -408,7 +408,7 @@ zorora/
 │   │   ├── reasoning.py         # use_reasoning_model
 │   │   ├── search.py            # use_search_model
 │   │   ├── intent.py            # use_intent_detector
-│   │   └── energy.py            # use_energy_analyst (RAG)
+│   │   └── energy.py            # use_nehanda (Nehanda RAG)
 │   │
 │   └── image/                   # Image tools
 │       ├── analyze.py           # analyze_image (vision model)
@@ -515,7 +515,7 @@ See LICENSE file.
 ---
 
 **Repository:** https://github.com/AsobaCloud/zorora
-**EnergyAnalyst:** https://huggingface.co/asoba/EnergyAnalyst-v0.1
+**Nehanda:** https://huggingface.co/asoba/nehanda-v1-7b
 **Version:** 2.5.0 (ONA Platform Integration & Enhanced Editing)
 
 ---
@@ -582,7 +582,7 @@ See [docs/RELEASE_NOTES_v2.5.0.md](docs/RELEASE_NOTES_v2.5.0.md) for full detail
 - `tools/research/` - academic_search, web_search, get_newsroom_headlines
 - `tools/file_ops/` - read_file, write_file, edit_file, make_directory, list_files, get_working_directory
 - `tools/shell/` - run_shell, apply_patch
-- `tools/specialist/` - use_coding_agent, use_reasoning_model, use_search_model, use_intent_detector, use_energy_analyst
+- `tools/specialist/` - use_coding_agent, use_reasoning_model, use_search_model, use_intent_detector, use_nehanda
 - `tools/image/` - analyze_image, generate_image, web_image_search
 
 **File Editing Improvements:**

@@ -1,5 +1,5 @@
 """
-Energy analyst tool for energy policy and regulatory queries.
+Nehanda RAG tool for energy policy and regulatory queries.
 """
 
 import logging
@@ -8,9 +8,9 @@ import requests
 logger = logging.getLogger(__name__)
 
 
-def use_energy_analyst(query: str) -> str:
+def use_nehanda(query: str) -> str:
     """
-    Analyze energy policy and regulatory compliance using EnergyAnalyst RAG.
+    Analyze energy policy and regulatory compliance using Nehanda RAG.
 
     Args:
         query: Energy policy or regulatory compliance question
@@ -27,18 +27,18 @@ def use_energy_analyst(query: str) -> str:
     try:
         import config
 
-        # Check if EnergyAnalyst is enabled
-        if not config.ENERGY_ANALYST.get("enabled", True):
-            return "Error: EnergyAnalyst is disabled. Enable it with /models command."
+        # Check if Nehanda is enabled
+        if not config.NEHANDA.get("enabled", True):
+            return "Error: Nehanda RAG is disabled. Enable it with /models command."
 
-        logger.info(f"Delegating to EnergyAnalyst: {query[:100]}...")
+        logger.info(f"Delegating to Nehanda RAG: {query[:100]}...")
 
         # Get endpoint and timeout from config
-        endpoint = config.ENERGY_ANALYST.get("endpoint", "http://localhost:8000")
-        timeout = config.ENERGY_ANALYST.get("timeout", 180)
+        endpoint = config.NEHANDA.get("endpoint", "http://localhost:8000")
+        timeout = config.NEHANDA.get("timeout", 180)
         api_url = f"{endpoint.rstrip('/')}/chat"
 
-        logger.info(f"Using EnergyAnalyst endpoint: {endpoint}")
+        logger.info(f"Using Nehanda endpoint: {endpoint}")
 
         # Make API request
         response = requests.post(
@@ -56,7 +56,7 @@ def use_energy_analyst(query: str) -> str:
         rag_used = data.get("rag_context_used", False)
 
         if not answer or not answer.strip():
-            return "Error: EnergyAnalyst returned empty response"
+            return "Error: Nehanda returned empty response"
 
         # Format response with sources
         formatted = [answer.strip()]
@@ -70,18 +70,22 @@ def use_energy_analyst(query: str) -> str:
 
     except requests.ConnectionError:
         import config
-        endpoint = config.ENERGY_ANALYST.get("endpoint", "http://localhost:8000")
+        endpoint = config.NEHANDA.get("endpoint", "http://localhost:8000")
         if "localhost" in endpoint:
-            return f"Error: Could not connect to EnergyAnalyst API at {endpoint}. Is the local API server running? Start it with: cd ~/Workbench/energyanalyst-v0.1 && python api/server.py"
+            return f"Error: Could not connect to Nehanda API at {endpoint}. Is the local API server running? Start it with: cd ~/Workbench/nehanda && python api/server.py"
         else:
-            return f"Error: Could not connect to EnergyAnalyst API at {endpoint}. Check endpoint configuration with /models command."
+            return f"Error: Could not connect to Nehanda API at {endpoint}. Check endpoint configuration with /models command."
 
     except requests.Timeout:
-        return "Error: EnergyAnalyst API request timed out after 180 seconds. The model may be generating a very long response or LM Studio may be overloaded."
+        return "Error: Nehanda API request timed out after 180 seconds. The model may be generating a very long response or LM Studio may be overloaded."
 
     except requests.HTTPError as e:
-        return f"Error: EnergyAnalyst API error (HTTP {e.response.status_code}): {e.response.text}"
+        return f"Error: Nehanda API error (HTTP {e.response.status_code}): {e.response.text}"
 
     except Exception as e:
-        logger.error(f"EnergyAnalyst error: {e}")
-        return f"Error: Failed to call EnergyAnalyst: {str(e)}"
+        logger.error(f"Nehanda error: {e}")
+        return f"Error: Failed to call Nehanda: {str(e)}"
+
+
+# Backwards compatibility alias
+use_energy_analyst = use_nehanda

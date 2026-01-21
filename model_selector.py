@@ -110,8 +110,8 @@ class ModelSelector:
             "intent_detector": config.SPECIALIZED_MODELS["intent_detector"]["model"],
             "vision": config.SPECIALIZED_MODELS.get("vision", {}).get("model", "Not configured"),
             "image_generation": config.SPECIALIZED_MODELS.get("image_generation", {}).get("model", "Not configured"),
-            "energy_analyst_endpoint": config.ENERGY_ANALYST["endpoint"],
-            "energy_analyst_enabled": config.ENERGY_ANALYST["enabled"],
+            "nehanda_endpoint": config.NEHANDA["endpoint"],
+            "nehanda_enabled": config.NEHANDA["enabled"],
         }
 
         # Add endpoint information if available
@@ -162,7 +162,7 @@ class ModelSelector:
             return f"{token[:4]}...{token[-4:]}"
 
         # Current configuration panel
-        energy_status = "Enabled" if current.get('energy_analyst_enabled', True) else "Disabled"
+        energy_status = "Enabled" if current.get('nehanda_enabled', True) else "Disabled"
         config_lines = [
             f"[cyan]Orchestrator:[/cyan] {current['orchestrator']}",
         ]
@@ -176,7 +176,7 @@ class ModelSelector:
             f"[cyan]Intent Detection:[/cyan] {current['intent_detector']}" + (f" [dim]({format_origin(current.get('intent_detector_endpoint', 'local'))})[/dim]" if current.get('intent_detector_endpoint') else ""),
             f"[cyan]Vision/Image Analysis:[/cyan] {current.get('vision', 'Not configured')}" + (f" [dim]({format_origin(current.get('vision_endpoint', 'local'))})[/dim]" if current.get('vision_endpoint') else ""),
             f"[cyan]Image Generation:[/cyan] {current.get('image_generation', 'Not configured')}" + (f" [dim]({format_origin(current.get('image_generation_endpoint', 'local'))})[/dim]" if current.get('image_generation_endpoint') else ""),
-            f"[cyan]EnergyAnalyst:[/cyan] {current.get('energy_analyst_endpoint', 'http://localhost:8000')} ({energy_status})",
+            f"[cyan]Nehanda RAG:[/cyan] {current.get('nehanda_endpoint', 'http://localhost:8000')} ({energy_status})",
             f"[cyan]HuggingFace Token:[/cyan] {mask_token(current.get('hf_token'))}",
             f"[cyan]OpenAI API Key:[/cyan] {mask_token(current.get('openai_api_key', ''))}",
             f"[cyan]Anthropic API Key:[/cyan] {mask_token(current.get('anthropic_api_key', ''))}",
@@ -417,11 +417,11 @@ class ModelSelector:
             "enabled": True
         }
 
-    def select_energy_analyst_endpoint(self, current_endpoint: str, current_enabled: bool) -> Optional[Dict[str, any]]:
-        """Interactive EnergyAnalyst endpoint selection."""
+    def select_nehanda_endpoint(self, current_endpoint: str, current_enabled: bool) -> Optional[Dict[str, any]]:
+        """Interactive Nehanda RAG endpoint selection."""
         from rich.table import Table
 
-        self.ui.console.print(f"\n[bold]Configure EnergyAnalyst Endpoint[/bold]")
+        self.ui.console.print(f"\n[bold]Configure Nehanda RAG Endpoint[/bold]")
         self.ui.console.print(f"[dim]Current: {current_endpoint} ({'Enabled' if current_enabled else 'Disabled'})[/dim]\n")
 
         # Options table
@@ -432,7 +432,7 @@ class ModelSelector:
 
         options = [
             ("Local (Development)", "http://localhost:8000"),
-            ("Production (Railway)", "https://energyanalystragservice-production.up.railway.app"),
+            ("Production (Railway)", "https://nehandarag-production.up.railway.app"),
             ("Custom URL", "Enter custom endpoint"),
             ("Disable", "Tool will not be called"),
         ]
@@ -453,7 +453,7 @@ class ModelSelector:
             if idx == 1:  # Local
                 return {"endpoint": "http://localhost:8000", "enabled": True}
             elif idx == 2:  # Production
-                return {"endpoint": "https://energyanalystragservice-production.up.railway.app", "enabled": True}
+                return {"endpoint": "https://nehandarag-production.up.railway.app", "enabled": True}
             elif idx == 3:  # Custom
                 self.ui.console.print("\n[bold]Enter custom endpoint URL:[/bold]")
                 self.ui.console.print("[dim]Example: https://your-api.com[/dim]")
@@ -505,16 +505,16 @@ class ModelSelector:
                     replacement = f'"{role}": "{updates[endpoint_key]}"'
                     content = re.sub(pattern, replacement, content)
 
-            # Update EnergyAnalyst endpoint
-            if "energy_analyst_endpoint" in updates:
+            # Update Nehanda endpoint
+            if "nehanda_endpoint" in updates:
                 pattern = r'"endpoint":\s*"[^"]*"'
-                replacement = f'"endpoint": "{updates["energy_analyst_endpoint"]}"'
+                replacement = f'"endpoint": "{updates["nehanda_endpoint"]}"'
                 content = re.sub(pattern, replacement, content)
 
-            # Update EnergyAnalyst enabled status
-            if "energy_analyst_enabled" in updates:
+            # Update Nehanda enabled status
+            if "nehanda_enabled" in updates:
                 pattern = r'"enabled":\s*(True|False)'
-                replacement = f'"enabled": {updates["energy_analyst_enabled"]}'
+                replacement = f'"enabled": {updates["nehanda_enabled"]}'
                 content = re.sub(pattern, replacement, content)
 
             # Update API keys
@@ -663,14 +663,14 @@ class ModelSelector:
                 updates[role_key] = selection["model"]
                 updates[f"{role_key}_endpoint"] = selection["endpoint"]
 
-        # Configure EnergyAnalyst endpoint
-        energy_config = self.select_energy_analyst_endpoint(
-            current.get('energy_analyst_endpoint', 'http://localhost:8000'),
-            current.get('energy_analyst_enabled', True)
+        # Configure Nehanda endpoint
+        nehanda_config = self.select_nehanda_endpoint(
+            current.get('nehanda_endpoint', 'http://localhost:8000'),
+            current.get('nehanda_enabled', True)
         )
-        if energy_config:
-            updates["energy_analyst_endpoint"] = energy_config["endpoint"]
-            updates["energy_analyst_enabled"] = energy_config["enabled"]
+        if nehanda_config:
+            updates["nehanda_endpoint"] = nehanda_config["endpoint"]
+            updates["nehanda_enabled"] = nehanda_config["enabled"]
 
         # Configure API keys
         new_hf_token = self.configure_hf_token(current.get('hf_token', ''))

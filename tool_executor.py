@@ -330,7 +330,8 @@ class ToolExecutor:
                 "use_coding_agent": "code_context",
                 "use_reasoning_model": "task",
                 "use_search_model": "query",
-                "use_energy_analyst": "query",
+                "use_nehanda": "query",
+                "use_energy_analyst": "query",  # backwards compat alias
                 "get_newsroom_headlines": None,  # No parameters
                 "read_file": "path",
                 "write_file": "content",  # Special case: needs path extraction

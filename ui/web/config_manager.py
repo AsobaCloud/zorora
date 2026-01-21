@@ -56,7 +56,7 @@ class ConfigManager:
                 "openai_endpoints": getattr(config_module, "OPENAI_ENDPOINTS", {}),
                 "anthropic_api_key": getattr(config_module, "ANTHROPIC_API_KEY", None),
                 "anthropic_endpoints": getattr(config_module, "ANTHROPIC_ENDPOINTS", {}),
-                "energy_analyst": getattr(config_module, "ENERGY_ANALYST", {}),
+                "nehanda": getattr(config_module, "NEHANDA", {}),
             }
         except Exception as e:
             logger.error(f"Error reading config: {e}")
@@ -86,7 +86,7 @@ class ConfigManager:
             "openai_endpoints": {},
             "anthropic_api_key": None,
             "anthropic_endpoints": {},
-            "energy_analyst": {
+            "nehanda": {
                 "endpoint": "http://localhost:8000",
                 "enabled": True,
             },
@@ -180,8 +180,8 @@ class ConfigManager:
                 else:
                     merged[token_key] = token_value
         
-        if "energy_analyst" in updates:
-            merged["energy_analyst"] = {**current.get("energy_analyst", {}), **updates["energy_analyst"]}
+        if "nehanda" in updates:
+            merged["nehanda"] = {**current.get("nehanda", {}), **updates["nehanda"]}
         
         return merged
     
@@ -354,9 +354,9 @@ class ConfigManager:
         
         lines.append('}')
         lines.append('')
-        lines.append('# External API Configuration')
-        lines.append('ENERGY_ANALYST = {')
-        energy_config = config.get("energy_analyst", {})
+        lines.append('# Nehanda RAG Configuration (Energy Policy Analysis)')
+        lines.append('NEHANDA = {')
+        energy_config = config.get("nehanda", {})
         lines.append(f'    "endpoint": "{energy_config.get("endpoint", "http://localhost:8000")}",')
         lines.append(f'    "timeout": {energy_config.get("timeout", 180)},')
         lines.append(f'    "enabled": {energy_config.get("enabled", True)},')

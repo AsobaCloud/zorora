@@ -26,7 +26,7 @@ Available Tools (with signatures):
    Use when: Research using AI knowledge (not web search)
    Examples: "explain concept", "what is X", "how does Y work", "tell me about"
 
-5. use_energy_analyst(query: str) -> str
+5. use_nehanda(query: str) -> str
    Use when: Energy policy, FERC, ISO, NEM, tariffs, regulatory compliance
    Examples: "FERC Order 2222", "ISO tariff rules", "NEM regulations"
 
@@ -91,7 +91,7 @@ User: "Explain how React hooks work"
 You: {"tool": "use_search_model", "input": "Explain how React hooks work", "confidence": 0.90}
 
 User: "What are FERC Order 2222 requirements?"
-You: {"tool": "use_energy_analyst", "input": "FERC Order 2222 requirements", "confidence": 0.95}
+You: {"tool": "use_nehanda", "input": "FERC Order 2222 requirements", "confidence": 0.95}
 
 User: "Show me today's headlines"
 You: {"tool": "get_newsroom_headlines", "input": "", "confidence": 0.98}

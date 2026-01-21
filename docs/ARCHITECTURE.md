@@ -137,7 +137,7 @@ tools/
 │   ├── reasoning.py         # use_reasoning_model
 │   ├── search.py            # use_search_model
 │   ├── intent.py            # use_intent_detector
-│   └── energy.py            # use_energy_analyst (RAG)
+│   └── energy.py            # use_nehanda (Nehanda RAG)
 └── image/                   # Image tools
     ├── analyze.py           # analyze_image (vision model)
     ├── generate.py          # generate_image (Flux Schnell)

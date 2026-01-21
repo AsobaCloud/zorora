@@ -56,7 +56,7 @@ Available tools:
 - use_reasoning_model: User wants analysis/planning/thinking (keywords: "analyze", "deep dive", "implications", "think deeply", "examine", "investigate") - PRIORITIZE this over read_file if analysis keywords present
 - web_search: User wants current web information (keywords: "search", "latest", "current news", "what's happening")
 - get_newsroom_headlines: User wants today's news from Asoba newsroom (keywords: "today's news", "newsroom", "headlines today")
-- use_energy_analyst: User wants energy policy/regulatory info (keywords: "FERC", "ISO", "NEM", "tariff", "energy regulation")
+- use_nehanda: User wants energy policy/regulatory info (keywords: "FERC", "ISO", "NEM", "tariff", "energy regulation")
 - use_search_model: User wants general knowledge questions (keywords: "what is", "explain", "how does")
 
 CRITICAL PRIORITY RULES:

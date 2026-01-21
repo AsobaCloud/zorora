@@ -157,7 +157,7 @@ class TurnProcessor:
             param_name = "query"
         elif tool_name == "use_search_model":
             param_name = "query"
-        elif tool_name == "use_energy_analyst":
+        elif tool_name in ["use_nehanda", "use_energy_analyst"]:
             param_name = "query"
 
         if not param_name or param_name not in arguments:
@@ -432,7 +432,7 @@ class TurnProcessor:
             return result
 
         # Handle specialist tools by passing user input as parameter
-        elif tool_name in ["use_coding_agent", "use_reasoning_model", "use_search_model", "use_energy_analyst", "web_search"]:
+        elif tool_name in ["use_coding_agent", "use_reasoning_model", "use_search_model", "use_nehanda", "use_energy_analyst", "web_search"]:
             return self._execute_specialist_tool(tool_name, user_input)
 
         return None
@@ -560,7 +560,8 @@ class TurnProcessor:
             "use_coding_agent": "code_context",
             "use_reasoning_model": "task",
             "use_search_model": "query",
-            "use_energy_analyst": "query",
+            "use_nehanda": "query",
+            "use_energy_analyst": "query",  # backwards compat alias
             "web_search": "query",
             "generate_image": "prompt",
         }
@@ -1008,13 +1009,13 @@ NEW_CODE:
             return (result or "Error executing reasoning model"), time.time() - total_start_time
 
         elif workflow == "energy":
-            # EnergyAnalyst RAG query for policy documents
+            # Nehanda RAG query for policy documents
             # Only accessible via /analyst slash command
-            logger.info("Querying EnergyAnalyst RAG for policy documents")
-            result = self._execute_specialist_tool("use_energy_analyst", user_input)
+            logger.info("Querying Nehanda RAG for policy documents")
+            result = self._execute_specialist_tool("use_nehanda", user_input)
             if result:
                 self.conversation.add_assistant_message(content=result)
-            return (result or "Error executing EnergyAnalyst query"), time.time() - total_start_time
+            return (result or "Error executing Nehanda query"), time.time() - total_start_time
 
         elif workflow == "image":
             # Image generation with FLUX

@@ -261,12 +261,12 @@ For complex topics, break into multiple queries:
 - Save each as separate research file
 - Combine insights manually if needed
 
-### Use EnergyAnalyst for Policy Queries
+### Use Nehanda for Policy Queries
 
 For energy policy questions, use `/analyst`:
 - Accesses 485+ policy documents
 - More accurate than web search
-- Requires EnergyAnalyst API server
+- Requires Nehanda API server
 
 ## Development Workflow
 
