@@ -4,8 +4,29 @@ Nehanda RAG tool for energy policy and regulatory queries.
 
 import logging
 import requests
+from typing import Optional, List
 
 logger = logging.getLogger(__name__)
+
+
+def _get_available_municipalities(endpoint: str, timeout: int = 10) -> List[str]:
+    """Fetch available municipalities from the Nehanda API."""
+    try:
+        response = requests.get(f"{endpoint.rstrip('/')}/municipalities", timeout=timeout)
+        response.raise_for_status()
+        return response.json().get("municipalities", [])
+    except Exception as e:
+        logger.warning(f"Could not fetch municipalities: {e}")
+        return []
+
+
+def _detect_municipality(query: str, available: List[str]) -> Optional[str]:
+    """Detect municipality name from query text."""
+    query_lower = query.lower()
+    for muni in available:
+        if muni.lower() in query_lower:
+            return muni
+    return None
 
 
 def use_nehanda(query: str) -> str:
@@ -40,10 +61,22 @@ def use_nehanda(query: str) -> str:
 
         logger.info(f"Using Nehanda endpoint: {endpoint}")
 
-        # Make API request
+        # Get available municipalities and detect from query
+        available_municipalities = _get_available_municipalities(endpoint)
+        municipality = _detect_municipality(query, available_municipalities)
+
+        if not municipality:
+            if available_municipalities:
+                return f"Please specify a municipality in your question. Available: {', '.join(available_municipalities)}"
+            else:
+                return "Error: Could not fetch available municipalities from Nehanda API. Is the server running?"
+
+        logger.info(f"Detected municipality: {municipality}")
+
+        # Make API request with municipality
         response = requests.post(
             api_url,
-            json={"message": query, "use_rag": True},
+            json={"message": query, "municipality": municipality, "use_rag": True},
             timeout=timeout
         )
         response.raise_for_status()
