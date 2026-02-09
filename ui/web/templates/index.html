@@ -1039,6 +1039,57 @@
             thread.scrollTop = thread.scrollHeight;
         }
 
+        async function streamChatReply(endpoint, payload, assistantMessageRef) {
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ...payload, stream: true }),
+            });
+            if (!response.ok || !response.body) {
+                const errorPayload = await response.json().catch(() => ({}));
+                throw new Error(errorPayload.error || 'Streaming chat failed');
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+
+                let splitIndex = buffer.indexOf('\n\n');
+                while (splitIndex !== -1) {
+                    const chunk = buffer.slice(0, splitIndex);
+                    buffer = buffer.slice(splitIndex + 2);
+                    splitIndex = buffer.indexOf('\n\n');
+
+                    const dataLine = chunk.split('\n').find(line => line.startsWith('data: '));
+                    if (!dataLine) continue;
+                    const eventData = JSON.parse(dataLine.slice(6));
+                    if (eventData.delta) {
+                        assistantMessageRef.content += eventData.delta;
+                        renderChatThread();
+                    }
+                    if (eventData.done) {
+                        return;
+                    }
+                }
+            }
+        }
+
+        function prefillChatForSource(title, url) {
+            if (!sessionActive || !currentSession) return;
+            const input = document.getElementById('chatInput');
+            const safeTitle = (title || 'this source').trim();
+            const safeUrl = (url || '').trim();
+            input.value = safeUrl
+                ? `Discuss this source: ${safeTitle} (${safeUrl}). What are the key claims and what should I be cautious about?`
+                : `Discuss this source: ${safeTitle}. What are the key claims and what should I be cautious about?`;
+            input.focus();
+        }
+
         document.getElementById('chatForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             if (!currentSession) return;
@@ -1076,17 +1127,14 @@
                     };
                 }
 
-                const response = await fetch(endpoint, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload),
-                });
-                const data = await response.json();
-                if (!response.ok) {
-                    throw new Error(data.error || 'Chat follow-up failed');
-                }
-                chatMessages.push({ role: 'assistant', content: data.reply || 'No response available' });
+                const assistantMessageRef = { role: 'assistant', content: '' };
+                chatMessages.push(assistantMessageRef);
                 renderChatThread();
+                await streamChatReply(endpoint, payload, assistantMessageRef);
+                if (!assistantMessageRef.content) {
+                    assistantMessageRef.content = 'No response available';
+                    renderChatThread();
+                }
             } catch (error) {
                 chatMessages.push({ role: 'assistant', content: `Error: ${error.message}` });
                 renderChatThread();
@@ -1572,16 +1620,21 @@
                 const sourceType = source.source_type || 'unknown';
                 const publicationDate = source.publication_date ? String(source.publication_date).slice(0, 10) : '';
                 const snippet = source.content_snippet || '';
+                const safeTitle = escapeHtml(title);
+                const safeUrl = escapeHtml(url);
                 return `
                     <div style="border: 1px solid #E5E7EB; border-radius: 8px; padding: 16px; transition: all 0.2s;">
                         <div style="font-weight: 600; color: #1A1A1A; margin-bottom: 8px;">
-                            ${url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" style="color: #6366f1; text-decoration: none;">${escapeHtml(title)}</a>` : escapeHtml(title)}
+                            ${url ? `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" style="color: #6366f1; text-decoration: none;">${safeTitle}</a>` : safeTitle}
                         </div>
-                        ${url ? `<div style="margin-bottom: 8px;"><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" style="color: #6B7280; text-decoration: none; font-size: 0.9rem; word-break: break-all;">${escapeHtml(url)}</a></div>` : ''}
+                        ${url ? `<div style="margin-bottom: 8px;"><a href="${safeUrl}" target="_blank" rel="noopener noreferrer" style="color: #6B7280; text-decoration: none; font-size: 0.9rem; word-break: break-all;">${safeUrl}</a></div>` : ''}
                         <div style="color: #6B7280; font-size: 0.9rem; margin-bottom: 6px;">
                             Credibility: ${credibility.toFixed(0)}%${category && category !== 'Unknown source' ? ` (${escapeHtml(category)})` : ''} | Type: ${escapeHtml(sourceType)}${publicationDate ? ` | Date: ${escapeHtml(publicationDate)}` : ''}
                         </div>
                         ${snippet ? `<div style="color:#4B5563; font-size:0.88rem;">${escapeHtml(snippet)}</div>` : ''}
+                        <div style="margin-top:10px;">
+                            <button type="button" onclick="prefillChatForSource(${JSON.stringify(title || 'Untitled Source')}, ${JSON.stringify(url || '')})" style="border:1px solid #E5E7EB;background:#fff;color:#374151;padding:6px 10px;border-radius:8px;cursor:pointer;font-size:0.82rem;">Discuss this source</button>
+                        </div>
                     </div>
                 `;
             }).join('');
@@ -1614,6 +1667,9 @@
                                     <div style="font-size:0.86rem; color:#6B7280;">
                                         ${(article.date || '').toString().slice(0, 10)} | ${escapeHtml(article.source || 'Unknown')}
                                         ${(article.topic_tags || []).length ? ` | Topics: ${escapeHtml((article.topic_tags || []).slice(0, 4).join(', '))}` : ''}
+                                    </div>
+                                    <div style="margin-top:10px;">
+                                        <button type="button" onclick="prefillChatForSource(${JSON.stringify((article.headline || 'Untitled'))}, ${JSON.stringify((article.url || ''))})" style="border:1px solid #E5E7EB;background:#fff;color:#374151;padding:6px 10px;border-radius:8px;cursor:pointer;font-size:0.82rem;">Discuss this source</button>
                                     </div>
                                 </div>
                             `).join('')}

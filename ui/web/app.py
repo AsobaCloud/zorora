@@ -211,6 +211,16 @@ def _compose_chat_reply(
     return "\n".join(fallback)
 
 
+def _stream_reply_events(reply: str):
+    """Yield SSE events that incrementally stream a reply."""
+    chunk_size = 120
+    for i in range(0, len(reply), chunk_size):
+        delta = reply[i:i + chunk_size]
+        payload = {"delta": delta, "done": False}
+        yield f"data: {json.dumps(payload)}\n\n"
+    yield f"data: {json.dumps({'delta': '', 'done': True})}\n\n"
+
+
 @app.route('/')
 def index():
     """Render main research UI"""
@@ -424,6 +434,13 @@ def research_chat(research_id):
         thread.append({"role": "user", "content": message, "at": datetime.now(timezone.utc).isoformat()})
         thread.append({"role": "assistant", "content": reply, "at": datetime.now(timezone.utc).isoformat()})
 
+        if bool(data.get("stream", False)):
+            return Response(
+                stream_with_context(_stream_reply_events(reply)),
+                mimetype='text/event-stream',
+                headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'},
+            )
+
         return jsonify(
             {
                 "reply": reply,
@@ -578,6 +595,13 @@ def news_intel_chat():
         thread = chat_threads.setdefault(thread_key, [])
         thread.append({"role": "user", "content": message, "at": datetime.now(timezone.utc).isoformat()})
         thread.append({"role": "assistant", "content": reply, "at": datetime.now(timezone.utc).isoformat()})
+
+        if bool(data.get("stream", False)):
+            return Response(
+                stream_with_context(_stream_reply_events(reply)),
+                mimetype='text/event-stream',
+                headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'},
+            )
 
         return jsonify({"reply": reply, "mode": "evidence" if strict_citations else "advisory", "thread_size": len(thread)})
     except Exception as e:

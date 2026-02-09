@@ -164,6 +164,56 @@ class WebNewsIntelApiTests(unittest.TestCase):
         self.assertIn("Watch shipment trends", payload["reply"])
         self.assertEqual(payload["mode"], "evidence")
 
+    def test_research_chat_stream_mode_returns_sse(self):
+        research_data = {
+            "original_query": "AI infrastructure spending",
+            "synthesis": "Capex remains elevated across hyperscalers.",
+            "sources": [{"source_id": "s1", "title": "Quarterly capex update", "url": "https://example.com/a", "source_type": "web"}],
+        }
+        fake_client = Mock()
+        fake_client.chat_complete.return_value = {"choices": []}
+        fake_client.extract_content.return_value = "Grounded stream reply [Quarterly capex update]."
+
+        with patch.object(web_app, "_load_research_by_id", return_value=research_data), \
+             patch.object(web_app, "create_specialist_client", return_value=fake_client):
+            response = self.client.post(
+                "/api/research/rid-stream/chat",
+                json={"message": "Stream this", "history": [], "strict_citations": True, "stream": True},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, "text/event-stream")
+        body = response.get_data(as_text=True)
+        self.assertIn("data:", body)
+        self.assertIn("Grounded stream reply", body)
+
+    def test_news_intel_chat_stream_mode_returns_sse(self):
+        fake_client = Mock()
+        fake_client.chat_complete.return_value = {"choices": []}
+        fake_client.extract_content.return_value = "Watch stream signals [Energy grid shifts]."
+
+        with patch.object(web_app, "create_specialist_client", return_value=fake_client):
+            response = self.client.post(
+                "/api/news-intel/chat",
+                json={
+                    "message": "Stream this",
+                    "topic": "energy",
+                    "date_from": "2026-01-01",
+                    "date_to": "2026-01-31",
+                    "articles": [{"headline": "Energy grid shifts", "date": "2026-01-10", "source": "Desk", "url": "https://a"}],
+                    "synthesis": "Grid themes are broadening.",
+                    "history": [],
+                    "strict_citations": True,
+                    "stream": True,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, "text/event-stream")
+        body = response.get_data(as_text=True)
+        self.assertIn("data:", body)
+        self.assertIn("Watch stream signals", body)
+
 
 if __name__ == "__main__":
     unittest.main()
