@@ -516,11 +516,39 @@ See LICENSE file.
 
 **Repository:** https://github.com/AsobaCloud/zorora
 **Nehanda:** https://huggingface.co/asoba/nehanda-v1-7b
-**Version:** 2.5.0 (ONA Platform Integration & Enhanced Editing)
+**Version:** 2.6.0 (Session Chat UX & Streaming Follow-Ups)
 
 ---
 
 ## Changelog
+
+### Version 2.6.0 - Session Chat UX & Streaming Follow-Ups
+
+**Major Features:**
+- Session-mode web UX for research/news discussions:
+  - initial search panel transitions out after run,
+  - `+ New Search` restores fresh search state,
+  - bottom-docked follow-up input (ChatGPT-style).
+- Discussion panel for iterative chat on current research/news context.
+- Quick action buttons on source/article cards: `Discuss this source`.
+- Streaming follow-up chat responses via SSE (`stream=true`) for:
+  - `POST /api/research/<research_id>/chat`
+  - `POST /api/news-intel/chat`
+
+**News Intel & History UX:**
+- News Intel tab with topic/date-filtered synthesis flow.
+- Recent Research panel now collapsible with persisted state and bounded internal scroll.
+- History update badge while collapsed.
+
+**Reliability Improvements:**
+- Shared deep research service path for web/repl consistency.
+- Direct research ID retrieval preference in web fetch path.
+- Added source metadata (`publication_date`, `content_snippet`) to result payloads.
+
+**Testing:**
+- Added web API coverage for chat endpoints, streaming mode, and News Intel behaviors.
+
+See [docs/RELEASE_NOTES_v2.6.0.md](docs/RELEASE_NOTES_v2.6.0.md) for full details.
 
 ### Version 2.5.0 - ONA Platform Integration & Enhanced Editing
 
