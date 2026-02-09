@@ -6,7 +6,6 @@ import logging
 import threading
 from pathlib import Path
 from typing import List, Dict, Optional, Any
-from datetime import datetime
 
 from engine.models import ResearchState
 
@@ -96,6 +95,22 @@ class LocalStorage:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_cited_by ON citations(cites_source_id)")
 
         conn.commit()
+
+    def close(self):
+        """Close thread-local SQLite connection if open."""
+        conn = getattr(self._local, 'conn', None)
+        if conn is not None:
+            try:
+                conn.close()
+            finally:
+                delattr(self._local, 'conn')
+
+    def __del__(self):
+        """Best-effort cleanup for SQLite connection."""
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def save_research(self, state: ResearchState) -> str:
         """Save research to SQLite + JSON file"""

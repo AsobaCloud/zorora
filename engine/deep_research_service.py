@@ -142,6 +142,8 @@ def build_results_payload(state: ResearchState, query: str, research_id: Optiona
                 "credibility_score": s.credibility_score or 0.0,
                 "credibility_category": s.credibility_category or "Unknown",
                 "source_type": s.source_type or "unknown",
+                "publication_date": s.publication_date or "",
+                "content_snippet": s.content_snippet or "",
             }
             for s in state.sources_checked[:max_sources]
         ],

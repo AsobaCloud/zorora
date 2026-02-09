@@ -4,11 +4,15 @@ import logging
 import threading
 import uuid
 import json
+from datetime import datetime, timezone
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context
 
 from engine.research_engine import ResearchEngine
 from engine.deep_research_service import run_deep_research, build_results_payload
 from ui.web.config_manager import ConfigManager, ModelFetcher
+from tools.research.newsroom import fetch_newsroom_api
+from tools.specialist.client import create_specialist_client
+import config
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +29,186 @@ model_fetcher = ModelFetcher()
 
 # Progress tracking for research workflows
 research_progress = {}  # {research_id: {"status": str, "message": str, "phase": str}}
+chat_threads = {}  # lightweight in-memory thread store keyed by context id
+
+
+def _parse_date(date_str: str):
+    """Parse date string to date object (supports ISO prefixes)."""
+    if not date_str:
+        return None
+    try:
+        return datetime.strptime(str(date_str)[:10], "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+
+def _filter_newsroom_articles(articles, topic=None, date_from=None, date_to=None, limit=100):
+    """Filter newsroom articles by topic and date range."""
+    topic_terms = [t.strip().lower() for t in (topic or "").split() if t.strip()]
+    start_date = _parse_date(date_from)
+    end_date = _parse_date(date_to)
+    filtered = []
+
+    for article in articles:
+        article_date = _parse_date(article.get("date"))
+        if start_date and (not article_date or article_date < start_date):
+            continue
+        if end_date and (not article_date or article_date > end_date):
+            continue
+
+        if topic_terms:
+            title = str(article.get("headline", "")).lower()
+            source = str(article.get("source", "")).lower()
+            tags = " ".join(str(t).lower() for t in article.get("topic_tags", []))
+            haystack = f"{title} {source} {tags}"
+            if not all(term in haystack for term in topic_terms):
+                continue
+
+        filtered.append(article)
+
+    filtered.sort(key=lambda x: str(x.get("date", "")), reverse=True)
+    return filtered[:limit]
+
+
+def _news_intel_synthesis(articles, topic=None, date_from=None, date_to=None):
+    """Synthesize filtered newsroom articles."""
+    if not articles:
+        return "No articles matched the selected filters."
+
+    entries = []
+    for article in articles[:80]:
+        headline = article.get("headline", "Untitled")
+        source = article.get("source", "Unknown")
+        date_str = article.get("date", "")[:10]
+        url = article.get("url", "")
+        topics = ", ".join(article.get("topic_tags", [])[:6])
+        entries.append(f"- [{date_str}] {headline} ({source})\\n  Topics: {topics}\\n  URL: {url}")
+
+    scope = f"topic='{topic or 'all'}', date_from='{date_from or 'none'}', date_to='{date_to or 'none'}'"
+    prompt = (
+        "You are producing a newsroom intelligence brief from API-fetched articles.\\n"
+        f"Scope: {scope}\\n"
+        f"Total articles: {len(articles)}\\n\\n"
+        "Provide:\\n"
+        "1) Executive Summary (4-6 bullets)\\n"
+        "2) Key Themes\\n"
+        "3) Notable Signals/Risks\\n"
+        "4) Watchlist (next 1-2 weeks)\\n"
+        "Use citations as [Headline].\\n\\n"
+        "Articles:\\n"
+        + "\\n\\n".join(entries)
+    )
+
+    try:
+        model_config = config.SPECIALIZED_MODELS["reasoning"]
+        client = create_specialist_client("reasoning", model_config)
+        messages = [
+            {"role": "system", "content": "You are a concise intelligence analyst."},
+            {"role": "user", "content": prompt},
+        ]
+        response = client.chat_complete(messages, tools=None)
+        content = client.extract_content(response)
+        if content and content.strip():
+            return content.strip()
+    except Exception as e:
+        logger.warning(f"News intel synthesis fallback triggered: {e}")
+
+    # Deterministic fallback summary
+    theme_counts = {}
+    for article in articles:
+        for tag in article.get("topic_tags", [])[:3]:
+            key = str(tag).strip()
+            if key:
+                theme_counts[key] = theme_counts.get(key, 0) + 1
+    top_themes = sorted(theme_counts.items(), key=lambda x: x[1], reverse=True)[:8]
+    bullets = [f"- {name}: {count} mentions" for name, count in top_themes]
+    latest = [f"- [{a.get('date', '')[:10]}] {a.get('headline', 'Untitled')}" for a in articles[:8]]
+    return (
+        f"News Intel Summary ({len(articles)} articles)\\n\\n"
+        "Top Themes:\\n"
+        + ("\\n".join(bullets) if bullets else "- No dominant themes detected")
+        + "\\n\\nRecent Headlines:\\n"
+        + "\\n".join(latest)
+    )
+
+
+def _load_research_by_id(research_id: str):
+    """Load research by exact ID with metadata fallback."""
+    research_data = research_engine.load_research(research_id)
+    if research_data:
+        return research_data
+
+    results = research_engine.search_research(query=research_id, limit=1)
+    if not results:
+        return None
+    return research_engine.load_research(results[0]["research_id"])
+
+
+def _compose_chat_reply(
+    message: str,
+    context_label: str,
+    context_summary: str,
+    sources: list,
+    history: list,
+    strict_citations: bool = True,
+):
+    """Generate a grounded chat reply for research/news follow-ups."""
+    source_lines = []
+    for source in sources[:30]:
+        title = source.get("title") or source.get("headline") or "Untitled"
+        source_type = source.get("source_type") or source.get("source") or "unknown"
+        url = source.get("url", "")
+        publication_date = str(source.get("publication_date") or source.get("date") or "")[:10]
+        source_lines.append(f"- {title} | {source_type} | {publication_date} | {url}")
+
+    history_lines = []
+    for item in history[-8:]:
+        role = "User" if item.get("role") == "user" else "Assistant"
+        content = str(item.get("content", ""))[:900]
+        if content:
+            history_lines.append(f"{role}: {content}")
+
+    strict_instructions = (
+        "Use only provided context and sources. If evidence is insufficient, say so explicitly."
+        if strict_citations
+        else "Prioritize provided context and sources; clearly label any inference beyond them."
+    )
+
+    prompt = (
+        "You are an evidence-grounded research assistant responding to a follow-up discussion prompt.\n"
+        f"Context: {context_label}\n"
+        f"Context summary:\n{context_summary[:4000]}\n\n"
+        f"Source list:\n{chr(10).join(source_lines) if source_lines else '- No sources provided'}\n\n"
+        f"Prior conversation:\n{chr(10).join(history_lines) if history_lines else '- No previous messages'}\n\n"
+        f"User question: {message}\n\n"
+        f"Rules: {strict_instructions}\n"
+        "Keep response concise, cite sources inline using bracket format [Source Title]."
+    )
+
+    try:
+        model_config = config.SPECIALIZED_MODELS["reasoning"]
+        client = create_specialist_client("reasoning", model_config)
+        response = client.chat_complete(
+            [
+                {"role": "system", "content": "You provide grounded follow-up analysis with clear citations."},
+                {"role": "user", "content": prompt},
+            ],
+            tools=None,
+        )
+        content = client.extract_content(response)
+        if content and content.strip():
+            return content.strip()
+    except Exception as e:
+        logger.warning(f"Chat reply fallback triggered: {e}")
+
+    fallback = []
+    if sources:
+        fallback.append("Evidence available from current sources:")
+        for source in sources[:4]:
+            title = source.get("title") or source.get("headline") or "Untitled"
+            fallback.append(f"- [{title}]")
+    fallback.append("I could not run full synthesis; please retry this follow-up.")
+    return "\n".join(fallback)
 
 
 @app.route('/')
@@ -188,15 +372,7 @@ def get_research(research_id):
     }
     """
     try:
-        # Search for research by ID pattern
-        results = research_engine.search_research(query=research_id, limit=1)
-        
-        if not results:
-            return jsonify({"error": "Research not found"}), 404
-        
-        # Load full research data
-        research_data = research_engine.load_research(results[0]['research_id'])
-        
+        research_data = _load_research_by_id(research_id)
         if not research_data:
             return jsonify({"error": "Research data not found"}), 404
         
@@ -204,6 +380,208 @@ def get_research(research_id):
         
     except Exception as e:
         logger.error(f"Get research error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/research/<research_id>/chat', methods=['POST'])
+def research_chat(research_id):
+    """Follow-up chat for a research session."""
+    try:
+        data = request.get_json() or {}
+        message = (data.get("message") or "").strip()
+        if not message:
+            return jsonify({"error": "message is required"}), 400
+
+        strict_citations = bool(data.get("strict_citations", True))
+        history = data.get("history") or []
+        selected_source_ids = set(data.get("selected_source_ids") or [])
+
+        research_data = _load_research_by_id(research_id)
+        if not research_data:
+            return jsonify({"error": "Research not found"}), 404
+
+        original_query = research_data.get("query") or research_data.get("original_query") or "research query"
+        synthesis = research_data.get("synthesis") or ""
+        sources = research_data.get("sources") or []
+
+        if selected_source_ids:
+            scoped_sources = [s for s in sources if (s.get("source_id") in selected_source_ids)]
+        else:
+            scoped_sources = sources
+
+        context_summary = f"Query: {original_query}\n\nSynthesis:\n{synthesis}"
+        reply = _compose_chat_reply(
+            message=message,
+            context_label=f"Deep Research ({research_id})",
+            context_summary=context_summary,
+            sources=scoped_sources,
+            history=history,
+            strict_citations=strict_citations,
+        )
+
+        thread_key = f"research:{research_id}"
+        thread = chat_threads.setdefault(thread_key, [])
+        thread.append({"role": "user", "content": message, "at": datetime.now(timezone.utc).isoformat()})
+        thread.append({"role": "assistant", "content": reply, "at": datetime.now(timezone.utc).isoformat()})
+
+        return jsonify(
+            {
+                "reply": reply,
+                "mode": "evidence" if strict_citations else "advisory",
+                "used_source_ids": [s.get("source_id") for s in scoped_sources[:8] if s.get("source_id")],
+                "thread_size": len(thread),
+            }
+        )
+    except Exception as e:
+        logger.error(f"Research chat error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/news-intel/articles', methods=['POST'])
+def get_news_intel_articles():
+    """Fetch newsroom articles from API and filter by topic/date range."""
+    try:
+        data = request.get_json() or {}
+        topic = (data.get("topic") or "").strip()
+        date_from = data.get("date_from")
+        date_to = data.get("date_to")
+        limit = int(data.get("limit", 100))
+        limit = max(1, min(limit, 200))
+
+        today = datetime.now(timezone.utc).date()
+        start_date = _parse_date(date_from)
+        end_date = _parse_date(date_to)
+        if start_date and end_date and start_date > end_date:
+            return jsonify({"error": "date_from must be <= date_to"}), 400
+
+        days_back = 365
+        if start_date:
+            days_back = max(1, min(365, (today - start_date).days + 1))
+
+        articles = fetch_newsroom_api(query=None, days_back=days_back, max_results=500)
+        filtered = _filter_newsroom_articles(
+            articles,
+            topic=topic,
+            date_from=date_from,
+            date_to=date_to,
+            limit=limit,
+        )
+
+        serialized = [
+            {
+                "headline": article.get("headline", "Untitled"),
+                "date": article.get("date", ""),
+                "source": article.get("source", "Unknown"),
+                "url": article.get("url", ""),
+                "topic_tags": article.get("topic_tags", []),
+                "geography_tags": article.get("geography_tags", []),
+                "country_tags": article.get("country_tags", []),
+            }
+            for article in filtered
+        ]
+        return jsonify({"count": len(serialized), "articles": serialized})
+    except Exception as e:
+        logger.error(f"News intel articles error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/news-intel/synthesize', methods=['POST'])
+def synthesize_news_intel():
+    """Synthesize filtered newsroom articles fetched via newsroom API."""
+    try:
+        data = request.get_json() or {}
+        topic = (data.get("topic") or "").strip()
+        date_from = data.get("date_from")
+        date_to = data.get("date_to")
+        limit = int(data.get("limit", 100))
+        limit = max(1, min(limit, 200))
+
+        today = datetime.now(timezone.utc).date()
+        start_date = _parse_date(date_from)
+        end_date = _parse_date(date_to)
+        if start_date and end_date and start_date > end_date:
+            return jsonify({"error": "date_from must be <= date_to"}), 400
+
+        days_back = 365
+        if start_date:
+            days_back = max(1, min(365, (today - start_date).days + 1))
+
+        articles = fetch_newsroom_api(query=None, days_back=days_back, max_results=500)
+        filtered = _filter_newsroom_articles(
+            articles,
+            topic=topic,
+            date_from=date_from,
+            date_to=date_to,
+            limit=limit,
+        )
+        synthesis = _news_intel_synthesis(filtered, topic=topic, date_from=date_from, date_to=date_to)
+
+        return jsonify(
+            {
+                "topic": topic,
+                "date_from": date_from,
+                "date_to": date_to,
+                "count": len(filtered),
+                "synthesis": synthesis,
+                "articles": [
+                    {
+                        "headline": article.get("headline", "Untitled"),
+                        "date": article.get("date", ""),
+                        "source": article.get("source", "Unknown"),
+                        "url": article.get("url", ""),
+                        "topic_tags": article.get("topic_tags", []),
+                    }
+                    for article in filtered
+                ],
+            }
+        )
+    except Exception as e:
+        logger.error(f"News intel synthesis error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/news-intel/chat', methods=['POST'])
+def news_intel_chat():
+    """Follow-up chat for a news-intel synthesis session."""
+    try:
+        data = request.get_json() or {}
+        message = (data.get("message") or "").strip()
+        if not message:
+            return jsonify({"error": "message is required"}), 400
+
+        topic = (data.get("topic") or "").strip()
+        date_from = data.get("date_from")
+        date_to = data.get("date_to")
+        strict_citations = bool(data.get("strict_citations", True))
+        history = data.get("history") or []
+        articles = data.get("articles") or []
+        synthesis = data.get("synthesis") or ""
+        session_id = (data.get("session_id") or "").strip() or f"{topic}:{date_from}:{date_to}"
+
+        if not articles:
+            return jsonify({"error": "articles are required for news-intel chat context"}), 400
+
+        context_summary = (
+            f"Topic: {topic or 'All'}\nDate From: {date_from or 'Any'}\nDate To: {date_to or 'Any'}\n\n"
+            f"Synthesis:\n{synthesis}"
+        )
+        reply = _compose_chat_reply(
+            message=message,
+            context_label=f"News Intel ({session_id})",
+            context_summary=context_summary,
+            sources=articles,
+            history=history,
+            strict_citations=strict_citations,
+        )
+
+        thread_key = f"news:{session_id}"
+        thread = chat_threads.setdefault(thread_key, [])
+        thread.append({"role": "user", "content": message, "at": datetime.now(timezone.utc).isoformat()})
+        thread.append({"role": "assistant", "content": reply, "at": datetime.now(timezone.utc).isoformat()})
+
+        return jsonify({"reply": reply, "mode": "evidence" if strict_citations else "advisory", "thread_size": len(thread)})
+    except Exception as e:
+        logger.error(f"News intel chat error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
