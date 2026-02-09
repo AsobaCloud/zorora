@@ -42,8 +42,7 @@ except ImportError:
     TextArea = None
 
 from config import (
-    UI_ENABLED, UI_NO_COLOR, UI_MARKDOWN_RENDERING,
-    UI_SPINNER_STYLE, UI_SHOW_TOKEN_COUNT, UI_THEME
+    UI_MARKDOWN_RENDERING, UI_SHOW_TOKEN_COUNT, UI_THEME
 )
 from ui.progress_events import ProgressEvent, ProgressEventQueue, EventType
 
@@ -87,14 +86,13 @@ class ZororaUI:
             sys.stderr.flush()
             # Print a newline to ensure we're on a fresh line
             print()
-        except:
+        except Exception:
             pass
 
     def display_welcome(self, model: str, version: str = "1.0.0"):
         """Display welcome banner."""
         from rich.align import Align
         from rich.columns import Columns
-        from rich.table import Table
 
         # Left column: ASCII logo and welcome
         left_text = Text()
@@ -156,7 +154,7 @@ class ZororaUI:
         right_text.append(" /models", style="cyan")
         right_text.append("  - Configure models\n", style="dim")
         right_text.append(" /config", style="cyan")
-        right_text.append("  - Routing settings\n", style="dim")
+        right_text.append("  - Runtime config\n", style="dim")
         right_text.append(" /history", style="cyan")
         right_text.append(" - View sessions\n", style="dim")
         right_text.append(" /help", style="cyan")

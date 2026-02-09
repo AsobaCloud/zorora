@@ -5,6 +5,7 @@ import os
 import logging
 from repl import REPL
 from config import LOGGING_LEVEL, LOGGING_FORMAT, LOG_FILE
+import config
 
 # Configure logging
 # Always write to file
@@ -27,16 +28,33 @@ logger = logging.getLogger(__name__)
 
 def main():
     """Initialize and run REPL."""
-    # Test LM Studio connection
-    print("Testing LM Studio connection...")
-    try:
-        import requests
-        test_response = requests.get("http://localhost:1234/v1/models", timeout=5)
-        test_response.raise_for_status()
-        print("✓ LM Studio is running\n")
-    except Exception as e:
-        print(f"⚠ Warning: Could not connect to LM Studio: {e}")
-        print("  Make sure LM Studio is running on http://localhost:1234\n")
+    endpoint_key = config.MODEL_ENDPOINTS.get("orchestrator", "local")
+    print(f"Orchestrator endpoint: {endpoint_key}")
+
+    if endpoint_key == "local":
+        print("Testing LM Studio connection...")
+        try:
+            import requests
+            test_response = requests.get("http://localhost:1234/v1/models", timeout=5)
+            test_response.raise_for_status()
+            print("✓ LM Studio is running\n")
+        except Exception as e:
+            print(f"⚠ Warning: Could not connect to LM Studio: {e}")
+            print("  Make sure LM Studio is running on http://localhost:1234\n")
+    elif endpoint_key in getattr(config, "OPENAI_ENDPOINTS", {}):
+        has_key = bool(config.OPENAI_API_KEY or os.getenv("OPENAI_API_KEY"))
+        status = "configured" if has_key else "missing"
+        print(f"Using OpenAI endpoint '{endpoint_key}' (API key: {status})\n")
+    elif endpoint_key in getattr(config, "ANTHROPIC_ENDPOINTS", {}):
+        has_key = bool(config.ANTHROPIC_API_KEY or os.getenv("ANTHROPIC_API_KEY"))
+        status = "configured" if has_key else "missing"
+        print(f"Using Anthropic endpoint '{endpoint_key}' (API key: {status})\n")
+    elif endpoint_key in getattr(config, "HF_ENDPOINTS", {}):
+        hf_cfg = config.HF_ENDPOINTS[endpoint_key]
+        url = hf_cfg.get("url", "unknown")
+        print(f"Using HuggingFace endpoint '{endpoint_key}' ({url})\n")
+    else:
+        print(f"⚠ Warning: Unknown orchestrator endpoint '{endpoint_key}', REPL will apply fallback behavior.\n")
 
     # Initialize and run REPL
     repl = REPL()

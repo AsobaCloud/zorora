@@ -74,12 +74,13 @@ def route(self, user_input: str) -> Dict[str, Any]:
     if re.search(r'\b(write|create|generate).*\b(function|class|script|code)', user_input.lower()):
         return {"workflow": "code", "tool": "use_coding_agent"}
 
-    # Priority 3: Research (questions, multi-source queries)
+    # Priority 3: Research (default for non-file/non-code input)
     if re.search(r'\b(what|why|how|tell me|based on|newsroom|web search)\b', user_input.lower()):
         return {"workflow": "research", "action": "multi_source_research"}
 
-    # Priority 4: Simple Q&A (fallback)
-    return {"workflow": "qa", "tool": "use_reasoning_model"}
+    # Fallback: still route to research for current-information safety
+    # (plain conversational QA is explicitly available via /ask)
+    return {"workflow": "research", "action": "multi_source_research"}
 ```
 
 **No LLM involved** - Pure pattern matching ensures consistent, fast routing.
@@ -157,6 +158,13 @@ Multi-step development workflow:
 - `code_planner.py` - Phase 2: Planning with approval
 - `code_executor.py` - Phase 4: Code execution
 - `code_tools.py` - File operations and linting
+
+### 6. Shared Deep Research Service (`engine/deep_research_service.py`)
+
+Shared execution path for deep-research pipeline (aggregation → credibility → cross-reference → synthesis),
+used by both:
+- Web UI async research endpoint (`ui/web/app.py`)
+- REPL `/deep` command path (`engine/repl_command_processor.py`)
 
 ## Execution Flow
 

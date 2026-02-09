@@ -202,7 +202,7 @@ curl http://localhost:5000/api/research/<research_id>
 ### System Commands
 
 - **`/models`** - Interactive model selector
-- **`/config`** - Show current routing configuration
+- **`/config`** - Show active runtime configuration (read-only)
 - **`/history`** - Browse saved conversation sessions
 - **`/help`** - Show available commands
 - **`exit`, `quit`, `q`** - Exit the REPL
