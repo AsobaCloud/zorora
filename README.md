@@ -281,8 +281,7 @@ Use the interactive `/models` command:
 
 ### Manual Configuration
 
-1. Copy `config.example.py` to `config.py`
-2. Edit `config.py` with your settings:
+1. Edit `config.py` with your settings:
    - LM Studio model name
    - HuggingFace token (optional, for HF endpoints)
    - OpenAI API key (optional, for OpenAI endpoints)
@@ -375,8 +374,6 @@ zorora/
 ├── research_workflow.py         # Legacy research pipeline
 ├── turn_processor.py            # Workflow orchestration
 ├── tool_executor.py             # Tool execution
-├── tool_registry.py             # Backward-compat shim (deprecated)
-├── tool_registry_legacy.py      # Original tool registry (backup)
 │
 ├── engine/                      # Deep research engine
 │   ├── models.py                # Data models (Source, Finding, ResearchState)

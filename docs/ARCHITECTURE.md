@@ -310,8 +310,6 @@ zorora/
 │
 ├── turn_processor.py           # Main workflow orchestration
 ├── tool_executor.py            # Tool execution engine (with read-before-edit)
-├── tool_registry.py            # Backward-compat shim (deprecated)
-├── tool_registry_legacy.py     # Original tool registry (backup)
 ├── model_selector.py           # Interactive model configuration (terminal)
 │
 ├── tools/                      # Modular tool registry (v2.2.0+)

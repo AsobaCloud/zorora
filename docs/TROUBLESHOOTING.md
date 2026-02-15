@@ -175,11 +175,7 @@ FileNotFoundError: config.py
 ```
 
 **Solution:**
-1. Copy example config:
-   ```bash
-   cp config.example.py config.py
-   ```
-2. Edit `config.py` with your settings
+1. Edit `config.py` with your settings
 3. Ensure `config.py` is in the same directory as `main.py`
 
 ### Research Files Not Loading

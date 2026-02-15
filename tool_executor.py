@@ -224,6 +224,8 @@ class ToolExecutor:
             "use_coding_agent": {"task": "code_context", "prompt": "code_context"},
             "use_reasoning_model": {"prompt": "task", "question": "task"},
             "use_search_model": {"task": "query", "question": "query", "search": "query"},
+            "execute_analysis": {"task": "code", "prompt": "code"},
+            "nehanda_query": {"task": "query"},
         }
 
         if tool_name not in fixes:
@@ -317,7 +319,7 @@ class ToolExecutor:
 
             # Validate required fields
             if "tool" not in data or "input" not in data:
-                logger.warning(f"Invalid JSON tool call: missing 'tool' or 'input' fields")
+                logger.warning("Invalid JSON tool call: missing 'tool' or 'input' fields")
                 return None
 
             tool_name = data["tool"]

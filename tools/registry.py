@@ -1,16 +1,12 @@
 """
 Central tool registry - imports all tools and provides unified interface.
-Replaces monolithic tool_registry.py with modular structure.
 
-Migration complete:
-- Phase 1: Research tools → tools/research/
-- Phase 2: File operations → tools/file_ops/
-- Phase 3: Shell operations → tools/shell/
-- Phase 4: Specialist tools → tools/specialist/
-- Phase 5: Image tools → tools/image/
-
-The legacy tool_registry_legacy.py is kept for backward compatibility
-with any code that still imports from it directly.
+All tool implementations live in submodules:
+- tools/research/   — academic_search, web_search, newsroom
+- tools/file_ops/   — read_file, write_file, edit_file, directory ops
+- tools/shell/      — run_shell, apply_patch
+- tools/specialist/ — coding, reasoning, search, intent, energy
+- tools/image/      — analyze, generate, web image search
 """
 
 from typing import Dict, Callable, List, Dict as DictType, Any, Optional
@@ -46,64 +42,64 @@ from tools.specialist import (
 # Import image tools (from modules)
 from tools.image import analyze_image, generate_image, web_image_search
 
-# Import remaining tools from legacy (only registry structures now)
-from tool_registry_legacy import (
-    # Tool registry structures
-    TOOL_FUNCTIONS as LEGACY_TOOL_FUNCTIONS,
-    TOOL_ALIASES as LEGACY_TOOL_ALIASES,
-    TOOLS_DEFINITION as LEGACY_TOOLS_DEFINITION,
-    SPECIALIST_TOOLS as LEGACY_SPECIALIST_TOOLS,
-    ToolRegistry as LegacyToolRegistry,
-)
+# Import data analysis tools (from modules)
+from tools.data_analysis.execute import execute_analysis
+from tools.data_analysis.nehanda_local import nehanda_query
 
-# Build new TOOL_FUNCTIONS dict
-# Research tools (from modules)
+# Tool function mapping
 TOOL_FUNCTIONS: Dict[str, Callable[..., str]] = {
+    # Research tools
     "academic_search": academic_search,
     "web_search": web_search,
     "get_newsroom_headlines": get_newsroom_headlines,
-    # File operations (from modules)
+    # File operations
     "read_file": read_file,
     "write_file": write_file,
     "edit_file": edit_file,
     "make_directory": make_directory,
     "list_files": list_files,
     "get_working_directory": get_working_directory,
-    # Shell operations (from modules)
+    # Shell operations
     "run_shell": run_shell,
     "apply_patch": apply_patch,
-    # Specialist tools (from modules)
+    # Specialist tools
     "use_coding_agent": use_coding_agent,
     "use_reasoning_model": use_reasoning_model,
     "use_search_model": use_search_model,
     "use_intent_detector": use_intent_detector,
     "use_nehanda": use_nehanda,
-    "use_energy_analyst": use_energy_analyst,  # backwards compat alias
-    # Image tools (from modules)
+    "use_energy_analyst": use_energy_analyst,
+    # Image tools
     "analyze_image": analyze_image,
     "generate_image": generate_image,
     "web_image_search": web_image_search,
+    # Data analysis tools
+    "execute_analysis": execute_analysis,
+    "nehanda_query": nehanda_query,
+    # Convenience aliases
+    "use_codestral": use_coding_agent,
+    "search": use_search_model,
+    "generate_code": use_coding_agent,
+    "plan": use_reasoning_model,
+    "pwd": get_working_directory,
 }
 
-# Tools migrated to modules (skip when copying from legacy)
-MIGRATED_TOOLS = [
-    "academic_search", "web_search", "get_newsroom_headlines",  # research
-    "read_file", "write_file", "edit_file", "make_directory", "list_files", "get_working_directory",  # file_ops
-    "run_shell", "apply_patch",  # shell
-    "use_coding_agent", "use_reasoning_model", "use_search_model", "use_intent_detector", "use_energy_analyst",  # specialist
-    "analyze_image", "generate_image", "web_image_search",  # image
-]
+# Tool aliases (name → canonical tool name)
+TOOL_ALIASES: Dict[str, str] = {
+    "run_bash": "run_shell",
+    "bash": "run_shell",
+    "shell": "run_shell",
+    "exec": "run_shell",
+    "ls": "list_files",
+    "cat": "read_file",
+    "open": "read_file",
+    "code": "use_coding_agent",
+    "use_codestral": "use_coding_agent",
+    "plan": "use_reasoning_model",
+    "research": "use_search_model",
+}
 
-# Add remaining tools from legacy registry
-for tool_name, tool_func in LEGACY_TOOL_FUNCTIONS.items():
-    if tool_name not in MIGRATED_TOOLS:
-        TOOL_FUNCTIONS[tool_name] = tool_func
-
-# Build new TOOL_ALIASES dict (copy from legacy)
-TOOL_ALIASES: Dict[str, str] = LEGACY_TOOL_ALIASES.copy()
-
-# Build new TOOLS_DEFINITION list
-# Start with research tool definitions (NEW)
+# Tool definitions in OpenAI function calling format
 TOOLS_DEFINITION: List[DictType[str, Any]] = [
     {
         "type": "function",
@@ -176,7 +172,7 @@ TOOLS_DEFINITION: List[DictType[str, Any]] = [
             }
         }
     },
-    # File operations (from modules)
+    # File operations
     {
         "type": "function",
         "function": {
@@ -264,7 +260,7 @@ TOOLS_DEFINITION: List[DictType[str, Any]] = [
             }
         }
     },
-    # Shell operations (from modules)
+    # Shell operations
     {
         "type": "function",
         "function": {
@@ -294,7 +290,7 @@ TOOLS_DEFINITION: List[DictType[str, Any]] = [
             }
         }
     },
-    # Specialist tools (from modules)
+    # Specialist tools
     {
         "type": "function",
         "function": {
@@ -366,7 +362,7 @@ TOOLS_DEFINITION: List[DictType[str, Any]] = [
             }
         }
     },
-    # Image tools (from modules)
+    # Image tools
     {
         "type": "function",
         "function": {
@@ -412,28 +408,66 @@ TOOLS_DEFINITION: List[DictType[str, Any]] = [
             }
         }
     },
+    # Data analysis tools
+    {
+        "type": "function",
+        "function": {
+            "name": "execute_analysis",
+            "description": "Execute Python code for data analysis in a sandboxed environment with access to the loaded DataFrame (df), pandas, numpy, scipy, and matplotlib.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "code": {
+                        "type": "string",
+                        "description": "Python code to execute. Set 'result' variable for output. Has access to df, pd, np, scipy, plt."
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "Session ID (default: empty string for default session)",
+                        "default": ""
+                    }
+                },
+                "required": ["code"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "nehanda_query",
+            "description": "Search local policy corpus using vector similarity for energy policy and regulatory documents.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query for policy documents"
+                    },
+                    "top_k": {
+                        "type": "integer",
+                        "description": "Number of top results to return (default: 5)",
+                        "default": 5
+                    }
+                },
+                "required": ["query"]
+            }
+        }
+    },
 ]
 
-# Add remaining tool definitions from legacy registry
-for tool_def in LEGACY_TOOLS_DEFINITION:
-    tool_name = tool_def.get("function", {}).get("name", "")
-    # Skip migrated tools (already added above)
-    if tool_name not in MIGRATED_TOOLS:
-        TOOLS_DEFINITION.append(tool_def)
-
-# Build new SPECIALIST_TOOLS list
 SPECIALIST_TOOLS = [
-    "deep_research",  # Will be added in Phase 3
+    "deep_research",
     "use_coding_agent",
     "use_reasoning_model",
     "use_search_model",
-    "use_intent_detector",  # Internal routing tool (not shown to user)
+    "use_intent_detector",
     "analyze_image",
     "generate_image",
-    "academic_search",  # Returns formatted academic results directly
+    "academic_search",
+    "execute_analysis",
 ]
 
-# ToolRegistry class (same interface as legacy)
+
 class ToolRegistry:
     """Registry for tool definitions and function lookup."""
 

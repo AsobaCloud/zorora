@@ -45,7 +45,17 @@ class SimplifiedRouter:
         if file_result:
             return file_result
 
-        # 2. Code generation (explicit keywords)
+        # 2. Data analysis (loaded dataset context)
+        if self._is_data_analysis_request(user_lower):
+            logger.info("Routing to data analysis workflow")
+            return {
+                "workflow": "data_analysis",
+                "action": "execute_analysis",
+                "tool": "execute_analysis",
+                "confidence": 1.0
+            }
+
+        # 3. Code generation (explicit keywords)
         if self._is_code_request(user_lower):
             logger.info("Routing to code generation (coding_agent)")
             return {
@@ -55,7 +65,7 @@ class SimplifiedRouter:
                 "confidence": 1.0
             }
 
-        # 3. Everything else: Research query (multi-source with web search)
+        # 4. Everything else: Research query (multi-source with web search)
         # Default to research instead of reasoning model to avoid outdated info
         logger.info("Routing to research workflow (newsroom + web + synthesis)")
         return {
@@ -121,6 +131,23 @@ class SimplifiedRouter:
                 }
 
         return None
+
+    def _is_data_analysis_request(self, user_lower: str) -> bool:
+        """
+        Check if this is a data analysis request.
+
+        Looks for analysis, plotting, and calculation keywords.
+        """
+        analysis_patterns = [
+            r'\b(analyze|analyse)\b.*\b(data|dataset|csv|column|row)\b',
+            r'\b(plot|chart|graph|histogram|scatter|visuali[sz]e)\b',
+            r'\b(calculate|compute|correlat)\b.*\b(mean|median|average|sum|std|power|output|energy)\b',
+            r'\bdf\b\.\w+',  # Direct DataFrame references like df.describe()
+            r'\b(describe|summarize|summarise)\b.*\b(data|dataset|column)\b',
+            r'\b(show|display)\b.*\b(distribution|trend|pattern|statistics)\b',
+        ]
+
+        return any(re.search(pattern, user_lower) for pattern in analysis_patterns)
 
     def _is_code_request(self, user_lower: str) -> bool:
         """

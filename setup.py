@@ -1,6 +1,6 @@
 """Setup script for Zorora REPL."""
 
-from setuptools import setup, find_packages
+from setuptools import setup
 from pathlib import Path
 
 # Read README for long description
@@ -9,7 +9,7 @@ long_description = readme_file.read_text() if readme_file.exists() else ""
 
 setup(
     name="zorora",
-    version="1.0.0",
+    version="3.0.0",
     description="Multi-model orchestration REPL for local AI assistants",
     long_description=long_description,
     long_description_content_type="text/markdown",
@@ -20,8 +20,11 @@ setup(
         "workflows.deep_research",
         "tools",
         "tools.research",
-        "tools.code",
+        "tools.file_ops",
+        "tools.shell",
         "tools.specialist",
+        "tools.image",
+        "tools.data_analysis",
         "tools.utils",
         "engine",
         "providers",
@@ -39,8 +42,6 @@ setup(
         "conversation_persistence",
         "llm_client",
         "tool_executor",
-        "tool_registry",
-        "tool_registry_legacy",
         "turn_processor",
         "model_selector",
         "simplified_router",
@@ -62,6 +63,10 @@ setup(
         "beautifulsoup4>=4.11.0",
         "flask>=2.0.0",
         "prompt_toolkit>=3.0.0",
+        "pandas>=2.0.0",
+        "numpy>=1.24.0",
+        "matplotlib>=3.7.0",
+        "scipy>=1.10.0",
     ],
     python_requires=">=3.8",
     classifiers=[

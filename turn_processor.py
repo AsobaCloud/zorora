@@ -176,6 +176,8 @@ class TurnProcessor:
             "use_energy_analyst": "query",  # backwards compat alias
             "web_search": "query",
             "generate_image": "prompt",
+            "execute_analysis": "code",
+            "nehanda_query": "query",
         }
 
         param_name = param_mapping.get(tool_name)
@@ -619,6 +621,14 @@ NEW_CODE:
             if result:
                 self.conversation.add_assistant_message(content=result)
             return (result or "Error executing reasoning model"), time.time() - total_start_time
+
+        elif workflow == "data_analysis":
+            # Data analysis with loaded dataset
+            logger.info("Executing data analysis")
+            result = self._execute_specialist_tool("execute_analysis", user_input)
+            if result:
+                self.conversation.add_assistant_message(content=result)
+            return (result or "Error: No dataset loaded. Use /load <path> first."), time.time() - total_start_time
 
         elif workflow == "energy":
             # Nehanda RAG query for policy documents

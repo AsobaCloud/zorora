@@ -2,7 +2,7 @@
 
 import logging
 import re
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse
 
@@ -356,8 +356,8 @@ def _synthesize_results(results: List[Dict[str, Any]], original_query: str, opti
     
     # Use search model for synthesis
     try:
-        # Import use_search_model from tool_registry (will be available via registry)
-        from tool_registry import use_search_model
+        # Import use_search_model from modular registry
+        from tools.registry import use_search_model
         
         synthesis_prompt = f"""Based on the following web search results for "{original_query}", provide a comprehensive answer:
 
@@ -527,7 +527,7 @@ def web_search(query: str, max_results: int = 5) -> str:
                 if raw_results:
                     logger.info(f"Brave Search succeeded: {len(raw_results)} results")
                 else:
-                    logger.warning(f"Brave Search returned no results, falling back to DuckDuckGo")
+                    logger.warning("Brave Search returned no results, falling back to DuckDuckGo")
             except Exception as e:
                 logger.warning(f"Brave Search failed: {e}, falling back to DuckDuckGo")
         
@@ -539,7 +539,7 @@ def web_search(query: str, max_results: int = 5) -> str:
                 if raw_results:
                     logger.info(f"DuckDuckGo search succeeded: {len(raw_results)} results")
                 else:
-                    logger.warning(f"DuckDuckGo returned no results")
+                    logger.warning("DuckDuckGo returned no results")
             except Exception as e:
                 logger.error(f"DuckDuckGo search failed: {e}")
                 return f"Error: Web search failed: {e}. Try again or rephrase query."

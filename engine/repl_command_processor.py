@@ -62,8 +62,44 @@ class REPLCommandProcessor:
                 self.repl.ui.console.print(f"[dim]Available remote commands: {', '.join(self.repl.remote_commands.keys())}[/dim]")
                 return None
 
+        # /load <path> - Load dataset for analysis
+        if cmd_lower.startswith("/load "):
+            file_path = command[6:].strip()
+            if not file_path:
+                self.repl.ui.console.print("[red]Usage: /load <file_path>[/red]")
+                self.repl.ui.console.print("[dim]Example: /load docs/demo-data.csv[/dim]")
+                return None
+            self.repl.ui.console.print("[cyan]Loading dataset...[/cyan]")
+            from workflows.load_dataset import LoadDatasetWorkflow
+            workflow = LoadDatasetWorkflow()
+            result = workflow.execute(file_path)
+            if result:
+                self.repl.turn_processor.last_specialist_output = result
+                self.repl.conversation.add_assistant_message(content=result)
+            return (result, 0.0) if result else None
+
+        elif cmd_lower == "/load":
+            self.repl.ui.console.print("[red]Usage: /load <file_path>[/red]")
+            self.repl.ui.console.print("[dim]Example: /load docs/demo-data.csv[/dim]")
+            return None
+
+        # /analyze <code> - Execute analysis code on loaded dataset
+        elif cmd_lower.startswith("/analyze "):
+            code = command[9:].strip()
+            if not code:
+                self.repl.ui.console.print("[red]Usage: /analyze <code>[/red]")
+                self.repl.ui.console.print("[dim]Example: /analyze df.describe()[/dim]")
+                return None
+            self.repl.ui.console.print("[cyan]Running analysis...[/cyan]")
+            from tools.data_analysis.execute import execute_analysis
+            result = execute_analysis(code)
+            if result:
+                self.repl.turn_processor.last_specialist_output = result
+                self.repl.conversation.add_assistant_message(content=result)
+            return (result, 0.0) if result else None
+
         # /search <query> - Force research workflow
-        if cmd_lower.startswith("/search "):
+        elif cmd_lower.startswith("/search "):
             query = command[8:].strip()
             if not query:
                 self.repl.ui.console.print("[red]Usage: /search <query>[/red]")
