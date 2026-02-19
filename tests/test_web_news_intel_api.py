@@ -8,7 +8,7 @@ WEB_APP_IMPORT_ERROR = None
 web_app = None
 
 try:
-    _APP_PATH = pathlib.Path("/Users/shingi/Workbench/zorora/ui/web/app.py")
+    _APP_PATH = pathlib.Path(__file__).resolve().parents[1] / "ui" / "web" / "app.py"
     _SPEC = importlib.util.spec_from_file_location("web_app_under_test", _APP_PATH)
     web_app = importlib.util.module_from_spec(_SPEC)
     sys.modules["web_app_under_test"] = web_app

@@ -23,6 +23,8 @@ jobs:
           pip install pytest
 
       - name: Run full test suite
+        env:
+          PYTHONPATH: .
         run: pytest -q
 
   test-full:
@@ -43,6 +45,8 @@ jobs:
           pip install pytest
 
       - name: Run non-LLM integration profile tests
+        env:
+          PYTHONPATH: .
         run: |
           pytest -q \
             tests/test_odse_e2e.py \
