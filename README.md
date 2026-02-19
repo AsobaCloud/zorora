@@ -1,5 +1,8 @@
 # Zorora
 
+![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)
+![Tests](https://github.com/AsobaCloud/zorora/actions/workflows/test.yml/badge.svg)
+
 Zorora is a local-first deep research and analysis tool for policy, market, and technical intelligence. It runs against local LLM endpoints, supports both terminal and web interfaces, and handles everything from source discovery to structured data analysis.
 
 **Learn more in the [full documentation](https://code.asoba.co)**.
