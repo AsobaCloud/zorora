@@ -1,0 +1,51 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test-minimal:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install minimal profile
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Run full test suite
+        run: pytest -q
+
+  test-full:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install full profile
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[full]
+
+      - name: Run non-LLM integration profile tests
+        run: |
+          pytest -q \
+            tests/test_odse_e2e.py \
+            tests/test_repl_load_confirm_map_e2e.py \
+            tests/test_plot_pipeline_integration.py \
+            tests/test_policy_bootstrap_integration.py \
+            tests/test_install_profiles.py
+
