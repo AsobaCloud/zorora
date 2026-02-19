@@ -228,5 +228,17 @@ class TestEdgeCases(unittest.TestCase):
         self.assertNotIn("Error", result)
 
 
+class TestDefaultCorpusResolution(unittest.TestCase):
+    """No explicit corpus_dir should resolve to packaged docs/policy corpus."""
+
+    @patch("tools.data_analysis.nehanda_local._get_embeddings")
+    def test_default_corpus_works(self, mock_embed):
+        mock_embed.side_effect = lambda texts: np.random.rand(len(texts), 384).astype(np.float32)
+        result = nehanda_query("grid code requirements")
+        self.assertNotIn("Error", result)
+        data = json.loads(result)
+        self.assertIn("results", data)
+
+
 if __name__ == "__main__":
     unittest.main()

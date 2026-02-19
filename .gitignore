@@ -62,3 +62,6 @@ INTERNAL_*.md
 
 # Local cache
 .cache/
+
+# Generated analysis artifacts
+plots/

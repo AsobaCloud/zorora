@@ -19,6 +19,8 @@ from workflows.load_dataset import LoadDatasetWorkflow
 from tools.registry import TOOL_FUNCTIONS, TOOLS_DEFINITION, SPECIALIST_TOOLS, ToolRegistry
 from tool_executor import ToolExecutor
 from simplified_router import SimplifiedRouter
+from conversation import ConversationManager
+from turn_processor import TurnProcessor
 
 
 # ---------------------------------------------------------------------------
@@ -245,6 +247,12 @@ class TestDataAnalysisRouting(unittest.TestCase):
         result = self.router.route("what is the weather today")
         self.assertNotEqual(result["workflow"], "data_analysis")
 
+    def test_cross_domain_routes_to_cross_domain(self):
+        result = self.router.route(
+            "My dataset shows production drop in July; what policy obligations and market context apply?"
+        )
+        self.assertEqual(result["workflow"], "cross_domain")
+
 
 class TestLoadCommandDispatch(unittest.TestCase):
     """/load command recognized by REPL command processor."""
@@ -301,6 +309,76 @@ class TestToolExecutorDataAnalysisDispatch(unittest.TestCase):
         )
         self.assertIn("query", fixed)
         self.assertEqual(fixed["query"], "energy policy")
+
+
+class TestDataSessionPromptContext(unittest.TestCase):
+    """Runtime system prompt should include active dataset context."""
+
+    def setUp(self):
+        session.clear_all()
+        self.tmpdir = tempfile.mkdtemp()
+        workflow = LoadDatasetWorkflow()
+        path = os.path.join(self.tmpdir, "data.csv")
+        with open(path, "w") as f:
+            f.write("timestamp,kwh\n2024-01-01 00:00:00,1.0\n2024-01-01 01:00:00,2.0\n")
+        workflow.execute(path)
+
+    def tearDown(self):
+        session.clear_all()
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_runtime_context_is_injected(self):
+        conv = ConversationManager(system_prompt="base")
+        tp = TurnProcessor(
+            conversation=conv,
+            llm_client=Mock(),
+            tool_executor=Mock(),
+            tool_registry=ToolRegistry(),
+            ui=None,
+        )
+        tp._sync_data_session_context()
+        sys_msg = conv.get_messages()[0]["content"]
+        self.assertIn("Runtime Context", sys_msg)
+        self.assertIn("Active dataset context", sys_msg)
+
+
+class TestCrossDomainWorkflow(unittest.TestCase):
+    """Cross-domain deterministic orchestration path."""
+
+    def test_cross_domain_chains_tools(self):
+        conv = ConversationManager(system_prompt="base")
+        tool_exec = Mock()
+        tool_exec.execute.side_effect = lambda name, args: {
+            "execute_analysis": '{"result":"drop validated","type":"string"}',
+            "nehanda_query": '{"results":[{"source":"policy.txt","text":"reporting threshold"}]}',
+            "web_search": "market context",
+        }.get(name, "ok")
+
+        tp = TurnProcessor(
+            conversation=conv,
+            llm_client=Mock(),
+            tool_executor=tool_exec,
+            tool_registry=ToolRegistry(),
+            ui=None,
+        )
+
+        def specialist_side_effect(name, user_input):
+            if name == "use_coding_agent":
+                return "result = df.shape"
+            if name == "use_reasoning_model":
+                return "Synthesized grounded response"
+            return "ok"
+
+        tp._execute_specialist_tool = Mock(side_effect=specialist_side_effect)
+        result = tp._execute_cross_domain_query(
+            "My data shows a production drop. What policy obligations apply and what does market context say?"
+        )
+
+        self.assertIn("Synthesized", result)
+        called_tools = [c.args[0] for c in tool_exec.execute.call_args_list]
+        self.assertIn("execute_analysis", called_tools)
+        self.assertIn("nehanda_query", called_tools)
+        self.assertIn("web_search", called_tools)
 
 
 if __name__ == "__main__":

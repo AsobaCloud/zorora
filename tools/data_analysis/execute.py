@@ -9,6 +9,8 @@ import os
 import re
 import tempfile
 import logging
+import shutil
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
@@ -17,6 +19,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from tools.data_analysis import session
+import config
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +97,8 @@ def execute_analysis(code: str, session_id: str = "", plot_dir: str = "") -> str
         plot_dir = tempfile.mkdtemp(prefix="zorora_plots_")
 
     plot_sentinel = os.path.join(plot_dir, "__zorora_plot__.png")
+    output_dir = _get_plot_output_dir(session_id)
+    os.makedirs(output_dir, exist_ok=True)
 
     # Build safe globals
     safe_globals = {
@@ -139,12 +144,18 @@ def execute_analysis(code: str, session_id: str = "", plot_dir: str = "") -> str
         # Check for plot
         plot_generated = os.path.exists(plot_sentinel)
         plot_path = plot_sentinel if plot_generated else None
+        plot_saved = None
+        if plot_generated:
+            ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
+            plot_saved = os.path.join(output_dir, f"plot_{ts}.png")
+            shutil.copy2(plot_sentinel, plot_saved)
 
         return json.dumps({
             "result": result_str,
             "type": result_type,
             "plot_generated": plot_generated,
             "plot_path": plot_path,
+            "plot_saved": plot_saved,
         })
 
     except SyntaxError as e:
@@ -178,3 +189,12 @@ def _format_result(raw) -> tuple:
         return "collection", str(raw)
 
     return "other", str(raw)
+
+
+def _get_plot_output_dir(session_id: str) -> str:
+    """Resolve persistent plot output directory."""
+    base = config.DATA_ANALYSIS.get("plot_output_dir", "plots")
+    if not os.path.isabs(base):
+        base = os.path.abspath(base)
+    sid = session_id or "default"
+    return os.path.join(base, sid)

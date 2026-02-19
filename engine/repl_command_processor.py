@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shlex
+import json
 import config
 
 
@@ -62,17 +63,25 @@ class REPLCommandProcessor:
                 self.repl.ui.console.print(f"[dim]Available remote commands: {', '.join(self.repl.remote_commands.keys())}[/dim]")
                 return None
 
-        # /load <path> - Load dataset for analysis
+        # /load <path> or /load --confirm-map <path> - Load dataset for analysis
         if cmd_lower.startswith("/load "):
-            file_path = command[6:].strip()
+            load_args = command[6:].strip()
+            confirm_mapping = False
+            file_path = load_args
+
+            if load_args.startswith("--confirm-map "):
+                confirm_mapping = True
+                file_path = load_args[len("--confirm-map "):].strip()
+
             if not file_path:
                 self.repl.ui.console.print("[red]Usage: /load <file_path>[/red]")
+                self.repl.ui.console.print("[dim]Or: /load --confirm-map <file_path>[/dim]")
                 self.repl.ui.console.print("[dim]Example: /load docs/demo-data.csv[/dim]")
                 return None
             self.repl.ui.console.print("[cyan]Loading dataset...[/cyan]")
             from workflows.load_dataset import LoadDatasetWorkflow
             workflow = LoadDatasetWorkflow()
-            result = workflow.execute(file_path)
+            result = workflow.execute(file_path, confirm_mapping=confirm_mapping)
             if result:
                 self.repl.turn_processor.last_specialist_output = result
                 self.repl.conversation.add_assistant_message(content=result)
@@ -80,6 +89,7 @@ class REPLCommandProcessor:
 
         elif cmd_lower == "/load":
             self.repl.ui.console.print("[red]Usage: /load <file_path>[/red]")
+            self.repl.ui.console.print("[dim]Or: /load --confirm-map <file_path>[/dim]")
             self.repl.ui.console.print("[dim]Example: /load docs/demo-data.csv[/dim]")
             return None
 
@@ -93,6 +103,14 @@ class REPLCommandProcessor:
             self.repl.ui.console.print("[cyan]Running analysis...[/cyan]")
             from tools.data_analysis.execute import execute_analysis
             result = execute_analysis(code)
+            try:
+                data = json.loads(result)
+                if data.get("plot_generated"):
+                    plot_target = data.get("plot_saved") or data.get("plot_path")
+                    if plot_target:
+                        self.repl.ui.display_image(plot_target)
+            except Exception:
+                pass
             if result:
                 self.repl.turn_processor.last_specialist_output = result
                 self.repl.conversation.add_assistant_message(content=result)

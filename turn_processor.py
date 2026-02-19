@@ -4,6 +4,7 @@ from typing import Optional, List, Dict, Any
 import re
 import logging
 import time
+import json
 from pathlib import Path
 
 from conversation import ConversationManager
@@ -15,6 +16,8 @@ from simplified_router import SimplifiedRouter
 from research_workflow import ResearchWorkflow
 from research_persistence import ResearchPersistence
 import config
+from tools.data_analysis import session as data_session
+from tools.data_analysis.context import build_data_system_context
 
 logger = logging.getLogger(__name__)
 
@@ -565,6 +568,7 @@ NEW_CODE:
         """
         # Add user message to conversation
         logger.info(f"User: {user_input[:100]}{'...' if len(user_input) > 100 else ''}")
+        self._sync_data_session_context()
         self.conversation.add_user_message(user_input)
 
         # Start timing
@@ -630,6 +634,14 @@ NEW_CODE:
                 self.conversation.add_assistant_message(content=result)
             return (result or "Error: No dataset loaded. Use /load <path> first."), time.time() - total_start_time
 
+        elif workflow == "cross_domain":
+            # Data + policy + market synthesis flow
+            logger.info("Executing cross-domain synthesis workflow")
+            result = self._execute_cross_domain_query(user_input)
+            if result:
+                self.conversation.add_assistant_message(content=result)
+            return (result or "Error executing cross-domain workflow"), time.time() - total_start_time
+
         elif workflow == "energy":
             # Nehanda RAG query for policy documents
             # Only accessible via /analyst slash command
@@ -670,6 +682,21 @@ NEW_CODE:
             result = self.research_workflow.execute(user_input, ui=self.ui)
             self.conversation.add_assistant_message(content=result)
             return result, time.time() - total_start_time
+
+    def _sync_data_session_context(self) -> None:
+        """Inject active data-session context into system prompt when available."""
+        try:
+            active = data_session.get_session("")
+            if not active:
+                self.conversation.clear_runtime_context("data_session")
+                return
+            context_block = build_data_system_context(active)
+            if context_block:
+                self.conversation.set_runtime_context("data_session", context_block)
+            else:
+                self.conversation.clear_runtime_context("data_session")
+        except Exception as e:
+            logger.warning(f"Failed to sync data session context: {e}")
 
     def _execute_file_operation(self, routing: Dict[str, Any], user_input: str) -> str:
         """
@@ -757,7 +784,6 @@ NEW_CODE:
 
             # Use last specialist output if available
             content = self.last_specialist_output
-
             if not content:
                 return "No content to save. Run a research query first, then save the results."
 
@@ -773,6 +799,53 @@ NEW_CODE:
 
         else:
             return f"Unknown file operation: {action}"
+
+    def _extract_python_snippet(self, text: str) -> str:
+        """Extract first Python code block from model output."""
+        if not text:
+            return ""
+        block = re.search(r"```(?:python)?\s*(.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
+        if block:
+            return block.group(1).strip()
+        return text.strip()
+
+    def _execute_cross_domain_query(self, user_input: str) -> str:
+        """Execute deterministic multi-tool flow for data+policy questions."""
+        code_prompt = (
+            "Generate ONLY executable Python code for execute_analysis.\n"
+            "Use the loaded DataFrame df and set variable result.\n"
+            "No markdown, no explanation.\n"
+            f"Question: {user_input}"
+        )
+        generated = self._execute_specialist_tool("use_coding_agent", code_prompt) or ""
+        code = self._extract_python_snippet(generated)
+        if not code:
+            code = "result = df.describe()"
+
+        analysis_result = self.tool_executor.execute("execute_analysis", {"code": code})
+        policy_result = self.tool_executor.execute("nehanda_query", {"query": user_input})
+        web_result = self.tool_executor.execute("web_search", {"query": user_input})
+
+        synthesis_prompt = (
+            "Synthesize the following results into one grounded answer.\n"
+            "Always separate what comes from dataset analysis, policy retrieval, and web context.\n\n"
+            f"[Data Analysis]\n{analysis_result}\n\n"
+            f"[Policy Retrieval]\n{policy_result}\n\n"
+            f"[Market Context]\n{web_result}\n\n"
+            f"Original question: {user_input}"
+        )
+
+        final = self._execute_specialist_tool("use_reasoning_model", synthesis_prompt)
+        if final and not final.startswith("Error"):
+            return final
+
+        # Deterministic fallback when synthesis model fails
+        compact = {
+            "analysis": analysis_result[:1200],
+            "policy": policy_result[:1200],
+            "market": web_result[:1200],
+        }
+        return json.dumps(compact, indent=2)
 
     def _extract_topic_from_query(self, query: str) -> Optional[str]:
         """

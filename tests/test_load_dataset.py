@@ -8,6 +8,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest.mock import patch, Mock
 
 import pandas as pd
 
@@ -145,6 +146,26 @@ class TestODSEDetection(unittest.TestCase):
         result = self.workflow.execute(path)
         self.assertNotIn("Error", result)
 
+    def test_applies_odse_transform_when_available(self):
+        """If odse transform function returns DataFrame, transformed data is used."""
+        path = self._csv(
+            "huawei.csv",
+            "Timestamp,Huawei AC power [W]\n2024-01-01 00:00:00,100\n2024-01-01 01:00:00,200\n",
+        )
+
+        fake_odse = Mock()
+        fake_odse.auto_transform = Mock(return_value=pd.DataFrame({
+            "timestamp": pd.to_datetime(["2024-01-01 00:00:00", "2024-01-01 01:00:00"]),
+            "kwh": [1.0, 2.0],
+        }))
+
+        with patch("workflows.load_dataset.importlib.util.find_spec", return_value=object()):
+            with patch.dict("sys.modules", {"odse": fake_odse}):
+                result = self.workflow.execute(path)
+
+        self.assertIn("ODS-E Transform", result)
+        self.assertIn("Applied", result)
+
 
 class TestProfileGeneration(unittest.TestCase):
     """Profile data in summary output."""
@@ -255,6 +276,44 @@ class TestEdgeCases(unittest.TestCase):
         path = self._csv("empty.csv", "a,b\n1,2\n\n3,4\n\n")
         result = self.workflow.execute(path)
         self.assertNotIn("Error", result)
+
+
+class TestGenericMapping(unittest.TestCase):
+    """Generic column mapping suggestions and confirmation flow."""
+
+    def setUp(self):
+        session.clear_all()
+        self.tmpdir = tempfile.mkdtemp()
+        self.workflow = LoadDatasetWorkflow()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _csv(self, name, content):
+        path = os.path.join(self.tmpdir, name)
+        with open(path, "w") as f:
+            f.write(content)
+        return path
+
+    def test_mapping_suggestion_requires_confirmation(self):
+        path = self._csv(
+            "generic.csv",
+            "datetime,energy_kwh,power,status\n2024-01-01 00:00:00,1.2,500,normal\n",
+        )
+        result = self.workflow.execute(path, confirm_mapping=False)
+        self.assertIn("Suggested Canonical Mapping", result)
+        self.assertIn("Pending confirmation", result)
+
+    def test_confirm_mapping_applies_renames(self):
+        path = self._csv(
+            "generic.csv",
+            "datetime,energy_kwh,power,status\n2024-01-01 00:00:00,1.2,500,normal\n",
+        )
+        result = self.workflow.execute(path, confirm_mapping=True)
+        self.assertIn("Mapping Status", result)
+        self.assertIn("Applied", result)
+        df = session.get_df()
+        self.assertIn("timestamp", [c.lower() for c in df.columns])
 
 
 class TestDemoData(unittest.TestCase):

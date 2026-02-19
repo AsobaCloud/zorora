@@ -1,0 +1,7 @@
+ZERA Grid Code Summary
+
+Embedded generation projects must follow interconnection and protection requirements before grid connection approval.
+
+Operators must maintain technical compliance documentation, event logs, and outage records for audits.
+
+Performance reporting should include production records, downtime summaries, and key operational incidents.

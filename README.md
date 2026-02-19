@@ -32,6 +32,12 @@ cd zorora
 pip install -e .
 ```
 
+For full local data-analysis + policy retrieval stack:
+
+```bash
+pip install -e .[full]
+```
+
 ### Run
 
 Terminal UI:

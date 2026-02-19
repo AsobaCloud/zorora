@@ -33,6 +33,8 @@ class ConversationManager:
         self.messages: List[Dict[str, Any]] = [
             {"role": "system", "content": system_prompt}
         ]
+        self._base_system_prompt = system_prompt
+        self._runtime_context_blocks: Dict[str, str] = {}
         self.session_id = session_id or self._generate_session_id()
         self.persistence = persistence
         self.auto_save_enabled = auto_save
@@ -98,6 +100,31 @@ class ConversationManager:
         system_msg = self.messages[0]
         self.messages = [system_msg]
         logger.info("Conversation context cleared")
+
+    def set_runtime_context(self, key: str, content: str) -> None:
+        """Set a named runtime context block appended to system prompt."""
+        if not key:
+            return
+        if content and content.strip():
+            self._runtime_context_blocks[key] = content.strip()
+        else:
+            self._runtime_context_blocks.pop(key, None)
+        self._refresh_system_prompt()
+
+    def clear_runtime_context(self, key: str) -> None:
+        """Remove a named runtime context block from system prompt."""
+        if key in self._runtime_context_blocks:
+            self._runtime_context_blocks.pop(key, None)
+            self._refresh_system_prompt()
+
+    def _refresh_system_prompt(self) -> None:
+        """Refresh system prompt with runtime context blocks."""
+        blocks = [self._base_system_prompt]
+        if self._runtime_context_blocks:
+            blocks.append("\n\n[Runtime Context]")
+            for name, content in self._runtime_context_blocks.items():
+                blocks.append(f"\n<{name}>\n{content}\n</{name}>")
+        self.messages[0]["content"] = "".join(blocks)
 
     def get_context_stats(self) -> Dict[str, Any]:
         """

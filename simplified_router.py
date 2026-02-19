@@ -46,6 +46,15 @@ class SimplifiedRouter:
             return file_result
 
         # 2. Data analysis (loaded dataset context)
+        if self._is_cross_domain_request(user_lower):
+            logger.info("Routing to cross-domain data+policy workflow")
+            return {
+                "workflow": "cross_domain",
+                "action": "cross_domain_synthesis",
+                "confidence": 1.0
+            }
+
+        # 3. Data analysis (loaded dataset context)
         if self._is_data_analysis_request(user_lower):
             logger.info("Routing to data analysis workflow")
             return {
@@ -55,7 +64,7 @@ class SimplifiedRouter:
                 "confidence": 1.0
             }
 
-        # 3. Code generation (explicit keywords)
+        # 4. Code generation (explicit keywords)
         if self._is_code_request(user_lower):
             logger.info("Routing to code generation (coding_agent)")
             return {
@@ -65,7 +74,7 @@ class SimplifiedRouter:
                 "confidence": 1.0
             }
 
-        # 4. Everything else: Research query (multi-source with web search)
+        # 5. Everything else: Research query (multi-source with web search)
         # Default to research instead of reasoning model to avoid outdated info
         logger.info("Routing to research workflow (newsroom + web + synthesis)")
         return {
@@ -148,6 +157,22 @@ class SimplifiedRouter:
         ]
 
         return any(re.search(pattern, user_lower) for pattern in analysis_patterns)
+
+    def _is_cross_domain_request(self, user_lower: str) -> bool:
+        """Detect requests that need data + policy/news synthesis."""
+        data_markers = (
+            "data", "dataset", "csv", "production", "capacity factor", "df", "kwh", "power"
+        )
+        policy_markers = (
+            "policy", "regulation", "requirement", "obligation", "compliance",
+            "zera", "nersa", "grid code", "tariff"
+        )
+        context_markers = ("market", "news", "latest", "current")
+
+        has_data = any(m in user_lower for m in data_markers)
+        has_policy = any(m in user_lower for m in policy_markers)
+        has_context = any(m in user_lower for m in context_markers)
+        return has_data and (has_policy or has_context)
 
     def _is_code_request(self, user_lower: str) -> bool:
         """

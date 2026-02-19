@@ -12,6 +12,8 @@ import time
 import threading
 import os
 import sys
+import base64
+import subprocess
 
 # Try to import prompt_toolkit (graceful fallback if unavailable)
 try:
@@ -359,6 +361,41 @@ class ZororaUI:
             text.append(details, style=f"dim {color}")
 
         self.console.print(Panel(text, border_style=color, padding=(1, 2)))
+
+    def display_image(self, image_path: str) -> None:
+        """Best-effort inline image rendering with text fallback."""
+        if not image_path:
+            return
+        if not os.path.exists(image_path):
+            self.console.print(f"[yellow]Plot file not found:[/yellow] {image_path}")
+            return
+
+        term_program = os.getenv("TERM_PROGRAM", "")
+        term = os.getenv("TERM", "")
+
+        if "kitty" in term:
+            try:
+                subprocess.run(
+                    ["kitty", "+kitten", "icat", image_path],
+                    check=True,
+                    stdout=sys.stdout,
+                    stderr=sys.stderr,
+                )
+                return
+            except Exception:
+                pass
+
+        if term_program == "iTerm.app":
+            try:
+                with open(image_path, "rb") as f:
+                    payload = base64.b64encode(f.read()).decode("ascii")
+                sys.stdout.write(f"\033]1337;File=inline=1:{payload}\a\n")
+                sys.stdout.flush()
+                return
+            except Exception:
+                pass
+
+        self.console.print(f"[cyan]Plot saved:[/cyan] {image_path}")
 
     def show_tool_execution(self, tool_name: str, arguments: Dict[str, Any]):
         """Display tool execution start."""

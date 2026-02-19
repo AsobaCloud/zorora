@@ -8,8 +8,10 @@ import json
 import os
 import logging
 from typing import List, Dict, Any
+from pathlib import Path
 
 import numpy as np
+import config
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +20,7 @@ _EMBEDDING_DIM = 384
 
 # Cached model reference
 _model = None
+_INDEX_CACHE: Dict[str, Dict[str, Any]] = {}
 
 
 def nehanda_query(query: str, top_k: int = 5, corpus_dir: str = "") -> str:
@@ -35,11 +38,18 @@ def nehanda_query(query: str, top_k: int = 5, corpus_dir: str = "") -> str:
     if not query or not query.strip():
         return "Error: Empty query"
 
+    corpus_dir = _resolve_corpus_dir(corpus_dir)
     if not corpus_dir:
-        return "Error: No corpus directory configured"
+        return (
+            "Error: No policy corpus configured. Set NEHANDA_LOCAL.corpus_dir "
+            "or add .txt files under docs/policy."
+        )
 
     if not os.path.isdir(corpus_dir):
-        return f"Error: Corpus directory not found — {corpus_dir}"
+        return (
+            f"Error: Corpus directory not found — {corpus_dir}. "
+            "Create docs/policy with .txt policy documents or configure NEHANDA_LOCAL.corpus_dir."
+        )
 
     # Load and chunk documents
     chunks = _load_corpus(corpus_dir)
@@ -47,8 +57,8 @@ def nehanda_query(query: str, top_k: int = 5, corpus_dir: str = "") -> str:
         return "Error: No documents found in corpus directory"
 
     try:
-        # Build index
-        index, chunk_list = _build_index(chunks)
+        # Build/reuse index
+        index, chunk_list = _get_or_build_index(corpus_dir, chunks)
 
         # Query
         query_embedding = _get_embeddings([query])
@@ -78,6 +88,53 @@ def nehanda_query(query: str, top_k: int = 5, corpus_dir: str = "") -> str:
 
     except Exception as e:
         return f"Error: {type(e).__name__} — {e}"
+
+
+def _resolve_corpus_dir(corpus_dir: str) -> str:
+    """Resolve corpus directory with config and local defaults."""
+    if corpus_dir:
+        return corpus_dir
+
+    configured = config.NEHANDA_LOCAL.get("corpus_dir", "").strip()
+    if configured:
+        return configured
+
+    repo_root = Path(__file__).resolve().parents[2]
+    default_dir = repo_root / "docs" / "policy"
+    if default_dir.is_dir():
+        return str(default_dir)
+    return ""
+
+
+def _corpus_signature(corpus_dir: str) -> str:
+    """Build a cheap signature of corpus directory contents."""
+    sig_parts: List[str] = []
+    for filename in sorted(os.listdir(corpus_dir)):
+        if not filename.endswith(".txt"):
+            continue
+        path = os.path.join(corpus_dir, filename)
+        try:
+            stat = os.stat(path)
+            sig_parts.append(f"{filename}:{int(stat.st_mtime)}:{stat.st_size}")
+        except OSError:
+            continue
+    return "|".join(sig_parts)
+
+
+def _get_or_build_index(corpus_dir: str, chunks: List[Dict[str, Any]]):
+    """Reuse cached index when corpus signature is unchanged."""
+    signature = _corpus_signature(corpus_dir)
+    cached = _INDEX_CACHE.get(corpus_dir)
+    if cached and cached.get("signature") == signature:
+        return cached["index"], cached["chunks"]
+
+    index, chunk_list = _build_index(chunks)
+    _INDEX_CACHE[corpus_dir] = {
+        "signature": signature,
+        "index": index,
+        "chunks": chunk_list,
+    }
+    return index, chunk_list
 
 
 def _load_corpus(corpus_dir: str) -> List[Dict[str, Any]]:

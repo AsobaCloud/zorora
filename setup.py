@@ -67,7 +67,22 @@ setup(
         "numpy>=1.24.0",
         "matplotlib>=3.7.0",
         "scipy>=1.10.0",
+        "odse>=0.1.0",
     ],
+    extras_require={
+        "policy": [
+            "sentence-transformers>=2.2.0",
+            "faiss-cpu>=1.7.4",
+        ],
+        "data": [
+            "odse>=0.1.0",
+        ],
+        "full": [
+            "odse>=0.1.0",
+            "sentence-transformers>=2.2.0",
+            "faiss-cpu>=1.7.4",
+        ],
+    },
     python_requires=">=3.8",
     classifiers=[
         "Development Status :: 4 - Beta",

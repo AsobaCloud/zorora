@@ -169,6 +169,9 @@ class TestPlotDetection(unittest.TestCase):
         data = json.loads(result)
         self.assertTrue(data["plot_generated"])
         self.assertIn("plot_path", data)
+        self.assertIn("plot_saved", data)
+        self.assertTrue(data["plot_saved"])
+        self.assertTrue(data["plot_saved"].endswith(".png"))
 
     def test_no_plot_when_no_savefig(self):
         result = execute_analysis("result = df.shape", plot_dir=self.tmpdir)
