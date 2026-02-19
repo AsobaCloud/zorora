@@ -1,3 +1,4 @@
+import pathlib
 import sys
 import types
 import unittest
@@ -6,10 +7,12 @@ from unittest.mock import Mock, patch
 
 from engine.repl_command_processor import REPLCommandProcessor
 
+_ROOT = pathlib.Path(__file__).resolve().parents[1]
+
 
 class SharedResearchPathTests(unittest.TestCase):
     def test_web_app_uses_shared_service_symbols(self):
-        app_path = "/Users/shingi/Workbench/zorora/ui/web/app.py"
+        app_path = _ROOT / "ui" / "web" / "app.py"
         with open(app_path, "r", encoding="utf-8") as f:
             content = f.read()
 
