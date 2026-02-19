@@ -1,69 +1,45 @@
 # Zorora
 
-Local-first deep research and analysis for policy, market, and technical intelligence.
+Zorora is a local-first deep research and analysis tool for policy, market, and technical intelligence. It runs against local LLM endpoints, supports both terminal and web interfaces, and handles everything from source discovery to structured data analysis.
 
-This repository README is intentionally short. Zorora's full documentation lives at **[code.asoba.co](https://code.asoba.co)**.
+**Learn more in the [full documentation](https://code.asoba.co)**.
 
 ![Zorora Web UI](docs/ui.png)
 
-## Start Here
+## Get Started
 
-- Full docs: [code.asoba.co](https://code.asoba.co)
-- GitHub repo: [AsobaCloud/zorora](https://github.com/AsobaCloud/zorora)
+For detailed setup instructions, see the [setup documentation](https://code.asoba.co).
 
-## Quick Start
+1. Install Zorora:
 
-### Prerequisites
+    ```bash
+    pip install git+https://github.com/AsobaCloud/zorora.git
+    ```
 
-- Python 3.8+
-- LM Studio (default local endpoint: `http://localhost:1234`)
+    Or from source:
 
-### Install
+    ```bash
+    git clone https://github.com/AsobaCloud/zorora.git
+    cd zorora
+    pip install -e .
+    ```
 
-```bash
-pip install git+https://github.com/AsobaCloud/zorora.git
-```
+2. Run Zorora:
 
-Or from source:
+    ```bash
+    zorora
+    ```
 
-```bash
-git clone https://github.com/AsobaCloud/zorora.git
-cd zorora
-pip install -e .
-```
+    Or launch the web UI:
 
-For full local data-analysis + policy retrieval stack:
+    ```bash
+    zorora web
+    ```
 
-```bash
-pip install -e .[full]
-```
+## Reporting Issues
 
-### Run
-
-Terminal UI:
-
-```bash
-zorora
-```
-
-Web UI:
-
-```bash
-zorora web
-# http://localhost:5000
-```
-
-## Local Reference Docs
-
-Use these for contributor context while the canonical docs live on `code.asoba.co`:
-
-- Commands: [COMMANDS.md](COMMANDS.md)
-- Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- Workflows: [docs/WORKFLOWS.md](docs/WORKFLOWS.md)
-- Development: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
-- Troubleshooting: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
-- Data analysis specification: [docs/data_analysis_spec.docx](docs/data_analysis_spec.docx)
+File a [GitHub issue](https://github.com/AsobaCloud/zorora/issues) to report bugs or request features.
 
 ## License
 
-See [LICENSE.md](LICENSE.md).
+Apache 2.0 — see [LICENSE.md](LICENSE.md).
