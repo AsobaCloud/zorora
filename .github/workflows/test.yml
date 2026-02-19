@@ -22,6 +22,9 @@ jobs:
           pip install .
           pip install pytest
 
+      - name: Create CI config
+        run: python .github/generate_ci_config.py
+
       - name: Run full test suite
         run: pytest -q
 
@@ -42,6 +45,9 @@ jobs:
           pip install ".[full]"
           pip install pytest
 
+      - name: Create CI config
+        run: python .github/generate_ci_config.py
+
       - name: Run non-LLM integration profile tests
         run: |
           pytest -q \
@@ -50,4 +56,3 @@ jobs:
             tests/test_plot_pipeline_integration.py \
             tests/test_policy_bootstrap_integration.py \
             tests/test_install_profiles.py
-
