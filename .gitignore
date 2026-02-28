@@ -37,6 +37,8 @@ repl.log
 # Environment
 .env
 .env.local
+.envrc
+.direnv/
 
 # Configuration (contains API tokens)
 config.py
