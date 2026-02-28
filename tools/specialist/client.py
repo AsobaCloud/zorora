@@ -58,7 +58,7 @@ def create_specialist_client(role: str, model_config: Dict[str, Any]):
         # Wrap adapter in LLMClient-compatible interface
         client = LLMClient.__new__(LLMClient)
         client.adapter = adapter
-        client.api_url = f"https://api.openai.com/v1/chat/completions"
+        client.api_url = "https://api.openai.com/v1/chat/completions"
         client.model = openai_config.get("model", endpoint_key)
         client.max_tokens = model_config["max_tokens"]
         client.temperature = model_config["temperature"]
@@ -86,7 +86,7 @@ def create_specialist_client(role: str, model_config: Dict[str, Any]):
         # Wrap adapter in LLMClient-compatible interface
         client = LLMClient.__new__(LLMClient)
         client.adapter = adapter
-        client.api_url = f"https://api.anthropic.com/v1/messages"
+        client.api_url = "https://api.anthropic.com/v1/messages"
         client.model = anthropic_config.get("model", endpoint_key)
         client.max_tokens = model_config["max_tokens"]
         client.temperature = model_config["temperature"]
@@ -99,13 +99,39 @@ def create_specialist_client(role: str, model_config: Dict[str, Any]):
     # Check HF endpoints (existing logic)
     if hasattr(config, 'HF_ENDPOINTS') and endpoint_key in config.HF_ENDPOINTS:
         hf_config = config.HF_ENDPOINTS[endpoint_key]
+        api_format = hf_config.get("api_format", "openai")
+        hf_token = config.HF_TOKEN if hasattr(config, 'HF_TOKEN') else None
+
+        if api_format == "hf_inference":
+            # Native HF Inference Toolkit format: {"inputs": ..., "parameters": {...}}
+            from providers.huggingface_adapter import HuggingFaceAdapter
+            adapter = HuggingFaceAdapter(
+                api_url=hf_config["url"],
+                model=hf_config["model_name"],
+                auth_token=hf_token,
+                timeout=hf_config.get("timeout", model_config["timeout"]),
+                chat_template=hf_config.get("chat_template", "mistral"),
+            )
+            client = LLMClient.__new__(LLMClient)
+            client.adapter = adapter
+            client.api_url = hf_config["url"]
+            client.model = hf_config["model_name"]
+            client.max_tokens = model_config["max_tokens"]
+            client.temperature = model_config["temperature"]
+            client.timeout = hf_config.get("timeout", model_config["timeout"])
+            client.tool_choice = "auto"
+            client.parallel_tool_calls = True
+            client.auth_token = hf_token
+            return client
+
+        # Default: OpenAI-compatible format (e.g., TGI with /v1/chat/completions)
         return LLMClient(
             api_url=hf_config["url"],
             model=hf_config["model_name"],
             max_tokens=model_config["max_tokens"],
             temperature=model_config["temperature"],
             timeout=hf_config.get("timeout", model_config["timeout"]),
-            auth_token=config.HF_TOKEN if hasattr(config, 'HF_TOKEN') else None
+            auth_token=hf_token
         )
 
     # Fallback to local if endpoint not found
