@@ -382,6 +382,7 @@ INSTRUCTIONS:
 6. If sources conflict, note the discrepancy
 7. Structure your answer with clear sections if covering multiple topics
 8. Use the current date ({current_date}) when interpreting temporal references
+9. IMPORTANT: If the sources above do not fully answer the topic, supplement with your own knowledge. Clearly mark such additions as [Background Knowledge] so the reader knows which claims come from sources and which come from your general knowledge. Do not refuse to answer just because sources are limited.
 
 ANSWER:"""
 

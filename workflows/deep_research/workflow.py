@@ -2,12 +2,13 @@
 
 import logging
 from datetime import datetime
-from typing import Optional
 
-from engine.models import ResearchState, Source, Finding
+import config
+from engine.models import ResearchState, Finding
 from workflows.deep_research.aggregator import aggregate_sources
 from workflows.deep_research.credibility import score_source_credibility
 from workflows.deep_research.synthesizer import synthesize
+from engine.deep_research_service import _generate_query_variants, _deduplicate_sources
 
 logger = logging.getLogger(__name__)
 
@@ -15,20 +16,20 @@ logger = logging.getLogger(__name__)
 class DeepResearchWorkflow:
     """
     Simplified MVP deep research workflow.
-    
+
     Phases:
     1. Source Aggregation (academic, web, newsroom)
     2. Credibility Scoring
     3. Cross-Referencing (simplified)
     4. Synthesis
-    
+
     Note: Citation following skipped for MVP (as per docs/ANSWERS_FOR_REVIEW.md)
     """
 
     def __init__(self, max_depth: int = 1):
         """
         Initialize workflow.
-        
+
         Args:
             max_depth: Max depth (1 for MVP, citation following disabled)
         """
@@ -37,36 +38,46 @@ class DeepResearchWorkflow:
     def execute(self, query: str) -> ResearchState:
         """
         Execute deep research workflow.
-        
+
         Args:
             query: Research query
-            
+
         Returns:
             ResearchState with results
         """
         logger.info(f"Starting deep research: {query[:60]}...")
-        
+
+        # Look up depth profile
+        profile = config.DEPTH_PROFILES.get(self.max_depth, config.DEPTH_PROFILES[1])
+        effective_max_per_source = profile["max_results_per_source"]
+        include_brave_news = profile["include_brave_news"]
+        num_variants = profile["query_variants"]
+
         # Initialize state
         state = ResearchState(
             original_query=query,
             max_depth=self.max_depth,
             max_iterations=1  # MVP: single iteration
         )
-        
-        # Phase 1: Source Aggregation
+
+        # Phase 1: Source Aggregation (with query variants)
         logger.info("Phase 1: Aggregating sources...")
-        sources = aggregate_sources(query, max_results_per_source=10)
+        variants = _generate_query_variants(query, num_variants)
+        logger.info(f"Using {len(variants)} query variant(s) for depth {self.max_depth}")
+
+        all_sources = []
+        for variant in variants:
+            sources = aggregate_sources(
+                variant,
+                max_results_per_source=effective_max_per_source,
+                include_brave_news=include_brave_news,
+            )
+            all_sources.extend(sources)
+
+        sources = all_sources
         
         # Deduplicate by URL
-        seen_urls = set()
-        unique_sources = []
-        for source in sources:
-            if source.url and source.url not in seen_urls:
-                seen_urls.add(source.url)
-                unique_sources.append(source)
-            elif not source.url and source.title not in seen_urls:
-                seen_urls.add(source.title)
-                unique_sources.append(source)
+        unique_sources = _deduplicate_sources(sources)
         
         logger.info(f"✓ Aggregated {len(unique_sources)} unique sources")
         

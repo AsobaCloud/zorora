@@ -1,9 +1,8 @@
 """Synthesizer - generates final synthesis from research findings."""
 
 import logging
-from typing import List
 
-from engine.models import ResearchState, Source, Finding
+from engine.models import ResearchState
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +61,7 @@ def synthesize(state: ResearchState) -> str:
    - Low: 1 source, avg credibility <0.5
 4. Flag contradictions
 5. Be concise and factual
+6. IMPORTANT: If the sources above do not fully answer the topic, supplement with your own knowledge. Clearly mark such additions as [Background Knowledge] so the reader knows which claims come from sources and which come from your general knowledge. Do not refuse to answer just because sources are limited.
 
 Begin synthesis:
 """

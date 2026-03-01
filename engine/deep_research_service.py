@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import logging
+import re
 import threading
 import time
 from datetime import datetime
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 
-from engine.models import ResearchState, Finding
+import config
+from engine.models import ResearchState, Source, Finding
 from workflows.deep_research.aggregator import aggregate_sources
 from workflows.deep_research.credibility import score_source_credibility
 from workflows.deep_research.synthesizer import synthesize
 
+
+logger = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[str, str, str], None]
 
@@ -22,6 +27,69 @@ def _emit(progress_callback: Optional[ProgressCallback], phase: str, message: st
         progress_callback(status, phase, message)
 
 
+def _generate_query_variants(query: str, num_variants: int) -> List[str]:
+    """
+    Generate query variants for broader search coverage.
+
+    Args:
+        query: Original research query
+        num_variants: Number of variants to produce (1-3)
+
+    Returns:
+        List of query strings (first is always the original)
+    """
+    if num_variants <= 1:
+        return [query]
+
+    variants = [query]
+
+    # Variant 2: deterministic reformulation — strip question words, add analysis terms
+    question_words = r"^(what|why|how|when|where|who|is|are|do|does|did|can|could|should|will|would)\s+"
+    stripped = re.sub(question_words, "", query, flags=re.IGNORECASE).strip()
+    if stripped and stripped != query:
+        variant2 = f"{stripped} analysis trends overview"
+    else:
+        variant2 = f"{query} analysis trends overview"
+    variants.append(variant2)
+
+    if num_variants <= 2:
+        return variants
+
+    # Variant 3: try reasoning model for a creative reformulation, fall back to deterministic
+    try:
+        from tools.registry import TOOL_FUNCTIONS
+        use_reasoning = TOOL_FUNCTIONS.get("use_reasoning_model")
+        if use_reasoning:
+            prompt = (
+                f"Rewrite this research query as a different search query that would find complementary information. "
+                f"Return ONLY the rewritten query, nothing else.\n\nQuery: {query}"
+            )
+            result = use_reasoning(prompt)
+            if result and not result.startswith("Error:") and len(result.strip()) > 5:
+                variant3 = result.strip().split("\n")[0][:200]
+                variants.append(variant3)
+                return variants
+    except Exception as e:
+        logger.debug(f"Reasoning model variant generation failed: {e}")
+
+    # Deterministic fallback for variant 3
+    variant3 = f"{stripped or query} implications challenges outlook"
+    variants.append(variant3)
+    return variants
+
+
+def _deduplicate_sources(sources: List[Source]) -> List[Source]:
+    """Deduplicate sources by URL, fallback to title when URL is absent."""
+    seen_keys: set = set()
+    unique: List[Source] = []
+    for source in sources:
+        key = source.url if source.url else source.title
+        if key and key not in seen_keys:
+            seen_keys.add(key)
+            unique.append(source)
+    return unique
+
+
 def run_deep_research(
     query: str,
     depth: int = 1,
@@ -29,17 +97,31 @@ def run_deep_research(
     progress_callback: Optional[ProgressCallback] = None,
 ) -> ResearchState:
     """Execute the shared deep-research pipeline and return populated state."""
-    _emit(progress_callback, "aggregation", "Searching academic databases, web, and newsroom...")
-    sources = aggregate_sources(query, max_results_per_source=max_results_per_source)
+    # Look up depth profile
+    profile = config.DEPTH_PROFILES.get(depth, config.DEPTH_PROFILES[1])
+    effective_max_per_source = profile["max_results_per_source"]
+    include_brave_news = profile["include_brave_news"]
+    num_variants = profile["query_variants"]
 
-    # Deduplicate by URL, fallback to title when URL is absent.
-    seen_keys = set()
-    unique_sources = []
-    for source in sources:
-        key = source.url if source.url else source.title
-        if key and key not in seen_keys:
-            seen_keys.add(key)
-            unique_sources.append(source)
+    # Generate query variants
+    variants = _generate_query_variants(query, num_variants)
+    logger.info(f"Deep research depth={depth}: {len(variants)} query variant(s)")
+
+    _emit(progress_callback, "aggregation", f"Searching with {len(variants)} query variant(s) (depth {depth})...")
+
+    # Aggregate sources for each variant
+    all_sources: List[Source] = []
+    for i, variant in enumerate(variants):
+        _emit(progress_callback, "aggregation", f"Query {i + 1}/{len(variants)}: {variant[:60]}...")
+        sources = aggregate_sources(
+            variant,
+            max_results_per_source=effective_max_per_source,
+            include_brave_news=include_brave_news,
+        )
+        all_sources.extend(sources)
+
+    # Deduplicate combined results
+    unique_sources = _deduplicate_sources(all_sources)
 
     _emit(progress_callback, "credibility", f"Found {len(unique_sources)} sources. Scoring credibility...")
 
@@ -126,7 +208,7 @@ def run_deep_research(
     return state
 
 
-def build_results_payload(state: ResearchState, query: str, research_id: Optional[str] = None, max_sources: int = 20) -> dict:
+def build_results_payload(state: ResearchState, query: str, research_id: Optional[str] = None, max_sources: int = 25) -> dict:
     """Build API payload for web result rendering."""
     return {
         "research_id": research_id,

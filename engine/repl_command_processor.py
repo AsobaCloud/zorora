@@ -217,16 +217,33 @@ class REPLCommandProcessor:
                 self.repl.conversation.add_assistant_message(content=result)
             return (result, 0.0) if result else None
 
-        # /deep <query>
+        # /deep [--depth N] <query>
         elif cmd_lower.startswith("/deep "):
-            query = command[6:].strip()
-            if not query:
-                self.repl.ui.console.print("[red]Usage: /deep <query>[/red]")
+            args_str = command[6:].strip()
+            if not args_str:
+                self.repl.ui.console.print("[red]Usage: /deep [--depth N] <query>[/red]")
                 self.repl.ui.console.print("[dim]Example: /deep impact of AI on renewable energy markets[/dim]")
-                self.repl.ui.console.print("[dim]Example: /deep climate change mitigation strategies 2024[/dim]")
+                self.repl.ui.console.print("[dim]Example: /deep --depth 3 climate change mitigation strategies 2024[/dim]")
                 return None
 
-            self.repl.ui.console.print("[cyan]Starting deep research (academic + web + newsroom + credibility scoring)...[/cyan]")
+            # Parse --depth N flag
+            import re as _re
+            depth = 1
+            depth_match = _re.match(r'--depth\s+(\d+)\s+', args_str)
+            if depth_match:
+                depth = int(depth_match.group(1))
+                if depth not in (1, 2, 3):
+                    self.repl.ui.console.print("[red]Error: depth must be 1, 2, or 3[/red]")
+                    return None
+                args_str = args_str[depth_match.end():].strip()
+
+            query = args_str
+            if not query:
+                self.repl.ui.console.print("[red]Usage: /deep [--depth N] <query>[/red]")
+                return None
+
+            profile = config.DEPTH_PROFILES.get(depth, config.DEPTH_PROFILES[1])
+            self.repl.ui.console.print(f"[cyan]Starting deep research at depth {depth} (academic + web + newsroom + credibility scoring)...[/cyan]")
 
             import time
             start_time = time.time()
@@ -234,7 +251,7 @@ class REPLCommandProcessor:
             from engine.deep_research_service import run_deep_research
             from engine.research_engine import ResearchEngine
 
-            state = run_deep_research(query=query, depth=1, max_results_per_source=10)
+            state = run_deep_research(query=query, depth=depth, max_results_per_source=profile["max_results_per_source"])
 
             result = state.synthesis if state.synthesis else "No synthesis generated."
 
@@ -380,7 +397,7 @@ class REPLCommandProcessor:
   [cyan]/ask <query>[/cyan]            - Force conversational mode (no web search)
   [cyan]/code <prompt>[/cyan]          - Force code generation with Codestral
   [cyan]/academic <query>[/cyan]       - Search academic papers (Scholar, PubMed, CORE, arXiv, bioRxiv, medRxiv, PMC + Sci-Hub)
-  [cyan]/deep <query>[/cyan]           - Deep research with credibility scoring (academic + web + newsroom)
+  [cyan]/deep [--depth N] <query>[/cyan] - Deep research with credibility scoring (depth 1-3)
   [cyan]/analyst <query>[/cyan]        - Query Nehanda RAG (energy policy documents)
   [cyan]/image <prompt>[/cyan]         - Generate image with FLUX (text-to-image)
   [cyan]/vision <path> [task][/cyan]   - Analyze image with vision model

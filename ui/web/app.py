@@ -169,7 +169,7 @@ def _compose_chat_reply(
             history_lines.append(f"{role}: {content}")
 
     strict_instructions = (
-        "Use only provided context and sources. If evidence is insufficient, say so explicitly."
+        "Primarily use provided context and sources. If evidence is insufficient, supplement with your own knowledge and clearly mark it as [Background Knowledge]."
         if strict_citations
         else "Prioritize provided context and sources; clearly label any inference beyond them."
     )
@@ -237,10 +237,12 @@ def _run_research_with_progress(research_id: str, query: str, depth: int):
                 "phase": phase
             }
 
+        profile = config.DEPTH_PROFILES.get(depth, config.DEPTH_PROFILES[1])
+
         state = run_deep_research(
             query=query,
             depth=depth,
-            max_results_per_source=10,
+            max_results_per_source=profile["max_results_per_source"],
             progress_callback=on_progress,
         )
 
@@ -250,7 +252,7 @@ def _run_research_with_progress(research_id: str, query: str, depth: int):
             "status": "completed",
             "message": f"Research complete! Found {state.total_sources} sources.",
             "phase": "complete",
-            "results": build_results_payload(state, query, research_id=research_id_actual, max_sources=20),
+            "results": build_results_payload(state, query, research_id=research_id_actual, max_sources=profile["max_sources"]),
         }
         
     except Exception as e:
@@ -402,7 +404,7 @@ def research_chat(research_id):
         if not message:
             return jsonify({"error": "message is required"}), 400
 
-        strict_citations = bool(data.get("strict_citations", True))
+        strict_citations = bool(data.get("strict_citations", False))
         history = data.get("history") or []
         selected_source_ids = set(data.get("selected_source_ids") or [])
 
