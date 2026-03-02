@@ -333,7 +333,10 @@ def run_deep_research(
 
     _emit(progress_callback, "cross_reference", "Clustering findings by theme across sources...")
 
-    state.findings = _cluster_findings(query, state.sources_checked)
+    # Cap clustering input — 7B model produces structured output reliably
+    # with ≤25 sources (each gets ~320 chars in 8000-char budget)
+    clustering_sources = state.sources_checked[:25]
+    state.findings = _cluster_findings(query, clustering_sources)
 
     _emit(
         progress_callback,
