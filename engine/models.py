@@ -17,6 +17,7 @@ class Source:
     publication_date: str = ""
     source_type: str = ""              # 'academic', 'web', 'newsroom'
     credibility_score: float = 0.0
+    relevance_score: float = 0.0
     credibility_category: str = ""
     content_snippet: str = ""
     content_full: str = ""
@@ -114,6 +115,7 @@ class ResearchState:
                     "publication_date": s.publication_date,
                     "source_type": s.source_type,
                     "credibility_score": s.credibility_score,
+                    "relevance_score": s.relevance_score,
                     "credibility_category": s.credibility_category,
                     "content_snippet": s.content_snippet or "",
                     "content_full": s.content_full or "",

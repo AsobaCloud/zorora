@@ -13,6 +13,7 @@ import config
 from engine.models import ResearchState, Source, Finding
 from workflows.deep_research.aggregator import aggregate_sources
 from workflows.deep_research.credibility import score_source_credibility
+from workflows.deep_research.reranker import score_relevance, filter_relevant
 from workflows.deep_research.synthesizer import synthesize
 
 
@@ -315,6 +316,21 @@ def run_deep_research(
     except Exception as e:
         logger.warning(f"Content fetch phase failed (non-fatal): {e}")
 
+    # Rerank by relevance to original query
+    _emit(progress_callback, "relevance", "Scoring source relevance...")
+    scored_sources = score_relevance(query, list(state.sources_checked))
+
+    # Enforce source budget from depth profile
+    max_sources = profile.get("max_sources", 25)
+    relevant_sources = filter_relevant(scored_sources, min_score=0.0, max_sources=max_sources)
+
+    _emit(progress_callback, "relevance",
+          f"Filtered to {len(relevant_sources)}/{len(state.sources_checked)} relevant sources.")
+
+    # Replace state sources with relevance-filtered set
+    state.sources_checked = relevant_sources
+    state.total_sources = len(relevant_sources)
+
     _emit(progress_callback, "cross_reference", "Clustering findings by theme across sources...")
 
     state.findings = _cluster_findings(query, state.sources_checked)
@@ -376,6 +392,7 @@ def build_results_payload(state: ResearchState, query: str, research_id: Optiona
                 "title": s.title or "Untitled Source",
                 "url": s.url or "",
                 "credibility_score": s.credibility_score or 0.0,
+                "relevance_score": s.relevance_score or 0.0,
                 "credibility_category": s.credibility_category or "Unknown",
                 "source_type": s.source_type or "unknown",
                 "publication_date": s.publication_date or "",

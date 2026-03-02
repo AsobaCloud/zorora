@@ -11,7 +11,7 @@ import config
 from engine.models import Source
 from tools.research.academic_search import academic_search
 from tools.research.web_search import web_search
-from tools.research.newsroom import fetch_newsroom_api
+from tools.research.newsroom import fetch_newsroom_api, _extract_keywords
 
 logger = logging.getLogger(__name__)
 
@@ -155,10 +155,16 @@ def parse_web_results(results_str: str, query: str) -> List[Source]:
 
 
 def parse_newsroom_results(articles: List[Dict[str, Any]], query: str) -> List[Source]:
-    """Parse newsroom API articles into Source objects."""
+    """Parse newsroom API articles into Source objects, filtering by query relevance."""
+    keywords = _extract_keywords(query) if query else []
     sources = []
-    
+
     for article in articles:
+        # Relevance gate: at least one keyword must appear in title or tags
+        if keywords:
+            haystack = f"{article.get('headline', '')} {' '.join(str(t) for t in article.get('topic_tags', []))}".lower()
+            if not any(kw in haystack for kw in keywords):
+                continue
         url = article.get("url", "")
         title = article.get("headline", "No title")
         source_id = Source.generate_id(url) if url else Source.generate_id(title)
@@ -180,7 +186,8 @@ def parse_newsroom_results(articles: List[Dict[str, Any]], query: str) -> List[S
             publication_date=article.get("date", "")
         )
         sources.append(source)
-    
+
+    logger.info(f"Newsroom: {len(sources)}/{len(articles)} passed relevance filter")
     return sources
 
 

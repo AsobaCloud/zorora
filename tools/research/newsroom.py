@@ -2,13 +2,25 @@
 
 import logging
 import requests
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 
 import config
 
 logger = logging.getLogger(__name__)
+
+STOP_WORDS = frozenset({
+    'why', 'did', 'does', 'how', 'what', 'when', 'where', 'who',
+    'the', 'a', 'an', 'in', 'on', 'at', 'to', 'for', 'of', 'and',
+    'or', 'is', 'was', 'were', 'are', 'been', 'be', 'has', 'had',
+    'do', 'with', 'from', 'about', 'that', 'this', 'it', 'not',
+})
+
+
+def _extract_keywords(query: str) -> List[str]:
+    """Extract substantive keywords from a query, removing stop words."""
+    return [w for w in query.lower().split() if w not in STOP_WORDS and len(w) > 1]
 
 # Newsroom API endpoint (production)
 NEWSROOM_API_URL = "https://pj1ud6q3uf.execute-api.af-south-1.amazonaws.com/prod/api/data-admin/newsroom/articles"
@@ -158,13 +170,15 @@ def fetch_newsroom_api(query: str = None, days_back: int = 90, max_results: int 
         if not headers:
             logger.warning("No NEWSROOM_JWT_TOKEN configured - newsroom will be unavailable")
 
-        # Build params - only pass single-word queries to API (multi-word fails)
+        # Build params - extract best keyword for API search (API only supports single-word)
         params = {
             'limit': max_results,
             'date_from': date_from
         }
-        if query and ' ' not in query.strip():
-            params['search'] = query.strip()
+        if query:
+            keywords = _extract_keywords(query)
+            if keywords:
+                params['search'] = keywords[0]
 
         # Call newsroom API
         response = requests.get(
