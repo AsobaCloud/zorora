@@ -1927,7 +1927,7 @@
                             ${escapeHtml(sourceType)}${publicationDate ? ` | ${escapeHtml(publicationDate)}` : ''} | ${credibility.toFixed(0)}%${category && category !== 'Unknown source' ? ` ${escapeHtml(category)}` : ''}
                         </div>
                         ${snippet ? `<div style="color:#4B5563; font-size:0.84rem; margin-bottom:6px;">${escapeHtml(snippet)}</div>` : ''}
-                        <button type="button" onclick="prefillChatForSource(${JSON.stringify(title || 'Untitled Source')}, ${JSON.stringify(url || '')})" style="border:1px solid #E5E7EB;background:#fff;color:#374151;padding:4px 8px;border-radius:6px;cursor:pointer;font-size:0.78rem;">Discuss</button>
+                        <button type="button" onclick="prefillChatForSource(${escapeAttr(JSON.stringify(title || 'Untitled Source'))}, ${escapeAttr(JSON.stringify(url || ''))})" style="border:1px solid #E5E7EB;background:#fff;color:#374151;padding:4px 8px;border-radius:6px;cursor:pointer;font-size:0.78rem;">Discuss</button>
                     </div>
                 `;
             }).join('');
@@ -1961,7 +1961,7 @@
                                         ${(article.topic_tags || []).length ? ` | Topics: ${escapeHtml((article.topic_tags || []).slice(0, 4).join(', '))}` : ''}
                                     </div>
                                     <div style="margin-top:10px;">
-                                        <button type="button" onclick="prefillChatForSource(${JSON.stringify((article.headline || 'Untitled'))}, ${JSON.stringify((article.url || ''))})" style="border:1px solid #E5E7EB;background:#fff;color:#374151;padding:6px 10px;border-radius:8px;cursor:pointer;font-size:0.82rem;">Discuss this source</button>
+                                        <button type="button" onclick="prefillChatForSource(${escapeAttr(JSON.stringify(article.headline || 'Untitled'))}, ${escapeAttr(JSON.stringify(article.url || ''))})" style="border:1px solid #E5E7EB;background:#fff;color:#374151;padding:6px 10px;border-radius:8px;cursor:pointer;font-size:0.82rem;">Discuss this source</button>
                                     </div>
                                 </div>
                             `).join('')}
@@ -1977,6 +1977,10 @@
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+
+        function escapeAttr(text) {
+            return String(text).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         }
 
         loadResearchHistory();
