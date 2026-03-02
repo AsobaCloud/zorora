@@ -34,6 +34,185 @@
             flex-direction: column;
         }
 
+        .app-layout {
+            display: flex;
+            flex: 1;
+            min-height: 0;
+        }
+
+        .research-sidebar {
+            width: 260px;
+            flex-shrink: 0;
+            background: var(--white);
+            border-right: 1px solid var(--border-grey);
+            display: flex;
+            flex-direction: column;
+            position: sticky;
+            top: 73px;
+            height: calc(100vh - 73px);
+            overflow: hidden;
+            z-index: 90;
+        }
+
+        .sidebar-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px;
+            border-bottom: 1px solid var(--border-grey);
+        }
+
+        .sidebar-header h3 {
+            margin: 0;
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: var(--text-dark);
+        }
+
+        .sidebar-new-btn {
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            border: 1px solid var(--border-grey);
+            background: var(--white);
+            color: var(--text-dark);
+            font-size: 1.1rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.15s;
+        }
+
+        .sidebar-new-btn:hover {
+            background: var(--light-purple);
+            border-color: var(--primary-purple);
+            color: var(--primary-purple);
+        }
+
+        .sidebar-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px 0;
+        }
+
+        .sidebar-date-group {
+            padding: 8px 16px 4px;
+            font-size: 0.7rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-light);
+        }
+
+        .sidebar-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            width: 100%;
+            padding: 10px 16px;
+            border: none;
+            background: none;
+            cursor: pointer;
+            text-align: left;
+            font-family: inherit;
+            transition: background 0.15s;
+            border-left: 3px solid transparent;
+        }
+
+        .sidebar-item:hover {
+            background: var(--neutral-grey);
+        }
+
+        .sidebar-item.active {
+            background: var(--light-purple);
+            border-left-color: var(--primary-purple);
+        }
+
+        .sidebar-item-content {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .sidebar-item-title {
+            font-size: 0.88rem;
+            font-weight: 500;
+            color: var(--text-dark);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            line-height: 1.3;
+        }
+
+        .sidebar-item-meta {
+            font-size: 0.75rem;
+            color: var(--text-light);
+            margin-top: 2px;
+        }
+
+        .sidebar-item-delete {
+            opacity: 0;
+            border: none;
+            background: none;
+            color: var(--text-light);
+            cursor: pointer;
+            padding: 2px 4px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            transition: all 0.15s;
+            flex-shrink: 0;
+        }
+
+        .sidebar-item:hover .sidebar-item-delete {
+            opacity: 1;
+        }
+
+        .sidebar-item-delete:hover {
+            color: #ef4444;
+            background: #fef2f2;
+        }
+
+        .sidebar-empty {
+            padding: 24px 16px;
+            text-align: center;
+            color: var(--text-light);
+            font-size: 0.9rem;
+        }
+
+        .sidebar-toggle {
+            display: none;
+            align-items: center;
+            justify-content: center;
+            background: none;
+            border: none;
+            color: var(--text-light);
+            font-size: 1.3rem;
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+
+        .sidebar-toggle:hover {
+            background: var(--neutral-grey);
+            color: var(--text-dark);
+        }
+
+        .sidebar-backdrop {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.4);
+            z-index: 89;
+        }
+
+        .sidebar-backdrop.visible {
+            display: block;
+        }
+
         .header {
             background: var(--white);
             border-bottom: 1px solid var(--border-grey);
@@ -121,12 +300,17 @@
 
         .main-container {
             flex: 1;
+            min-width: 0;
             display: flex;
             flex-direction: column;
             max-width: 900px;
             width: 100%;
             margin: 0 auto;
             padding: 40px 24px 24px;
+        }
+
+        .session-active .chat-dock {
+            left: 260px;
         }
 
         .welcome-section {
@@ -195,78 +379,6 @@
             display: grid;
             grid-template-columns: 1fr 1fr 1fr;
             gap: 12px;
-        }
-
-        .history-panel {
-            background: var(--white);
-            border: 1px solid var(--border-grey);
-            border-radius: 12px;
-            padding: 14px 16px;
-            margin-bottom: 24px;
-        }
-
-        .history-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 12px;
-            margin-bottom: 8px;
-        }
-
-        .history-title-wrap {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            min-width: 0;
-        }
-
-        .history-toggle {
-            border: 1px solid var(--border-grey);
-            background: var(--white);
-            color: var(--text-dark);
-            padding: 6px 10px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 0.85rem;
-            font-weight: 600;
-        }
-
-        .history-count,
-        .history-updated {
-            border-radius: 999px;
-            font-size: 0.75rem;
-            font-weight: 700;
-            padding: 2px 8px;
-            line-height: 1.4;
-        }
-
-        .history-count {
-            background: var(--light-purple);
-            color: var(--primary-purple);
-        }
-
-        .history-updated {
-            background: #ecfdf5;
-            color: #047857;
-        }
-
-        .history-updated.hidden {
-            display: none;
-        }
-
-        .history-body.hidden {
-            display: none;
-        }
-
-        #historyList {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-            color: #6B7280;
-            font-size: 0.95rem;
-            max-height: 320px;
-            overflow-y: auto;
-            padding-right: 4px;
         }
 
         .discussion-section {
@@ -482,6 +594,20 @@
                 position: static;
                 max-height: none;
             }
+
+            .research-sidebar {
+                position: fixed;
+                top: 0;
+                left: 0;
+                height: 100vh;
+                transform: translateX(-260px);
+                transition: transform 0.25s ease;
+                z-index: 200;
+            }
+
+            .research-sidebar.open {
+                transform: translateX(0);
+            }
         }
 
         .search-form {
@@ -632,6 +758,14 @@
 
             .news-intel-grid {
                 grid-template-columns: 1fr;
+            }
+
+            .sidebar-toggle {
+                display: flex;
+            }
+
+            .session-active .chat-dock {
+                left: 0;
             }
         }
 
@@ -941,6 +1075,7 @@
 <body>
     <div class="header">
         <div class="header-left">
+            <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()" title="Research history">&#9776;</button>
             <button class="back-button" onclick="goBack()" title="Back">
                 ←
             </button>
@@ -952,6 +1087,17 @@
         </button>
         <button class="new-search-button hidden" id="newSearchButton" type="button">+ New Search</button>
     </div>
+
+    <div class="app-layout">
+        <div class="research-sidebar" id="researchSidebar">
+            <div class="sidebar-header">
+                <h3>Research History</h3>
+                <button class="sidebar-new-btn" onclick="sidebarNewResearch()" title="New Research">+</button>
+            </div>
+            <div class="sidebar-list" id="sidebarList">
+                <div class="sidebar-empty">Loading...</div>
+            </div>
+        </div>
 
     <div class="main-container">
         <div class="welcome-section">
@@ -1033,20 +1179,6 @@
             </div>
         </div>
 
-        <div class="history-panel" id="historyPanel">
-            <div class="history-header">
-                <div class="history-title-wrap">
-                    <h3 style="color: #1A1A1A; margin: 0; font-size: 1.05rem;">Recent Research</h3>
-                    <span id="historyCount" class="history-count">0</span>
-                    <span id="historyUpdated" class="history-updated hidden">Updated</span>
-                </div>
-                <button type="button" class="history-toggle" id="historyToggleButton" aria-expanded="true">Hide ▲</button>
-            </div>
-            <div class="history-body" id="historyBody">
-                <div id="historyList">Loading history...</div>
-            </div>
-        </div>
-
         <div id="newsIntelResultsContainer"></div>
 
         <div id="researchLayout" class="research-layout hidden">
@@ -1061,6 +1193,8 @@
         </div>
 
     </div>
+    </div><!-- .app-layout -->
+    <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="closeSidebar()"></div>
 
     <div id="chatDock" class="chat-dock hidden">
         <div class="chat-dock-inner">
@@ -1085,22 +1219,15 @@
         let sessionActive = false;
         let currentSession = null;
         let chatMessages = [];
-        const HISTORY_COLLAPSED_KEY = 'recentResearchCollapsed';
-        let historyCollapsed = localStorage.getItem(HISTORY_COLLAPSED_KEY) === '1';
-        let previousHistoryIds = [];
-
         function setSessionActive(active) {
             sessionActive = active;
             document.body.classList.toggle('session-active', active);
             document.querySelector('.welcome-section').classList.toggle('hidden', active);
             document.querySelector('.search-section').classList.toggle('hidden', active);
-            document.getElementById('historyPanel').classList.toggle('hidden', active);
             document.getElementById('newSearchButton').classList.toggle('hidden', !active);
             document.getElementById('researchLayout').classList.toggle('hidden', !active);
             document.getElementById('chatDock').classList.toggle('hidden', !active);
-            if (active) {
-                setHistoryCollapsed(true);
-            }
+            loadResearchHistory();
         }
 
         function resetToNewSearch() {
@@ -1284,26 +1411,6 @@
             }
         });
 
-        function setHistoryCollapsed(collapsed, { persist = true } = {}) {
-            historyCollapsed = collapsed;
-            const historyBody = document.getElementById('historyBody');
-            const historyToggleButton = document.getElementById('historyToggleButton');
-            historyBody.classList.toggle('hidden', collapsed);
-            historyToggleButton.textContent = collapsed ? 'Show ▼' : 'Hide ▲';
-            historyToggleButton.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-            if (persist) {
-                localStorage.setItem(HISTORY_COLLAPSED_KEY, collapsed ? '1' : '0');
-            }
-            if (!collapsed) {
-                document.getElementById('historyUpdated').classList.add('hidden');
-            }
-        }
-
-        document.getElementById('historyToggleButton').addEventListener('click', function() {
-            setHistoryCollapsed(!historyCollapsed);
-        });
-        setHistoryCollapsed(historyCollapsed, { persist: false });
-
         // Mode tab functionality
         document.querySelectorAll('.mode-tab').forEach(tab => {
             tab.addEventListener('click', function() {
@@ -1459,47 +1566,120 @@
             }
         }
 
+        function getDateGroup(timestamp) {
+            const date = new Date(timestamp);
+            const now = new Date();
+            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            const yesterday = new Date(today);
+            yesterday.setDate(yesterday.getDate() - 1);
+            const weekAgo = new Date(today);
+            weekAgo.setDate(weekAgo.getDate() - 7);
+
+            if (date >= today) return 'Today';
+            if (date >= yesterday) return 'Yesterday';
+            if (date >= weekAgo) return 'Previous 7 Days';
+            return 'Older';
+        }
+
+        function formatRelativeTime(timestamp) {
+            const now = Date.now();
+            const diff = now - new Date(timestamp).getTime();
+            const seconds = Math.floor(diff / 1000);
+            if (seconds < 60) return 'Just now';
+            const minutes = Math.floor(seconds / 60);
+            if (minutes < 60) return `${minutes}m ago`;
+            const hours = Math.floor(minutes / 60);
+            if (hours < 24) return `${hours}h ago`;
+            const days = Math.floor(hours / 24);
+            if (days < 30) return `${days}d ago`;
+            const d = new Date(timestamp);
+            return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        }
+
         async function loadResearchHistory() {
-            const historyList = document.getElementById('historyList');
-            const historyCount = document.getElementById('historyCount');
-            const historyUpdated = document.getElementById('historyUpdated');
+            const sidebarList = document.getElementById('sidebarList');
             try {
-                const response = await fetch('/api/research/history?limit=8');
+                const response = await fetch('/api/research/history?limit=50');
                 if (!response.ok) {
                     throw new Error('Failed to load history');
                 }
                 const data = await response.json();
                 const items = data.results || [];
-                historyCount.textContent = String(items.length);
-                const nextIds = items.map(item => item.research_id);
-                const hasUpdates = previousHistoryIds.length > 0 && nextIds.some(id => !previousHistoryIds.includes(id));
-                if (historyCollapsed && hasUpdates) {
-                    historyUpdated.classList.remove('hidden');
-                }
-                previousHistoryIds = nextIds;
+
                 if (items.length === 0) {
-                    historyList.innerHTML = '<div>No previous research runs yet.</div>';
+                    sidebarList.innerHTML = '<div class="sidebar-empty">No previous research yet.</div>';
                     return;
                 }
-                historyList.innerHTML = items.map(item => {
-                    const created = (item.created_at || '').toString().slice(0, 16).replace('T', ' ');
-                    const query = escapeHtml(item.query || 'Untitled query');
-                    const sources = item.total_sources || 0;
-                    const rid = encodeURIComponent(item.research_id || '');
-                    return `
-                        <button type="button" onclick="openResearchFromHistory('${rid}')" style="text-align:left;border:1px solid #E5E7EB;border-radius:8px;padding:10px;background:#fff;cursor:pointer;">
-                            <div style="font-weight:600;color:#1A1A1A;margin-bottom:4px;">${query}</div>
-                            <div style="font-size:0.85rem;color:#6B7280;">${created} | ${sources} sources</div>
-                        </button>
-                    `;
-                }).join('');
+
+                const groups = {};
+                const groupOrder = ['Today', 'Yesterday', 'Previous 7 Days', 'Older'];
+                items.forEach(item => {
+                    const group = getDateGroup(item.created_at);
+                    if (!groups[group]) groups[group] = [];
+                    groups[group].push(item);
+                });
+
+                const activeId = currentSession?.researchId || null;
+                let html = '';
+                groupOrder.forEach(groupName => {
+                    const groupItems = groups[groupName];
+                    if (!groupItems || groupItems.length === 0) return;
+                    html += `<div class="sidebar-date-group">${escapeHtml(groupName)}</div>`;
+                    groupItems.forEach(item => {
+                        const rid = encodeURIComponent(item.research_id || '');
+                        const title = escapeHtml(item.query || 'Untitled query');
+                        const sources = item.total_sources || 0;
+                        const relTime = formatRelativeTime(item.created_at);
+                        const isActive = activeId && decodeURIComponent(rid) === activeId;
+                        html += `
+                            <button type="button" class="sidebar-item${isActive ? ' active' : ''}" onclick="openResearchFromHistory('${rid}')">
+                                <div class="sidebar-item-content">
+                                    <div class="sidebar-item-title">${title}</div>
+                                    <div class="sidebar-item-meta">${sources} sources &middot; ${relTime}</div>
+                                </div>
+                                <span class="sidebar-item-delete" onclick="event.stopPropagation(); deleteResearch('${rid}')" title="Delete">&times;</span>
+                            </button>`;
+                    });
+                });
+                sidebarList.innerHTML = html;
             } catch (error) {
-                historyList.innerHTML = `<div>Unable to load history: ${escapeHtml(error.message)}</div>`;
-                historyCount.textContent = '0';
+                sidebarList.innerHTML = `<div class="sidebar-empty">Unable to load history</div>`;
+            }
+        }
+
+        function toggleSidebar() {
+            const sidebar = document.getElementById('researchSidebar');
+            const backdrop = document.getElementById('sidebarBackdrop');
+            sidebar.classList.toggle('open');
+            backdrop.classList.toggle('visible');
+        }
+
+        function closeSidebar() {
+            document.getElementById('researchSidebar').classList.remove('open');
+            document.getElementById('sidebarBackdrop').classList.remove('visible');
+        }
+
+        function sidebarNewResearch() {
+            closeSidebar();
+            resetToNewSearch();
+        }
+
+        async function deleteResearch(rid) {
+            if (!confirm('Delete this research?')) return;
+            try {
+                const response = await fetch(`/api/research/${rid}`, { method: 'DELETE' });
+                if (!response.ok) {
+                    const data = await response.json().catch(() => ({}));
+                    throw new Error(data.error || 'Delete failed');
+                }
+                loadResearchHistory();
+            } catch (error) {
+                alert('Could not delete: ' + error.message);
             }
         }
 
         async function openResearchFromHistory(researchId) {
+            closeSidebar();
             try {
                 const response = await fetch(`/api/research/${researchId}`);
                 const data = await response.json();
@@ -1660,7 +1840,6 @@
         
         function displayResults(data) {
             hideProgressArea();
-            setHistoryCollapsed(true);
 
             // Remove legacy results container if present
             document.getElementById('resultsContainer')?.remove();
@@ -1669,8 +1848,8 @@
             const cleanSynthesis = stripThinkTags(data.synthesis || 'No synthesis available');
             activeSourceFilter = 'all';
 
-            // Synthesis becomes the first chat message
-            chatMessages = [];
+            // Activate session first (resets chatMessages), then push synthesis
+            activateSessionFromResearch(data);
             chatMessages.push({
                 role: 'assistant',
                 type: 'research',
@@ -1679,8 +1858,6 @@
                 findingsCount: data.findings_count || 0,
                 content: cleanSynthesis,
             });
-
-            activateSessionFromResearch(data);
             renderChatThread();
 
             // Populate sources panel filter tabs
@@ -1757,7 +1934,6 @@
         }
 
         function displayNewsIntelResults(data) {
-            setHistoryCollapsed(true);
             const container = document.getElementById('newsIntelResultsContainer');
             const articles = data.articles || [];
             container.innerHTML = `
