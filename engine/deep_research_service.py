@@ -29,7 +29,12 @@ def _emit(progress_callback: Optional[ProgressCallback], phase: str, message: st
 
 def _generate_query_variants(query: str, num_variants: int) -> List[str]:
     """
-    Generate query variants for broader search coverage.
+    Generate query variants via subtopic decomposition for broader search coverage.
+
+    Uses the reasoning model to decompose the query into distinct subtopic
+    search queries targeting different angles (e.g., economic, political,
+    security, humanitarian). Falls back to deterministic keyword-based
+    variants if the reasoning model is unavailable.
 
     Args:
         query: Original research query
@@ -43,39 +48,180 @@ def _generate_query_variants(query: str, num_variants: int) -> List[str]:
 
     variants = [query]
 
-    # Variant 2: deterministic reformulation — strip question words, add analysis terms
-    question_words = r"^(what|why|how|when|where|who|is|are|do|does|did|can|could|should|will|would)\s+"
-    stripped = re.sub(question_words, "", query, flags=re.IGNORECASE).strip()
-    if stripped and stripped != query:
-        variant2 = f"{stripped} analysis trends overview"
-    else:
-        variant2 = f"{query} analysis trends overview"
-    variants.append(variant2)
-
-    if num_variants <= 2:
-        return variants
-
-    # Variant 3: try reasoning model for a creative reformulation, fall back to deterministic
+    # Try reasoning model for subtopic decomposition
     try:
         from tools.registry import TOOL_FUNCTIONS
         use_reasoning = TOOL_FUNCTIONS.get("use_reasoning_model")
         if use_reasoning:
             prompt = (
-                f"Rewrite this research query as a different search query that would find complementary information. "
-                f"Return ONLY the rewritten query, nothing else.\n\nQuery: {query}"
+                f"Decompose this research query into {num_variants} distinct sub-topic "
+                f"search queries. Each should target a different angle or dimension "
+                f"(e.g., economic, political, security, humanitarian, diplomatic). "
+                f"Return ONLY the queries, one per line, no numbering or explanation.\n\n"
+                f"Query: {query}"
             )
             result = use_reasoning(prompt)
-            if result and not result.startswith("Error:") and len(result.strip()) > 5:
-                variant3 = result.strip().split("\n")[0][:200]
-                variants.append(variant3)
-                return variants
+            if result and not result.startswith("Error:"):
+                lines = [line.strip() for line in result.strip().split("\n") if line.strip()]
+                # Filter out lines that look like explanations rather than queries
+                lines = [ln for ln in lines if len(ln) > 5 and len(ln) < 300]
+                if lines:
+                    # Take up to num_variants-1 decomposed queries (original is variant[0])
+                    for line in lines[:num_variants - 1]:
+                        variants.append(line)
+                    if len(variants) >= num_variants:
+                        return variants[:num_variants]
     except Exception as e:
-        logger.debug(f"Reasoning model variant generation failed: {e}")
+        logger.debug(f"Reasoning model subtopic decomposition failed: {e}")
 
-    # Deterministic fallback for variant 3
-    variant3 = f"{stripped or query} implications challenges outlook"
-    variants.append(variant3)
-    return variants
+    # Deterministic fallback — append perspective keywords
+    question_words = r"^(what|why|how|when|where|who|is|are|do|does|did|can|could|should|will|would)\s+"
+    stripped = re.sub(question_words, "", query, flags=re.IGNORECASE).strip()
+    fallback_suffixes = [
+        "economic impact analysis trends",
+        "political implications challenges outlook",
+        "social humanitarian effects consequences",
+    ]
+    while len(variants) < num_variants and (len(variants) - 1) < len(fallback_suffixes):
+        idx = len(variants) - 1
+        base = stripped if stripped and stripped != query else query
+        variants.append(f"{base} {fallback_suffixes[idx]}")
+
+    return variants[:num_variants]
+
+
+def _cluster_findings(query: str, sources: List[Source]) -> List[Finding]:
+    """
+    Use the reasoning model to extract themed findings from all sources.
+
+    Builds a text block of source summaries and asks the model to identify
+    8-15 thematic findings, each citing which source numbers support it.
+    Falls back to 1:1 source-to-finding mapping if the model is unavailable
+    or parsing fails.
+
+    Args:
+        query: Original research query
+        sources: List of scored Source objects
+
+    Returns:
+        List of Finding objects grouped by theme
+    """
+    # Build source summary block (cap at ~8000 chars)
+    source_lines = []
+    char_budget = 8000
+    chars_used = 0
+    for i, source in enumerate(sources, 1):
+        snippet = source.content_snippet or source.title or ""
+        line = f"{i}. {source.title or 'Untitled'}: {snippet[:300]}"
+        if chars_used + len(line) > char_budget:
+            break
+        source_lines.append(line)
+        chars_used += len(line)
+
+    if not source_lines:
+        return _fallback_findings(sources)
+
+    source_text = "\n".join(source_lines)
+    n = len(source_lines)
+
+    try:
+        from tools.registry import TOOL_FUNCTIONS
+        use_reasoning = TOOL_FUNCTIONS.get("use_reasoning_model")
+        if not use_reasoning:
+            return _fallback_findings(sources)
+
+        prompt = (
+            f"Below are {n} sources about: {query}\n\n"
+            f"{source_text}\n\n"
+            f"Identify 8-15 distinct thematic findings. For each finding:\n"
+            f"- Write a clear 1-2 sentence claim\n"
+            f"- List the source numbers that support it\n"
+            f"- Rate confidence: high (3+ sources), medium (2 sources), low (1 source)\n\n"
+            f"Format each as:\n"
+            f"FINDING: <claim>\n"
+            f"SOURCES: <comma-separated numbers>\n"
+            f"CONFIDENCE: <high|medium|low>\n"
+        )
+        result = use_reasoning(prompt)
+        if not result or result.startswith("Error:"):
+            return _fallback_findings(sources)
+
+        findings = _parse_clustered_findings(result, sources)
+        if findings:
+            logger.info(f"Clustered {len(sources)} sources into {len(findings)} thematic findings")
+            return findings
+
+    except Exception as e:
+        logger.debug(f"Finding clustering failed: {e}")
+
+    return _fallback_findings(sources)
+
+
+def _parse_clustered_findings(text: str, sources: List[Source]) -> List[Finding]:
+    """Parse FINDING/SOURCES/CONFIDENCE blocks from reasoning model output."""
+    findings = []
+    blocks = re.split(r"(?=FINDING:)", text)
+
+    for block in blocks:
+        block = block.strip()
+        if not block.startswith("FINDING:"):
+            continue
+
+        claim_match = re.search(r"FINDING:\s*(.+?)(?=\nSOURCES:|\Z)", block, re.DOTALL)
+        sources_match = re.search(r"SOURCES:\s*(.+?)(?=\nCONFIDENCE:|\Z)", block, re.DOTALL)
+        confidence_match = re.search(r"CONFIDENCE:\s*(high|medium|low)", block, re.IGNORECASE)
+
+        if not claim_match:
+            continue
+
+        claim = claim_match.group(1).strip()
+
+        # Parse source numbers and map to source_ids
+        source_ids = []
+        if sources_match:
+            nums_text = sources_match.group(1).strip()
+            for num_str in re.findall(r"\d+", nums_text):
+                idx = int(num_str) - 1  # 1-indexed in prompt
+                if 0 <= idx < len(sources):
+                    source_ids.append(sources[idx].source_id)
+
+        if not source_ids:
+            continue
+
+        confidence = confidence_match.group(1).lower() if confidence_match else "medium"
+
+        # Compute average credibility from backing sources
+        cred_scores = []
+        for sid in source_ids:
+            for s in sources:
+                if s.source_id == sid:
+                    cred_scores.append(s.credibility_score)
+                    break
+        avg_cred = sum(cred_scores) / len(cred_scores) if cred_scores else 0.0
+
+        findings.append(Finding(
+            claim=claim,
+            sources=source_ids,
+            confidence=confidence,
+            average_credibility=avg_cred,
+        ))
+
+    return findings
+
+
+def _fallback_findings(sources: List[Source]) -> List[Finding]:
+    """Fallback: 1:1 source-to-finding mapping (pre-SEP-006 behavior)."""
+    findings = []
+    for source in sources:
+        claim = source.content_snippet or source.title
+        if claim:
+            findings.append(Finding(
+                claim=claim[:500],
+                sources=[source.source_id],
+                confidence="medium",
+                average_credibility=source.credibility_score,
+            ))
+    return findings
 
 
 def _deduplicate_sources(sources: List[Source]) -> List[Source]:
@@ -169,25 +315,15 @@ def run_deep_research(
     except Exception as e:
         logger.warning(f"Content fetch phase failed (non-fatal): {e}")
 
-    _emit(progress_callback, "cross_reference", "Cross-referencing findings and grouping similar claims...")
+    _emit(progress_callback, "cross_reference", "Clustering findings by theme across sources...")
 
-    for i, source in enumerate(state.sources_checked):
-        claim = source.content_snippet or source.title
-        if claim:
-            finding = Finding(
-                claim=claim[:500],
-                sources=[source.source_id],
-                confidence="medium",
-                average_credibility=source.credibility_score,
-            )
-            state.findings.append(finding)
+    state.findings = _cluster_findings(query, state.sources_checked)
 
-        if (i + 1) % 10 == 0:
-            _emit(
-                progress_callback,
-                "cross_reference",
-                f"Processed {i + 1}/{len(state.sources_checked)} sources for cross-referencing...",
-            )
+    _emit(
+        progress_callback,
+        "cross_reference",
+        f"Identified {len(state.findings)} thematic findings from {len(state.sources_checked)} sources.",
+    )
 
     _emit(progress_callback, "synthesis", "Generating synthesis from findings... This may take 15-25 seconds.")
 
