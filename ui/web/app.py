@@ -4,19 +4,29 @@ import logging
 import threading
 import uuid
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context
 
 from engine.research_engine import ResearchEngine
 from engine.deep_research_service import run_deep_research, build_results_payload
+from engine.query_refiner import refine_query
 from ui.web.config_manager import ConfigManager, ModelFetcher
 from tools.research.newsroom import fetch_newsroom_api
 from tools.specialist.client import create_specialist_client
 import config
+from config import LOGGING_LEVEL, LOGGING_FORMAT, LOG_FILE
+
+# Configure logging for web UI (mirrors main.py setup)
+if not logging.root.handlers:
+    logging.basicConfig(
+        level=LOGGING_LEVEL,
+        format=LOGGING_FORMAT,
+        handlers=[logging.StreamHandler(), logging.FileHandler(LOG_FILE)],
+    )
 
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__, 
+app = Flask(__name__,
             template_folder='templates',
             static_folder='static')
 
@@ -188,7 +198,10 @@ def _compose_chat_reply(
         else "Prioritize provided context and sources; clearly label any inference beyond them."
     )
 
+    today = date.today().isoformat()
+
     prompt = (
+        f"Today's date is {today}.\n"
         "You are an evidence-grounded research assistant responding to a follow-up discussion prompt.\n"
         f"Context: {context_label}\n"
         f"Context summary:\n{context_summary[:4000]}\n\n"
@@ -196,7 +209,9 @@ def _compose_chat_reply(
         f"Prior conversation:\n{chr(10).join(history_lines) if history_lines else '- No previous messages'}\n\n"
         f"User question: {message}\n\n"
         f"Rules: {strict_instructions}\n"
-        "Keep response concise, cite sources inline using bracket format [Source Title]."
+        "Keep response concise, cite sources inline using bracket format [Source Title].\n"
+        f"Only cite facts present in the provided sources. Do NOT invent events, dates, or statistics. "
+        f"Today is {today} — do not reference events after this date as established fact.\n"
     )
 
     try:
@@ -241,7 +256,7 @@ def index():
     return render_template('index.html')
 
 
-def _run_research_with_progress(research_id: str, query: str, depth: int):
+def _run_research_with_progress(research_id: str, query: str, depth: int, refined_query: str = None):
     """Run research workflow in background thread and emit progress updates."""
     try:
         def on_progress(status: str, phase: str, message: str):
@@ -258,6 +273,7 @@ def _run_research_with_progress(research_id: str, query: str, depth: int):
             depth=depth,
             max_results_per_source=profile["max_results_per_source"],
             progress_callback=on_progress,
+            refined_query=refined_query,
         )
 
         research_id_actual = research_engine.save_research(state)
@@ -276,6 +292,29 @@ def _run_research_with_progress(research_id: str, query: str, depth: int):
             "message": f"Error: {str(e)}",
             "phase": "error"
         }
+
+
+@app.route('/api/research/refine', methods=['POST'])
+def refine_research_query():
+    """Analyze a research query and return structured refinement suggestions."""
+    try:
+        data = request.get_json()
+        query = (data.get('query') or '').strip()
+        if not query:
+            return jsonify({"error": "Query is required"}), 400
+
+        result = refine_query(query)
+        return jsonify(result)
+    except Exception as e:
+        logger.warning(f"Query refinement error (non-fatal): {e}")
+        return jsonify({
+            "status": "well_specified",
+            "original_query": query,
+            "dimensions": {"topic": {"detected": True, "value": query}},
+            "gaps": [],
+            "refined_query": query,
+            "skip_refinement": True,
+        })
 
 
 @app.route('/api/research', methods=['POST'])
@@ -300,7 +339,8 @@ def start_research():
         data = request.get_json()
         query = data.get('query', '').strip()
         depth = int(data.get('depth', 1))
-        
+        refined_query = (data.get('refined_query') or '').strip() or None
+
         if not query:
             return jsonify({"error": "Query is required"}), 400
         
@@ -323,6 +363,7 @@ def start_research():
         thread = threading.Thread(
             target=_run_research_with_progress,
             args=(research_id, query, depth),
+            kwargs={"refined_query": refined_query},
             daemon=True
         )
         thread.start()
