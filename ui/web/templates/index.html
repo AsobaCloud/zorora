@@ -356,6 +356,132 @@
 
         .session-active .main-container {
             padding-bottom: 120px;
+            max-width: none;
+        }
+
+        .research-layout {
+            display: flex;
+            gap: 24px;
+            max-width: 1280px;
+            width: 100%;
+            margin: 0 auto;
+            padding: 0 24px;
+            flex: 1;
+            min-height: 0;
+        }
+
+        .chat-column {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .research-layout .chat-thread {
+            max-height: none;
+            flex: 1;
+            overflow-y: auto;
+        }
+
+        .sources-panel {
+            width: 340px;
+            flex-shrink: 0;
+            background: var(--white);
+            border: 1px solid var(--border-grey);
+            border-radius: 12px;
+            padding: 16px;
+            position: sticky;
+            top: 80px;
+            max-height: calc(100vh - 160px);
+            overflow-y: auto;
+            align-self: flex-start;
+        }
+
+        .sources-panel h3 {
+            color: var(--text-dark);
+            font-size: 1.05rem;
+            margin: 0 0 12px 0;
+        }
+
+        .tab-bar {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin-bottom: 12px;
+        }
+
+        .tab-bar button {
+            border: 1px solid var(--border-grey);
+            background: var(--white);
+            color: #374151;
+            padding: 5px 10px;
+            border-radius: 14px;
+            cursor: pointer;
+            font-size: 0.82rem;
+            font-family: 'DM Sans', sans-serif;
+            transition: all 0.15s;
+        }
+
+        .tab-bar button.active {
+            border-color: var(--accent-purple);
+            background: var(--light-purple);
+            color: var(--accent-purple);
+        }
+
+        .source-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .source-card {
+            border: 1px solid var(--border-grey);
+            border-radius: 8px;
+            padding: 12px;
+            transition: all 0.15s;
+        }
+
+        .source-card:hover {
+            border-color: #c7d2fe;
+            background: var(--neutral-grey);
+        }
+
+        .chat-message.research {
+            background: var(--white);
+            border: 1px solid var(--border-grey);
+            border-radius: 12px;
+            padding: 20px;
+            align-self: stretch;
+        }
+
+        .research-meta {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            color: var(--text-light);
+            font-size: 0.85rem;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border-grey);
+        }
+
+        .research-synthesis {
+            color: var(--text-dark);
+            line-height: 1.65;
+            white-space: pre-wrap;
+        }
+
+        @media (max-width: 768px) {
+            .research-layout {
+                flex-direction: column;
+                padding: 0 12px;
+            }
+
+            .sources-panel {
+                width: 100%;
+                position: static;
+                max-height: none;
+            }
         }
 
         .search-form {
@@ -922,13 +1048,15 @@
         </div>
 
         <div id="newsIntelResultsContainer"></div>
-        <div class="discussion-section hidden" id="discussionSection">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;">
-                <h3 style="color:#1A1A1A;margin:0;font-size:1.05rem;">Discussion</h3>
-                <span id="discussionContext" style="color:#6B7280;font-size:0.82rem;">No active session</span>
+
+        <div id="researchLayout" class="research-layout hidden">
+            <div class="chat-column">
+                <div id="chatThread" class="chat-thread"></div>
             </div>
-            <div id="chatThread" class="chat-thread">
-                <div style="color:#6B7280;font-size:0.9rem;">Run a search to start discussion.</div>
+            <div id="sourcesPanel" class="sources-panel">
+                <h3>Sources</h3>
+                <div id="sourceFilterGroup" class="tab-bar"></div>
+                <div id="sourceCards" class="source-list"></div>
             </div>
         </div>
 
@@ -968,7 +1096,7 @@
             document.querySelector('.search-section').classList.toggle('hidden', active);
             document.getElementById('historyPanel').classList.toggle('hidden', active);
             document.getElementById('newSearchButton').classList.toggle('hidden', !active);
-            document.getElementById('discussionSection').classList.toggle('hidden', !active);
+            document.getElementById('researchLayout').classList.toggle('hidden', !active);
             document.getElementById('chatDock').classList.toggle('hidden', !active);
             if (active) {
                 setHistoryCollapsed(true);
@@ -982,8 +1110,9 @@
             document.getElementById('resultsContainer')?.remove();
             document.getElementById('progressContainer')?.remove();
             document.getElementById('newsIntelResultsContainer').innerHTML = '';
-            document.getElementById('discussionContext').textContent = 'No active session';
-            document.getElementById('chatThread').innerHTML = '<div style="color:#6B7280;font-size:0.9rem;">Run a search to start discussion.</div>';
+            document.getElementById('chatThread').innerHTML = '';
+            document.getElementById('sourceFilterGroup').innerHTML = '';
+            document.getElementById('sourceCards').innerHTML = '';
             document.getElementById('searchInput').value = '';
             document.getElementById('chatInput').value = '';
             loadResearchHistory();
@@ -1002,8 +1131,6 @@
                 synthesis: data.synthesis || '',
             };
             chatMessages = [];
-            document.getElementById('discussionContext').textContent = `Deep Research: ${currentSession.query}`;
-            document.getElementById('chatThread').innerHTML = '<div style="color:#6B7280;font-size:0.9rem;">Ask a follow-up about this result set.</div>';
             setTimeout(() => document.getElementById('chatInput').focus(), 50);
         }
 
@@ -1023,8 +1150,6 @@
                 synthesis: data.synthesis || '',
             };
             chatMessages = [];
-            document.getElementById('discussionContext').textContent = `News Intel: ${currentSession.topic || 'All topics'}`;
-            document.getElementById('chatThread').innerHTML = '<div style="color:#6B7280;font-size:0.9rem;">Ask a follow-up about these newsroom articles.</div>';
             setTimeout(() => document.getElementById('chatInput').focus(), 50);
         }
 
@@ -1033,9 +1158,23 @@
             if (chatMessages.length === 0) {
                 return;
             }
-            thread.innerHTML = chatMessages.map(item => `
-                <div class="chat-message ${item.role === 'user' ? 'user' : 'assistant'}">${item.role === 'assistant' ? makeCitationsClickable(escapeHtml(item.content), currentSession?.sources || []) : escapeHtml(item.content)}</div>
-            `).join('');
+            thread.innerHTML = chatMessages.map(item => {
+                if (item.type === 'research') {
+                    return `
+                        <div class="chat-message research">
+                            <div class="research-meta">
+                                <span><strong>Query:</strong> ${escapeHtml(item.query || '')}</span>
+                                <span><strong>Sources:</strong> ${item.sourceCount || 0}</span>
+                                ${item.findingsCount ? `<span><strong>Findings:</strong> ${item.findingsCount}</span>` : ''}
+                            </div>
+                            <div class="research-synthesis">${makeCitationsClickable(escapeHtml(item.content), currentSession?.sources || [])}</div>
+                        </div>`;
+                }
+                if (item.role === 'user') {
+                    return `<div class="chat-message user">${escapeHtml(item.content)}</div>`;
+                }
+                return `<div class="chat-message assistant">${makeCitationsClickable(escapeHtml(item.content), currentSession?.sources || [])}</div>`;
+            }).join('');
             thread.scrollTop = thread.scrollHeight;
         }
 
@@ -1520,82 +1659,62 @@
         }
         
         function displayResults(data) {
-            // Remove progress container if it exists
             hideProgressArea();
             setHistoryCollapsed(true);
-            
-            // Create results container if it doesn't exist
-            let resultsContainer = document.getElementById('resultsContainer');
-            if (!resultsContainer) {
-                resultsContainer = document.createElement('div');
-                resultsContainer.id = 'resultsContainer';
-                resultsContainer.style.cssText = 'max-width: 900px; margin: 40px auto; padding: 0 24px;';
-                document.querySelector('.main-container').appendChild(resultsContainer);
-            }
-            
-            // Scroll to results
-            resultsContainer.scrollIntoView({ behavior: 'smooth' });
-            
-            // Strip <think> tags from synthesis
-            let cleanSynthesis = stripThinkTags(data.synthesis || 'No synthesis available');
-            
-            // Make citations clickable
+
+            // Remove legacy results container if present
+            document.getElementById('resultsContainer')?.remove();
+
             const sources = data.sources || [];
-            let synthesisWithLinks = makeCitationsClickable(cleanSynthesis, sources);
+            const cleanSynthesis = stripThinkTags(data.synthesis || 'No synthesis available');
             activeSourceFilter = 'all';
 
+            // Synthesis becomes the first chat message
+            chatMessages = [];
+            chatMessages.push({
+                role: 'assistant',
+                type: 'research',
+                query: data.query || '',
+                sourceCount: data.total_sources || sources.length,
+                findingsCount: data.findings_count || 0,
+                content: cleanSynthesis,
+            });
+
+            activateSessionFromResearch(data);
+            renderChatThread();
+
+            // Populate sources panel filter tabs
             const sourceCounts = {
                 all: sources.length,
                 newsroom: sources.filter(s => (s.source_type || '').toLowerCase() === 'newsroom').length,
                 web: sources.filter(s => (s.source_type || '').toLowerCase() === 'web').length,
                 academic: sources.filter(s => (s.source_type || '').toLowerCase() === 'academic').length
             };
-            
-            // Build HTML
-            let html = `
-                <div style="background: white; border-radius: 12px; padding: 32px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
-                    <h2 style="color: #1A1A1A; margin-bottom: 24px; font-size: 1.5rem;">Research Results</h2>
-                    <div style="margin-bottom: 24px;">
-                        <p style="color: #6B7280; margin-bottom: 8px;"><strong>Query:</strong> ${escapeHtml(data.query)}</p>
-                        <p style="color: #6B7280; margin-bottom: 8px;"><strong>Sources Found:</strong> ${data.total_sources}</p>
-                        <p style="color: #6B7280;"><strong>Findings:</strong> ${data.findings_count}</p>
-                    </div>
-                    <div style="border-top: 1px solid #E5E7EB; padding-top: 24px; margin-top: 24px;">
-                        <h3 style="color: #1A1A1A; margin-bottom: 16px; font-size: 1.2rem;">Synthesis</h3>
-                        <div style="color: #2D2D2D; line-height: 1.6; white-space: pre-wrap;">${synthesisWithLinks}</div>
-                    </div>
-                    ${sources.length > 0 ? `
-                    <div style="border-top: 1px solid #E5E7EB; padding-top: 24px; margin-top: 24px;">
-                        <h3 style="color: #1A1A1A; margin-bottom: 16px; font-size: 1.2rem;">Top Sources</h3>
-                        <div id="sourceFilterGroup" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
-                            <button type="button" data-source-filter="all" style="border:1px solid #4f46e5;background:#eef2ff;color:#4f46e5;padding:6px 10px;border-radius:14px;cursor:pointer;font-size:0.85rem;">All (${sourceCounts.all})</button>
-                            <button type="button" data-source-filter="newsroom" style="border:1px solid #E5E7EB;background:#fff;color:#374151;padding:6px 10px;border-radius:14px;cursor:pointer;font-size:0.85rem;">Newsroom (${sourceCounts.newsroom})</button>
-                            <button type="button" data-source-filter="web" style="border:1px solid #E5E7EB;background:#fff;color:#374151;padding:6px 10px;border-radius:14px;cursor:pointer;font-size:0.85rem;">Web (${sourceCounts.web})</button>
-                            <button type="button" data-source-filter="academic" style="border:1px solid #E5E7EB;background:#fff;color:#374151;padding:6px 10px;border-radius:14px;cursor:pointer;font-size:0.85rem;">Academic (${sourceCounts.academic})</button>
-                        </div>
-                        <div id="sourceCards" style="display: flex; flex-direction: column; gap: 12px;">
-                        </div>
-                    </div>
-                    ` : ''}
-                </div>
-            `;
-            
-            resultsContainer.innerHTML = html;
-            renderSourceCards(sources);
-            activateSessionFromResearch(data);
-            const filterButtons = document.querySelectorAll('#sourceFilterGroup button');
-            filterButtons.forEach(button => {
+
+            const filterGroup = document.getElementById('sourceFilterGroup');
+            filterGroup.innerHTML = [
+                { key: 'all', label: `All (${sourceCounts.all})` },
+                { key: 'newsroom', label: `Newsroom (${sourceCounts.newsroom})` },
+                { key: 'web', label: `Web (${sourceCounts.web})` },
+                { key: 'academic', label: `Academic (${sourceCounts.academic})` },
+            ].map(tab =>
+                `<button type="button" data-source-filter="${tab.key}" class="${tab.key === 'all' ? 'active' : ''}">${tab.label}</button>`
+            ).join('');
+
+            filterGroup.querySelectorAll('button').forEach(button => {
                 button.addEventListener('click', function() {
                     activeSourceFilter = this.dataset.sourceFilter;
-                    filterButtons.forEach(btn => {
-                        const isActive = btn === this;
-                        btn.style.borderColor = isActive ? '#4f46e5' : '#E5E7EB';
-                        btn.style.background = isActive ? '#eef2ff' : '#fff';
-                        btn.style.color = isActive ? '#4f46e5' : '#374151';
+                    filterGroup.querySelectorAll('button').forEach(btn => {
+                        btn.classList.toggle('active', btn === this);
                     });
                     renderSourceCards(sources);
                 });
             });
+
+            renderSourceCards(sources);
+
+            // Scroll to the research layout
+            document.getElementById('researchLayout').scrollIntoView({ behavior: 'smooth' });
             loadResearchHistory();
         }
 
@@ -1623,18 +1742,15 @@
                 const safeTitle = escapeHtml(title);
                 const safeUrl = escapeHtml(url);
                 return `
-                    <div style="border: 1px solid #E5E7EB; border-radius: 8px; padding: 16px; transition: all 0.2s;">
-                        <div style="font-weight: 600; color: #1A1A1A; margin-bottom: 8px;">
+                    <div class="source-card">
+                        <div style="font-weight: 600; color: #1A1A1A; margin-bottom: 6px; font-size: 0.92rem;">
                             ${url ? `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" style="color: #6366f1; text-decoration: none;">${safeTitle}</a>` : safeTitle}
                         </div>
-                        ${url ? `<div style="margin-bottom: 8px;"><a href="${safeUrl}" target="_blank" rel="noopener noreferrer" style="color: #6B7280; text-decoration: none; font-size: 0.9rem; word-break: break-all;">${safeUrl}</a></div>` : ''}
-                        <div style="color: #6B7280; font-size: 0.9rem; margin-bottom: 6px;">
-                            Credibility: ${credibility.toFixed(0)}%${category && category !== 'Unknown source' ? ` (${escapeHtml(category)})` : ''} | Type: ${escapeHtml(sourceType)}${publicationDate ? ` | Date: ${escapeHtml(publicationDate)}` : ''}
+                        <div style="color: #6B7280; font-size: 0.82rem; margin-bottom: 4px;">
+                            ${escapeHtml(sourceType)}${publicationDate ? ` | ${escapeHtml(publicationDate)}` : ''} | ${credibility.toFixed(0)}%${category && category !== 'Unknown source' ? ` ${escapeHtml(category)}` : ''}
                         </div>
-                        ${snippet ? `<div style="color:#4B5563; font-size:0.88rem;">${escapeHtml(snippet)}</div>` : ''}
-                        <div style="margin-top:10px;">
-                            <button type="button" onclick="prefillChatForSource(${JSON.stringify(title || 'Untitled Source')}, ${JSON.stringify(url || '')})" style="border:1px solid #E5E7EB;background:#fff;color:#374151;padding:6px 10px;border-radius:8px;cursor:pointer;font-size:0.82rem;">Discuss this source</button>
-                        </div>
+                        ${snippet ? `<div style="color:#4B5563; font-size:0.84rem; margin-bottom:6px;">${escapeHtml(snippet)}</div>` : ''}
+                        <button type="button" onclick="prefillChatForSource(${JSON.stringify(title || 'Untitled Source')}, ${JSON.stringify(url || '')})" style="border:1px solid #E5E7EB;background:#fff;color:#374151;padding:4px 8px;border-radius:6px;cursor:pointer;font-size:0.78rem;">Discuss</button>
                     </div>
                 `;
             }).join('');
