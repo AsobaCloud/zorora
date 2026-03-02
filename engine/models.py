@@ -19,6 +19,7 @@ class Source:
     credibility_score: float = 0.0
     credibility_category: str = ""
     content_snippet: str = ""
+    content_full: str = ""
     cited_by_count: int = 0
     cites: List[str] = field(default_factory=list)
 
@@ -115,6 +116,7 @@ class ResearchState:
                     "credibility_score": s.credibility_score,
                     "credibility_category": s.credibility_category,
                     "content_snippet": s.content_snippet or "",
+                    "content_full": s.content_full or "",
                     "cited_by_count": s.cited_by_count,
                     "cites": s.cites
                 }

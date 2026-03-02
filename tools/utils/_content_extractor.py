@@ -27,7 +27,7 @@ class ContentExtractor:
         # Try to import BeautifulSoup
         if enabled:
             try:
-                from bs4 import BeautifulSoup
+                from bs4 import BeautifulSoup  # noqa: F401
                 self._bs4_available = True
                 logger.info("BeautifulSoup4 available for content extraction")
             except ImportError:
@@ -139,8 +139,8 @@ class ContentExtractor:
             # Clean up text
             text = self._clean_text(text)
             
-            # Truncate if too long
-            if len(text) > self.max_content_length:
+            # Truncate if too long (max_content_length=0 means no limit)
+            if self.max_content_length and len(text) > self.max_content_length:
                 text = text[:self.max_content_length] + "..."
             
             return text
@@ -173,6 +173,88 @@ class ContentExtractor:
         
         return text
     
+    def fetch_content_for_sources(
+        self,
+        sources,
+        max_sources: int = 20,
+        timeout_per_url: int = 10,
+        skip_types: Optional[List[str]] = None,
+        max_workers: int = 8,
+    ) -> int:
+        """
+        Fetch full article text for a list of Source objects in parallel.
+
+        Mutates each source in-place by setting ``content_full``.
+
+        Args:
+            sources: List of Source objects (engine.models.Source).
+            max_sources: Maximum number of sources to fetch.
+            timeout_per_url: Per-URL request timeout in seconds.
+            skip_types: Source types to skip (e.g. ["academic"]).
+            max_workers: ThreadPoolExecutor worker count.
+
+        Returns:
+            Number of sources successfully fetched.
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        if not self._bs4_available:
+            try:
+                from bs4 import BeautifulSoup  # noqa: F401
+                self._bs4_available = True
+            except ImportError:
+                logger.warning("BeautifulSoup4 not available — skipping content fetch")
+                return 0
+
+        skip = set(skip_types or [])
+
+        # Filter to fetchable sources: has URL, not skipped type, no existing content_full
+        fetchable = [
+            s for s in sources
+            if s.url
+            and s.source_type not in skip
+            and not getattr(s, "content_full", "")
+        ]
+
+        # Sort by credibility descending, take top N
+        fetchable.sort(key=lambda s: s.credibility_score, reverse=True)
+        fetchable = fetchable[:max_sources]
+
+        if not fetchable:
+            return 0
+
+        # Save and override instance settings for full extraction
+        original_max_len = self.max_content_length
+        self.max_content_length = 0  # no limit
+
+        success_count = 0
+
+        def _fetch_one(source):
+            try:
+                text = self._extract_from_url(source.url, query="")
+                if text and len(text) >= 50:
+                    return (source, text)
+            except Exception as e:
+                logger.debug(f"Content fetch failed for {source.url}: {e}")
+            return (source, None)
+
+        try:
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = {pool.submit(_fetch_one, s): s for s in fetchable}
+                for future in as_completed(futures):
+                    try:
+                        src, text = future.result(timeout=timeout_per_url + 5)
+                        if text:
+                            src.content_full = text
+                            success_count += 1
+                    except Exception as e:
+                        logger.debug(f"Content fetch future error: {e}")
+        finally:
+            self.max_content_length = original_max_len
+
+        logger.info(f"Fetched full content for {success_count}/{len(fetchable)} sources")
+        return success_count
+
     def format_with_content(self, result: Dict[str, Any]) -> str:
         """
         Format a result with extracted content.

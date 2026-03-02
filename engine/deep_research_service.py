@@ -151,6 +151,24 @@ def run_deep_research(
         if (i + 1) % 5 == 0 or (i + 1) == len(unique_sources):
             _emit(progress_callback, "credibility", f"Scored {i + 1}/{len(unique_sources)} sources...")
 
+    # Content fetching phase (SEP-005)
+    try:
+        cf = config.CONTENT_FETCH
+        if cf.get("enabled", False):
+            _emit(progress_callback, "content_fetch", "Fetching full article text...")
+            from tools.utils._content_extractor import ContentExtractor
+            extractor = ContentExtractor(enabled=True)
+            fetched = extractor.fetch_content_for_sources(
+                state.sources_checked,
+                max_sources=cf.get("max_sources", 20),
+                timeout_per_url=cf.get("timeout_per_url", 10),
+                skip_types=cf.get("skip_types", ["academic"]),
+                max_workers=cf.get("max_workers", 8),
+            )
+            _emit(progress_callback, "content_fetch", f"Fetched full text for {fetched} sources.")
+    except Exception as e:
+        logger.warning(f"Content fetch phase failed (non-fatal): {e}")
+
     _emit(progress_callback, "cross_reference", "Cross-referencing findings and grouping similar claims...")
 
     for i, source in enumerate(state.sources_checked):
@@ -226,6 +244,7 @@ def build_results_payload(state: ResearchState, query: str, research_id: Optiona
                 "source_type": s.source_type or "unknown",
                 "publication_date": s.publication_date or "",
                 "content_snippet": s.content_snippet or "",
+                "content_full": s.content_full or "",
             }
             for s in state.sources_checked[:max_sources]
         ],

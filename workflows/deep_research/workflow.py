@@ -106,7 +106,25 @@ class DeepResearchWorkflow:
             state.add_source(source)
         
         logger.info(f"✓ Scored {len(state.sources_checked)} sources")
-        
+
+        # Content fetching phase (SEP-005)
+        try:
+            cf = config.CONTENT_FETCH
+            if cf.get("enabled", False):
+                logger.info("Fetching full article text...")
+                from tools.utils._content_extractor import ContentExtractor
+                extractor = ContentExtractor(enabled=True)
+                fetched = extractor.fetch_content_for_sources(
+                    state.sources_checked,
+                    max_sources=cf.get("max_sources", 20),
+                    timeout_per_url=cf.get("timeout_per_url", 10),
+                    skip_types=cf.get("skip_types", ["academic"]),
+                    max_workers=cf.get("max_workers", 8),
+                )
+                logger.info(f"✓ Fetched full text for {fetched} sources")
+        except Exception as e:
+            logger.warning(f"Content fetch phase failed (non-fatal): {e}")
+
         # Phase 3: Cross-Referencing (simplified - create findings from sources)
         logger.info("Phase 3: Cross-referencing...")
         for source in state.sources_checked:

@@ -154,7 +154,7 @@ def _compose_chat_reply(
 ):
     """Generate a grounded chat reply for research/news follow-ups."""
     source_lines = []
-    content_budget = 8000  # chars total for all snippets
+    content_budget = config.CONTENT_FETCH.get("prompt_content_budget", 15000)
     content_used = 0
     for source in sources[:20]:
         title = source.get("title") or source.get("headline") or "Untitled"
@@ -162,8 +162,14 @@ def _compose_chat_reply(
         url = source.get("url", "")
         publication_date = str(source.get("publication_date") or source.get("date") or "")[:10]
         line = f"- {title} | {source_type} | {publication_date} | {url}"
+        full_content = (source.get("content_full") or "").strip()
         snippet = (source.get("content_snippet") or "").strip()
-        if snippet and content_used < content_budget:
+        if full_content and content_used < content_budget:
+            remaining = max(500, content_budget - content_used)
+            truncated = full_content[:remaining]
+            content_used += len(truncated)
+            line += f"\n  Content: {truncated}"
+        elif snippet and content_used < content_budget:
             truncated = snippet[:300]
             content_used += len(truncated)
             line += f"\n  Content: {truncated}"
@@ -423,6 +429,40 @@ def research_chat(research_id):
         original_query = research_data.get("query") or research_data.get("original_query") or "research query"
         synthesis = research_data.get("synthesis") or ""
         sources = research_data.get("sources") or []
+
+        # On-demand content fetch for older sessions without content_full (SEP-005)
+        try:
+            cf = config.CONTENT_FETCH
+            if cf.get("enabled", False):
+                missing = [s for s in sources if s.get("url") and not s.get("content_full")]
+                if missing:
+                    from engine.models import Source as _Source
+                    from tools.utils._content_extractor import ContentExtractor
+                    source_objs = []
+                    obj_map = {}
+                    for sd in missing:
+                        obj = _Source(
+                            source_id=sd.get("source_id", ""),
+                            url=sd.get("url", ""),
+                            title=sd.get("title", ""),
+                            source_type=sd.get("source_type", ""),
+                            credibility_score=sd.get("credibility_score", 0.0),
+                        )
+                        source_objs.append(obj)
+                        obj_map[id(obj)] = sd
+                    extractor = ContentExtractor(enabled=True)
+                    extractor.fetch_content_for_sources(
+                        source_objs,
+                        max_sources=cf.get("max_sources", 20),
+                        timeout_per_url=cf.get("timeout_per_url", 10),
+                        skip_types=cf.get("skip_types", ["academic"]),
+                        max_workers=cf.get("max_workers", 8),
+                    )
+                    for obj in source_objs:
+                        if obj.content_full:
+                            obj_map[id(obj)]["content_full"] = obj.content_full
+        except Exception as e:
+            logger.warning(f"On-demand content fetch failed (non-fatal): {e}")
 
         if selected_source_ids:
             scoped_sources = [s for s in sources if (s.get("source_id") in selected_source_ids)]
