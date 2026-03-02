@@ -154,12 +154,20 @@ def _compose_chat_reply(
 ):
     """Generate a grounded chat reply for research/news follow-ups."""
     source_lines = []
-    for source in sources[:30]:
+    content_budget = 8000  # chars total for all snippets
+    content_used = 0
+    for source in sources[:20]:
         title = source.get("title") or source.get("headline") or "Untitled"
         source_type = source.get("source_type") or source.get("source") or "unknown"
         url = source.get("url", "")
         publication_date = str(source.get("publication_date") or source.get("date") or "")[:10]
-        source_lines.append(f"- {title} | {source_type} | {publication_date} | {url}")
+        line = f"- {title} | {source_type} | {publication_date} | {url}"
+        snippet = (source.get("content_snippet") or "").strip()
+        if snippet and content_used < content_budget:
+            truncated = snippet[:300]
+            content_used += len(truncated)
+            line += f"\n  Content: {truncated}"
+        source_lines.append(line)
 
     history_lines = []
     for item in history[-8:]:

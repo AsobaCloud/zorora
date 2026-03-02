@@ -114,6 +114,7 @@ class ResearchState:
                     "source_type": s.source_type,
                     "credibility_score": s.credibility_score,
                     "credibility_category": s.credibility_category,
+                    "content_snippet": s.content_snippet or "",
                     "cited_by_count": s.cited_by_count,
                     "cites": s.cites
                 }
