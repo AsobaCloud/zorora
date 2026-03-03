@@ -5,32 +5,31 @@ import re
 from collections import Counter
 from datetime import date
 
+import config
 from engine.models import ResearchState
 
 logger = logging.getLogger(__name__)
 
-# Synthesis-specific content budget — smaller than the fetching budget (15K)
-# to keep the full prompt within the 7B model's ~8K context window.
-_SYNTHESIS_CONTENT_BUDGET = 5000
-
-
 def format_findings_for_synthesis(state: ResearchState) -> str:
-    """Format findings for synthesis prompt — full claims, capped at 15 findings."""
+    """Format findings for synthesis prompt — full claims, capped by config."""
+    max_findings = config.SYNTHESIS.get("max_findings", 15)
     lines = []
-    for i, finding in enumerate(state.findings[:15], 1):
+    for i, finding in enumerate(state.findings[:max_findings], 1):
         lines.append(f"{i}. {finding.claim}")
         lines.append(f"   Sources: {len(finding.sources)} | Confidence: {finding.confidence} | Avg Credibility: {finding.average_credibility:.2f}")
     return "\n".join(lines)
 
 
-def format_source_content(state: ResearchState, max_sources: int = 20) -> str:
+def format_source_content(state: ResearchState, max_sources: int = None) -> str:
     """Format top source content for synthesis, distributing the content budget.
 
     Sorts sources by credibility score descending, prefers content_full over
     content_snippet, and distributes the synthesis content budget across top
     sources (capped to max_sources to limit prompt size for small models).
     """
-    budget = _SYNTHESIS_CONTENT_BUDGET
+    if max_sources is None:
+        max_sources = config.SYNTHESIS.get("max_sources_for_content", 20)
+    budget = config.SYNTHESIS.get("content_budget", 5000)
     sorted_sources = sorted(
         state.sources_checked[:max_sources],
         key=lambda s: (s.relevance_score or 0.0, s.credibility_score or 0.0),
@@ -48,12 +47,12 @@ def format_source_content(state: ResearchState, max_sources: int = 20) -> str:
         remaining = budget - chars_used
         if remaining <= 0:
             break
-        max_per_source = max(remaining // 3, 500)  # at least 500 chars per source
+        min_chars = config.SYNTHESIS.get("min_chars_per_source", 500)
+        max_per_source = max(remaining // 3, min_chars)
         excerpt = content[:max_per_source]
 
         title = source.title or "Untitled"
-        url = source.url or ""
-        header = f"{i}. [{title}]({url}) — Credibility: {source.credibility_score:.2f}"
+        header = f"[{i}] {title}"
         entry = f"{header}\n{excerpt}"
 
         lines.append(entry)
@@ -66,8 +65,9 @@ def format_source_content(state: ResearchState, max_sources: int = 20) -> str:
 
 def format_credibility_scores(state: ResearchState) -> str:
     """Format credibility scores for synthesis prompt"""
+    top_n = config.SYNTHESIS.get("max_credibility_sources", 10)
     lines = []
-    authoritative = state.get_authoritative_sources(top_n=10)
+    authoritative = state.get_authoritative_sources(top_n=top_n)
     for source in authoritative:
         lines.append(f"- {source.title[:60]} ({source.url[:50]}...)")
         lines.append(f"  Credibility: {source.credibility_score:.2f} ({source.credibility_category})")
@@ -84,8 +84,10 @@ def _resolve_generic_subject(
     generic_subject: str,
     specific_subject: str,
     state: ResearchState,
-    max_alternatives: int = 3,
+    max_alternatives: int = None,
 ) -> str:
+    if max_alternatives is None:
+        max_alternatives = config.SYNTHESIS.get("max_alternatives", 3)
     """Replace a generic subject like 'other battery tech' with specific names from sources.
 
     Scans source titles, content snippets, and finding claims for

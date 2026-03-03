@@ -51,7 +51,7 @@ def score_relevance(query: str, sources: List[Source]) -> List[Source]:
     return sources
 
 
-def filter_relevant(sources: List[Source], min_score: float = 0.0,
+def filter_relevant(sources: List[Source], min_score: float = 0.15,
                     max_sources: int = 60) -> List[Source]:
     """Filter to sources above minimum relevance, capped at max_sources.
 

@@ -273,13 +273,14 @@ def _cluster_findings(query: str, sources: List[Source]) -> List[Finding]:
     Returns:
         List of Finding objects grouped by theme
     """
-    # Build source summary block (cap at ~8000 chars)
+    # Build source summary block (cap at clustering char budget from config)
     source_lines = []
-    char_budget = 8000
+    char_budget = config.SYNTHESIS.get("clustering_char_budget", 8000)
+    snippet_chars = config.SYNTHESIS.get("clustering_snippet_chars", 300)
     chars_used = 0
     for i, source in enumerate(sources, 1):
         snippet = source.content_full or source.content_snippet or source.title or ""
-        line = f"{i}. {source.title or 'Untitled'}: {snippet[:300]}"
+        line = f"{i}. {source.title or 'Untitled'}: {snippet[:snippet_chars]}"
         if chars_used + len(line) > char_budget:
             break
         source_lines.append(line)
@@ -401,9 +402,10 @@ def _parse_clustered_findings(text: str, sources: List[Source]) -> List[Finding]
             average_credibility=avg_cred,
         ))
 
-    if len(findings) > 15:
-        logger.info(f"Capping {len(findings)} parsed findings to 15")
-        findings = findings[:15]
+    max_findings = config.SYNTHESIS.get("max_findings", 15)
+    if len(findings) > max_findings:
+        logger.info(f"Capping {len(findings)} parsed findings to {max_findings}")
+        findings = findings[:max_findings]
     return findings
 
 
@@ -523,7 +525,8 @@ def run_deep_research(
 
     # Enforce source budget from depth profile
     max_sources = profile.get("max_sources", 25)
-    relevant_sources = filter_relevant(scored_sources, min_score=0.0, max_sources=max_sources)
+    relevance_min = config.SYNTHESIS.get("relevance_min_score", 0.15)
+    relevant_sources = filter_relevant(scored_sources, min_score=relevance_min, max_sources=max_sources)
 
     _emit(progress_callback, "relevance",
           f"Filtered to {len(relevant_sources)}/{len(state.sources_checked)} relevant sources.")
@@ -536,7 +539,8 @@ def run_deep_research(
 
     # Cap clustering input — 7B model produces structured output reliably
     # with ≤25 sources (each gets ~320 chars in 8000-char budget)
-    clustering_sources = state.sources_checked[:25]
+    clustering_max = config.SYNTHESIS.get("clustering_max_sources", 25)
+    clustering_sources = state.sources_checked[:clustering_max]
     state.findings = _cluster_findings(search_query, clustering_sources)
 
     _emit(
