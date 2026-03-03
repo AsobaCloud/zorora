@@ -1,83 +1,65 @@
-"""Synthesizer - generates final synthesis from research findings."""
+"""Synthesizer - two-stage synthesis pipeline (outline → per-section expansion)."""
 
 import logging
 import re
 from collections import Counter
+from dataclasses import dataclass
 from datetime import date
+from typing import List, Optional, Tuple
 
 import config
-from engine.models import ResearchState
+from engine.models import Finding, ResearchState, Source
 
 logger = logging.getLogger(__name__)
 
-def format_findings_for_synthesis(state: ResearchState) -> str:
-    """Format findings for synthesis prompt — full claims, capped by config."""
-    max_findings = config.SYNTHESIS.get("max_findings", 15)
-    lines = []
-    for i, finding in enumerate(state.findings[:max_findings], 1):
-        lines.append(f"{i}. {finding.claim}")
-        lines.append(f"   Sources: {len(finding.sources)} | Confidence: {finding.confidence} | Avg Credibility: {finding.average_credibility:.2f}")
-    return "\n".join(lines)
+
+@dataclass
+class OutlineSection:
+    title: str
+    bullets: List[str]
 
 
-def format_source_content(state: ResearchState, max_sources: int = None) -> str:
-    """Format top source content for synthesis, distributing the content budget.
-
-    Sorts sources by credibility score descending, prefers content_full over
-    content_snippet, and distributes the synthesis content budget across top
-    sources (capped to max_sources to limit prompt size for small models).
-    """
-    if max_sources is None:
-        max_sources = config.SYNTHESIS.get("max_sources_for_content", 20)
-    budget = config.SYNTHESIS.get("content_budget", 5000)
-    sorted_sources = sorted(
-        state.sources_checked[:max_sources],
-        key=lambda s: (s.relevance_score or 0.0, s.credibility_score or 0.0),
-        reverse=True,
-    )
-
-    lines = []
-    chars_used = 0
-    for i, source in enumerate(sorted_sources, 1):
-        content = source.content_full or source.content_snippet or ""
-        if not content:
-            continue
-
-        # Distribute budget: allow each source a share, but cap individual excerpts
-        remaining = budget - chars_used
-        if remaining <= 0:
-            break
-        min_chars = config.SYNTHESIS.get("min_chars_per_source", 500)
-        max_per_source = max(remaining // 3, min_chars)
-        excerpt = content[:max_per_source]
-
-        title = source.title or "Untitled"
-        header = f"[{i}] {title}"
-        entry = f"{header}\n{excerpt}"
-
-        lines.append(entry)
-        chars_used += len(entry)
-        if chars_used >= budget:
-            break
-
-    return "\n\n".join(lines)
+@dataclass
+class OutlineResult:
+    executive_summary: str
+    sections: List[OutlineSection]
+    is_comparison: bool
+    subjects: Optional[List[str]]
 
 
-def format_credibility_scores(state: ResearchState) -> str:
-    """Format credibility scores for synthesis prompt"""
-    top_n = config.SYNTHESIS.get("max_credibility_sources", 10)
-    lines = []
-    authoritative = state.get_authoritative_sources(top_n=top_n)
-    for source in authoritative:
-        lines.append(f"- {source.title[:60]} ({source.url[:50]}...)")
-        lines.append(f"  Credibility: {source.credibility_score:.2f} ({source.credibility_category})")
-    return "\n".join(lines)
+# ---------------------------------------------------------------------------
+# Stopwords used by route_sources / route_findings keyword overlap
+# ---------------------------------------------------------------------------
+_ROUTE_STOPWORDS = frozenset({
+    "the", "a", "an", "in", "on", "at", "to", "for", "of", "and",
+    "or", "is", "was", "were", "are", "been", "be", "has", "had",
+    "do", "with", "from", "about", "that", "this", "it", "not",
+    "by", "as", "but", "its", "how", "what", "when", "where", "who",
+    "why", "did", "does", "can", "may", "will", "should", "would",
+})
 
 
 _CATEGORY_SUFFIXES = re.compile(
     r"\s+(?:technologies|technology|tech|solutions|types|options|alternatives|systems|methods)$",
     re.IGNORECASE,
 )
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _emit_progress(callback, phase: str, message: str):
+    if callback:
+        callback("running", phase, message)
+
+
+def _extract_words(text: str) -> set:
+    """Extract lowercase words ≥3 chars, minus stopwords."""
+    return {
+        w for w in re.findall(r"[a-z]{3,}", text.lower())
+        if w not in _ROUTE_STOPWORDS
+    }
 
 
 def _resolve_generic_subject(
@@ -165,180 +147,526 @@ def _resolve_generic_subject(
         return f"{', '.join(names[:-1])}, and {names[-1]}"
 
 
-def _build_standard_prompt(
-    search_topic: str,
-    findings_text: str,
-    source_content: str,
-    credibility_text: str,
-    today: str,
-) -> str:
-    """Build the standard thematic synthesis prompt for non-comparative queries."""
-    return f"""Today's date is {today}. You are a research analyst. Write an 800-1200 word briefing on the topic below.
+# ---------------------------------------------------------------------------
+# Stage 0: Format claims (replaces format_findings_for_synthesis)
+# ---------------------------------------------------------------------------
+
+def format_claims_only(state: ResearchState) -> str:
+    """Return finding claims without metadata (no source count, confidence, credibility)."""
+    max_findings = config.SYNTHESIS.get("max_findings", 15)
+    lines = []
+    for i, finding in enumerate(state.findings[:max_findings], 1):
+        lines.append(f"{i}. {finding.claim}")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Stage 1: Outline generation
+# ---------------------------------------------------------------------------
+
+def _build_outline_prompt(search_topic: str, claims_text: str, today: str) -> str:
+    """Build the standard thematic outline prompt."""
+    min_sections, max_sections = config.SYNTHESIS.get("outline_sections", [4, 6])
+    return f"""Today's date is {today}. You are a research analyst. Create an outline for a briefing on the topic below.
 
 **Topic:** {search_topic}
 
-**Research Findings:**
-{findings_text}
+**Key claims from research:**
+{claims_text}
 
-**Source Content:**
-{source_content}
+**Rules:**
+1. Write an Executive Summary (2-3 sentences: the single most important conclusion).
+2. Then list {min_sections}-{max_sections} thematic sections. For each section give a title and 2-3 bullet directions.
+3. Group related claims across sources into themes. Do NOT organize by individual source.
 
-**Source Credibility:**
-{credibility_text}
-
-**Rules (follow exactly):**
-1. NEVER organize by source. Group related findings across sources into 4-6 thematic sections.
-2. Every sentence must add new information. No filler, no repetition, no boilerplate sub-headings.
-3. Cite inline: "costs fell 40% [Bloomberg]". Every claim must name its source. Only cite facts from the provided sources — do not invent data.
-4. Note confidence inline: (High — 3+ sources), (Medium — 2 sources), (Low — 1 source).
-5. End with one sentence on what the sources do not cover.
-
-**Output format (follow this skeleton exactly):**
+**Output format (follow exactly):**
 
 ## Executive Summary
-[2-3 sentences: the single most important conclusion, supported by the strongest evidence.]
+[2-3 sentences]
 
-## [Theme 1 Title]
-[One analytical paragraph synthesizing findings from multiple sources. Cite each claim inline.]
+## [Theme Title]
+- [bullet direction 1]
+- [bullet direction 2]
 
-## [Theme 2 Title]
-[One analytical paragraph synthesizing findings from multiple sources. Cite each claim inline.]
+## [Theme Title]
+- [bullet direction 1]
+- [bullet direction 2]
+- [bullet direction 3]
 
-[Continue for 4-6 total thematic sections. Do NOT add subsections within themes.]
-
-**Gaps:** [One sentence on uncovered dimensions.]
+[Continue for {min_sections}-{max_sections} total thematic sections.]
 
 Begin:
 """
 
 
-def _build_comparison_prompt(
-    search_topic: str,
-    subject_a: str,
-    subject_b: str,
-    findings_text: str,
-    source_content: str,
-    credibility_text: str,
-    today: str,
+def _build_comparison_outline_prompt(
+    search_topic: str, subject_a: str, subject_b: str, claims_text: str, today: str,
 ) -> str:
-    """Build a comparison synthesis prompt for comparative queries."""
-    return f"""Today's date is {today}. You are a research analyst. Write an 800-1200 word comparative briefing on the topic below.
+    """Build comparison outline prompt naming both subjects."""
+    min_sections, max_sections = config.SYNTHESIS.get("outline_sections", [4, 6])
+    return f"""Today's date is {today}. You are a research analyst. Create an outline for a comparative briefing.
 
 **Topic:** {search_topic}
 **Comparing:** {subject_a} vs {subject_b}
 
-**Research Findings:**
-{findings_text}
+**Key claims from research:**
+{claims_text}
 
-**Source Content:**
-{source_content}
+**Rules:**
+1. Write an Executive Summary (2-3 sentences: key comparison conclusion).
+2. Then list {min_sections}-{max_sections} comparison dimensions. For each give a title and 2-3 bullet directions.
+3. Every dimension must compare BOTH {subject_a} and {subject_b}.
 
-**Source Credibility:**
-{credibility_text}
-
-**Rules (follow exactly):**
-1. Structure as a COMPARISON between {subject_a} and {subject_b}. Every section must discuss BOTH subjects.
-2. Compare ONLY the named subjects above. Use their specific names throughout — never write "other" as a subject name.
-3. Highlight similarities AND differences with specific evidence from the sources.
-4. Cite inline: "costs fell 40% [Bloomberg]". Every claim must name its source. Only cite facts from the provided sources — do not invent data.
-5. Note confidence inline: (High — 3+ sources), (Medium — 2 sources), (Low — 1 source).
-6. End with one sentence on what the sources do not cover.
-
-**Output format (follow this skeleton exactly):**
+**Output format (follow exactly):**
 
 ## Executive Summary
-[2-3 sentences: key comparison conclusion — which is stronger in what dimensions, supported by the strongest evidence.]
+[2-3 sentences]
 
-## [Comparison Dimension 1, e.g., "Performance & Efficiency"]
-[One analytical paragraph comparing {subject_a} and {subject_b} on this dimension. Cite each claim inline.]
+## [Comparison Dimension Title]
+- [bullet about {subject_a}]
+- [bullet about {subject_b}]
 
-## [Comparison Dimension 2, e.g., "Cost & Accessibility"]
-[One analytical paragraph comparing {subject_a} and {subject_b} on this dimension. Cite each claim inline.]
+## [Comparison Dimension Title]
+- [bullet direction 1]
+- [bullet direction 2]
 
-[Continue for 4-6 total comparison dimensions. Do NOT add subsections within dimensions.]
-
-**Gaps:** [One sentence on uncovered dimensions.]
+[Continue for {min_sections}-{max_sections} total comparison dimensions.]
 
 Begin:
 """
 
 
-def synthesize(state: ResearchState) -> str:
-    """
-    Synthesize research findings using reasoning model with analytical depth.
+def _parse_outline(raw: str, is_comparison: bool, subjects: Optional[List[str]]) -> Optional[OutlineResult]:
+    """Parse outline markdown into OutlineResult. Returns None on failure."""
+    min_sections = config.SYNTHESIS.get("outline_sections", [4, 6])[0]
+    max_sections = config.SYNTHESIS.get("outline_sections", [4, 6])[1]
 
-    Args:
-        state: ResearchState with findings and sources
+    executive_summary = ""
+    sections: List[OutlineSection] = []
+    current_title: Optional[str] = None
+    current_bullets: List[str] = []
+    in_exec_summary = False
+    exec_lines: List[str] = []
 
-    Returns:
-        Synthesis text
-    """
-    logger.info("Synthesizing findings...")
+    for line in raw.split("\n"):
+        stripped = line.strip()
 
-    findings_text = format_findings_for_synthesis(state)
-    source_content = format_source_content(state)
-    credibility_text = format_credibility_scores(state)
+        # Section header
+        if stripped.startswith("## "):
+            # Save previous section
+            if current_title is not None:
+                sections.append(OutlineSection(title=current_title, bullets=current_bullets))
+                current_title = None
+                current_bullets = []
 
+            header_text = stripped[3:].strip()
+
+            if header_text.lower().startswith("executive summary"):
+                in_exec_summary = True
+                continue
+            else:
+                in_exec_summary = False
+                current_title = header_text
+                current_bullets = []
+                continue
+
+        # Bullet line
+        if stripped.startswith("- ") or stripped.startswith("* "):
+            bullet_text = stripped[2:].strip()
+            if in_exec_summary:
+                exec_lines.append(bullet_text)
+            elif current_title is not None:
+                current_bullets.append(bullet_text)
+            continue
+
+        # Plain text under executive summary
+        if in_exec_summary and stripped:
+            exec_lines.append(stripped)
+            continue
+
+    # Save last section
+    if current_title is not None:
+        sections.append(OutlineSection(title=current_title, bullets=current_bullets))
+
+    executive_summary = " ".join(exec_lines).strip()
+
+    # Validate
+    if not executive_summary:
+        logger.warning("Outline parse failed: empty executive summary")
+        return None
+    if len(sections) < min_sections:
+        logger.warning("Outline parse failed: %d sections < min %d", len(sections), min_sections)
+        return None
+
+    # Cap at max
+    sections = sections[:max_sections]
+
+    return OutlineResult(
+        executive_summary=executive_summary,
+        sections=sections,
+        is_comparison=is_comparison,
+        subjects=subjects,
+    )
+
+
+def synthesize_outline(state: ResearchState) -> Optional[OutlineResult]:
+    """Stage 1: Generate outline from claims via reasoning model."""
+    claims_text = format_claims_only(state)
     today = date.today().isoformat()
     search_topic = state.refined_query or state.original_query
 
-    # Select prompt based on whether query is comparative
+    # Detect comparison
     from engine.query_refiner import detect_comparison, _is_generic_subject
     comparison = detect_comparison(search_topic)
-    if comparison["is_comparative"] and len(comparison["subjects"]) >= 2:
+    is_comparison = comparison["is_comparative"] and len(comparison["subjects"]) >= 2
+    subjects = None
+
+    if is_comparison:
         subjects = list(comparison["subjects"])
-        # Resolve generic subjects to specific names from sources
         for i, subj in enumerate(subjects):
             if _is_generic_subject(subj):
                 resolved = _resolve_generic_subject(subj, subjects[1 - i], state)
                 if resolved != subj:
                     logger.info("Resolved generic subject '%s' -> '%s'", subj, resolved)
                     subjects[i] = resolved
-        logger.info("Using comparison synthesis template for: %s vs %s", subjects[0], subjects[1])
-        prompt = _build_comparison_prompt(
-            search_topic, subjects[0], subjects[1],
-            findings_text, source_content, credibility_text, today,
-        )
+        prompt = _build_comparison_outline_prompt(search_topic, subjects[0], subjects[1], claims_text, today)
     else:
-        prompt = _build_standard_prompt(
-            search_topic, findings_text, source_content, credibility_text, today,
-        )
+        prompt = _build_outline_prompt(search_topic, claims_text, today)
+
+    # Enforce char budget
+    max_chars = config.MODEL_BUDGETS.get("synthesis_outline", {}).get("max_input_chars", 5250)
+    if len(prompt) > max_chars:
+        overshoot = len(prompt) - max_chars
+        # Trim claims_text from the end
+        claims_text = claims_text[:len(claims_text) - overshoot]
+        if is_comparison:
+            prompt = _build_comparison_outline_prompt(search_topic, subjects[0], subjects[1], claims_text, today)
+        else:
+            prompt = _build_outline_prompt(search_topic, claims_text, today)
 
     try:
         from tools.registry import TOOL_FUNCTIONS
         use_reasoning_model = TOOL_FUNCTIONS.get("use_reasoning_model")
-
         if not use_reasoning_model:
-            logger.warning("use_reasoning_model not available, using fallback")
-            return _fallback_synthesis(state)
+            logger.warning("use_reasoning_model not available for outline")
+            return None
 
-        synthesis = use_reasoning_model(prompt)
+        raw = use_reasoning_model(prompt)
+        if not raw or raw.startswith("Error:"):
+            logger.warning("Outline model returned empty/error")
+            return None
 
-        if synthesis and not synthesis.startswith("Error:"):
-            state.synthesis = synthesis
-            state.synthesis_model = "reasoning"
-            logger.info("Synthesis complete")
-            return synthesis
-        else:
-            logger.warning("Synthesis failed, using fallback")
-            return _fallback_synthesis(state)
+        return _parse_outline(raw, is_comparison, subjects)
 
     except Exception as e:
-        logger.error(f"Synthesis error: {e}")
+        logger.error("Outline generation failed: %s", e)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Routing: select per-section relevant content
+# ---------------------------------------------------------------------------
+
+def route_sources(
+    section: OutlineSection,
+    sources: List[Source],
+    max_sources: int = None,
+) -> List[Source]:
+    """Select sources most relevant to this section via keyword overlap scoring."""
+    if max_sources is None:
+        max_sources = config.SYNTHESIS.get("max_sources_per_section", 4)
+
+    # Build word set from section title + bullets
+    section_text = section.title + " " + " ".join(section.bullets)
+    section_words = _extract_words(section_text)
+    if not section_words:
+        # Fallback: top sources by credibility
+        return sorted(sources, key=lambda s: s.credibility_score or 0.0, reverse=True)[:max_sources]
+
+    scored: List[Tuple[float, Source]] = []
+    for source in sources:
+        source_text = f"{source.title or ''} {source.content_snippet or ''} {source.content_full or ''}"
+        source_words = _extract_words(source_text)
+        overlap = len(section_words & source_words)
+        # Credibility tiebreaker
+        score = overlap + (source.credibility_score or 0.0) * 0.1
+        scored.append((score, source))
+
+    scored.sort(key=lambda t: t[0], reverse=True)
+
+    # If no keyword overlap at all, fall back to credibility
+    if scored and scored[0][0] < 0.2:
+        return sorted(sources, key=lambda s: s.credibility_score or 0.0, reverse=True)[:max_sources]
+
+    return [s for _, s in scored[:max_sources]]
+
+
+def route_findings(
+    section: OutlineSection,
+    findings: List[Finding],
+    max_findings: int = None,
+) -> List[Finding]:
+    """Select findings most relevant to this section via keyword overlap scoring."""
+    if max_findings is None:
+        max_findings = config.SYNTHESIS.get("max_findings_per_section", 3)
+
+    section_text = section.title + " " + " ".join(section.bullets)
+    section_words = _extract_words(section_text)
+    if not section_words:
+        return findings[:max_findings]
+
+    scored: List[Tuple[float, Finding]] = []
+    for finding in findings:
+        finding_words = _extract_words(finding.claim)
+        overlap = len(section_words & finding_words)
+        scored.append((overlap, finding))
+
+    scored.sort(key=lambda t: t[0], reverse=True)
+    return [f for _, f in scored[:max_findings]]
+
+
+# ---------------------------------------------------------------------------
+# Stage 2: Per-section expansion
+# ---------------------------------------------------------------------------
+
+def _build_section_prompt(
+    section: OutlineSection,
+    routed_sources: List[Source],
+    routed_findings: List[Finding],
+    today: str,
+) -> str:
+    """Build a standard section expansion prompt."""
+    max_chars = config.MODEL_BUDGETS.get("synthesis_section", {}).get("max_input_chars", 5250)
+
+    # Format finding claims
+    claims = "\n".join(f"- {f.claim}" for f in routed_findings)
+
+    # Format source excerpts with per-source budget
+    overhead = 600  # prompt template + section title + bullets + claims
+    source_budget = max(200, (max_chars - overhead) // max(len(routed_sources), 1))
+    source_blocks = []
+    for i, src in enumerate(routed_sources, 1):
+        content = src.content_full or src.content_snippet or ""
+        excerpt = content[:source_budget]
+        title = src.title or "Untitled"
+        source_blocks.append(f"[{i}] {title}\n{excerpt}")
+    sources_text = "\n\n".join(source_blocks)
+
+    bullets_text = "\n".join(f"- {b}" for b in section.bullets)
+
+    return f"""Today's date is {today}. Write one analytical paragraph for the section below.
+
+**Section:** {section.title}
+**Directions:**
+{bullets_text}
+
+**Relevant claims:**
+{claims}
+
+**Source excerpts:**
+{sources_text}
+
+**Rules:**
+1. Synthesize across sources — do not summarize one source at a time.
+2. Cite inline: "costs fell 40% [Source Title]". Every claim must name its source.
+3. One paragraph only. No sub-headings.
+4. Only cite facts from the provided sources — do not invent data.
+
+Begin:
+"""
+
+
+def _build_comparison_section_prompt(
+    section: OutlineSection,
+    routed_sources: List[Source],
+    routed_findings: List[Finding],
+    subjects: List[str],
+    today: str,
+) -> str:
+    """Build a comparison section expansion prompt."""
+    max_chars = config.MODEL_BUDGETS.get("synthesis_section", {}).get("max_input_chars", 5250)
+
+    claims = "\n".join(f"- {f.claim}" for f in routed_findings)
+
+    overhead = 600
+    source_budget = max(200, (max_chars - overhead) // max(len(routed_sources), 1))
+    source_blocks = []
+    for i, src in enumerate(routed_sources, 1):
+        content = src.content_full or src.content_snippet or ""
+        excerpt = content[:source_budget]
+        title = src.title or "Untitled"
+        source_blocks.append(f"[{i}] {title}\n{excerpt}")
+    sources_text = "\n\n".join(source_blocks)
+
+    bullets_text = "\n".join(f"- {b}" for b in section.bullets)
+
+    return f"""Today's date is {today}. Write one analytical paragraph comparing {subjects[0]} and {subjects[1]} on this dimension.
+
+**Dimension:** {section.title}
+**Directions:**
+{bullets_text}
+
+**Relevant claims:**
+{claims}
+
+**Source excerpts:**
+{sources_text}
+
+**Rules:**
+1. Compare BOTH {subjects[0]} and {subjects[1]} on this dimension.
+2. Highlight similarities AND differences with specific evidence.
+3. Cite inline: "costs fell 40% [Source Title]". Every claim must name its source.
+4. One paragraph only. No sub-headings.
+5. Only cite facts from the provided sources — do not invent data.
+
+Begin:
+"""
+
+
+def synthesize_section(
+    section: OutlineSection,
+    sources: List[Source],
+    findings: List[Finding],
+    state: ResearchState,
+    is_comparison: bool,
+    subjects: Optional[List[str]],
+) -> Optional[str]:
+    """Stage 2: Expand a single section via reasoning model."""
+    today = date.today().isoformat()
+
+    if is_comparison and subjects:
+        prompt = _build_comparison_section_prompt(section, sources, findings, subjects, today)
+    else:
+        prompt = _build_section_prompt(section, sources, findings, today)
+
+    try:
+        from tools.registry import TOOL_FUNCTIONS
+        use_reasoning_model = TOOL_FUNCTIONS.get("use_reasoning_model")
+        if not use_reasoning_model:
+            return None
+
+        raw = use_reasoning_model(prompt)
+        if not raw or raw.startswith("Error:"):
+            return None
+
+        # Strip accidental markdown headers from output
+        lines = raw.strip().split("\n")
+        cleaned = []
+        for line in lines:
+            if line.strip().startswith("## ") or line.strip().startswith("# "):
+                continue
+            cleaned.append(line)
+        return "\n".join(cleaned).strip() or None
+
+    except Exception as e:
+        logger.error("Section expansion failed for '%s': %s", section.title, e)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Assembly
+# ---------------------------------------------------------------------------
+
+def assemble_synthesis(outline: OutlineResult, expanded_sections: List[Optional[str]]) -> str:
+    """Mechanically concatenate outline + expanded sections into final markdown."""
+    parts = []
+
+    parts.append("## Executive Summary")
+    parts.append(outline.executive_summary)
+    parts.append("")
+
+    for i, section in enumerate(outline.sections):
+        parts.append(f"## {section.title}")
+        expanded = expanded_sections[i] if i < len(expanded_sections) else None
+        if expanded:
+            parts.append(expanded)
+        else:
+            # Stub for failed sections
+            parts.append("*[Section could not be fully expanded. Key points:]*")
+            for bullet in section.bullets:
+                parts.append(f"- {bullet}")
+        parts.append("")
+
+    parts.append("**Gaps:** Further investigation needed on dimensions not covered by available sources.")
+
+    return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
+def synthesize(state: ResearchState, progress_callback=None) -> str:
+    """
+    Two-stage synthesis pipeline: outline → per-section expansion → assembly.
+
+    Args:
+        state: ResearchState with findings and sources
+        progress_callback: Optional callback(status, phase, message)
+
+    Returns:
+        Synthesis text
+    """
+    logger.info("Synthesizing findings (two-stage pipeline)...")
+
+    # Stage 1: Outline
+    _emit_progress(progress_callback, "synthesis", "Generating outline from findings...")
+    outline = synthesize_outline(state)
+    if outline is None:
+        logger.warning("Outline generation failed, using fallback synthesis")
         return _fallback_synthesis(state)
+
+    _emit_progress(
+        progress_callback, "synthesis",
+        f"Outline ready: {len(outline.sections)} sections. Expanding...",
+    )
+
+    # Stage 2: Per-section expansion
+    expanded_sections: List[Optional[str]] = []
+    success_count = 0
+
+    for i, section in enumerate(outline.sections):
+        _emit_progress(
+            progress_callback, "synthesis",
+            f"Expanding section {i + 1}/{len(outline.sections)}: {section.title}",
+        )
+
+        routed_src = route_sources(section, state.sources_checked)
+        routed_fnd = route_findings(section, state.findings)
+
+        paragraph = synthesize_section(
+            section, routed_src, routed_fnd, state,
+            outline.is_comparison, outline.subjects,
+        )
+        expanded_sections.append(paragraph)
+        if paragraph:
+            success_count += 1
+
+    if success_count == 0:
+        logger.warning("All section expansions failed, using fallback synthesis")
+        return _fallback_synthesis(state)
+
+    # Stage 3: Assembly
+    _emit_progress(progress_callback, "synthesis", "Assembling final synthesis...")
+    synthesis = assemble_synthesis(outline, expanded_sections)
+
+    state.synthesis = synthesis
+    state.synthesis_model = "reasoning"
+    logger.info("Synthesis complete (%d/%d sections expanded)", success_count, len(outline.sections))
+    return synthesis
 
 
 def _fallback_synthesis(state: ResearchState) -> str:
     """Fallback synthesis if LLM unavailable"""
     lines = [f"# Research Synthesis: {state.original_query}\n"]
     lines.append(f"\n**Total Sources:** {state.total_sources}\n")
-    
+
     if state.findings:
         lines.append("## Key Findings:\n")
         for i, finding in enumerate(state.findings[:10], 1):
             lines.append(f"{i}. {finding.claim[:150]}...")
             lines.append(f"   Confidence: {finding.confidence} | Avg Credibility: {finding.average_credibility:.2f}\n")
-    
+
     if state.sources_checked:
         lines.append("## Top Sources:\n")
         authoritative = state.get_authoritative_sources(top_n=10)
@@ -346,7 +674,7 @@ def _fallback_synthesis(state: ResearchState) -> str:
             lines.append(f"- {source.title}")
             lines.append(f"  {source.url}")
             lines.append(f"  Credibility: {source.credibility_score:.2f}\n")
-    
+
     synthesis = "\n".join(lines)
     state.synthesis = synthesis
     state.synthesis_model = "fallback"

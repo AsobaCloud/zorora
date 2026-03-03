@@ -575,7 +575,7 @@ def run_deep_research(
     heartbeat_thread.start()
 
     try:
-        state.synthesis = synthesize(state)
+        state.synthesis = synthesize(state, progress_callback=progress_callback)
         state.completed_at = datetime.now()
         state.current_iteration = 1
     finally:
