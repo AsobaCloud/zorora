@@ -1,6 +1,8 @@
 """Synthesizer - generates final synthesis from research findings."""
 
 import logging
+import re
+from collections import Counter
 from datetime import date
 
 from engine.models import ResearchState
@@ -70,6 +72,95 @@ def format_credibility_scores(state: ResearchState) -> str:
         lines.append(f"- {source.title[:60]} ({source.url[:50]}...)")
         lines.append(f"  Credibility: {source.credibility_score:.2f} ({source.credibility_category})")
     return "\n".join(lines)
+
+
+_CATEGORY_SUFFIXES = re.compile(
+    r"\s+(?:technologies|technology|tech|solutions|types|options|alternatives|systems|methods)$",
+    re.IGNORECASE,
+)
+
+
+def _resolve_generic_subject(
+    generic_subject: str,
+    specific_subject: str,
+    state: ResearchState,
+    max_alternatives: int = 3,
+) -> str:
+    """Replace a generic subject like 'other battery tech' with specific names from sources.
+
+    Scans source titles, content snippets, and finding claims for
+    '<qualifier> <category-root>' patterns (e.g., 'sodium-ion battery'),
+    filters out the known specific subject, and returns top alternatives
+    by frequency. Returns the original subject unchanged if nothing found.
+    """
+    # Extract category from "other X" -> X
+    cat_match = re.match(r"^other\s+(.+)$", generic_subject.strip(), re.IGNORECASE)
+    if not cat_match:
+        return generic_subject
+    category = cat_match.group(1).strip()
+
+    # Derive root noun: "battery technologies" -> "batter"
+    root = _CATEGORY_SUFFIXES.sub("", category).strip()
+    if root.endswith("ies"):
+        root = root[:-3]      # "batteries" -> "batter"
+    elif root.endswith("y"):
+        root = root[:-1]      # "battery" -> "batter"
+    elif root.endswith("s") and not root.endswith("ss"):
+        root = root[:-1]      # "cells" -> "cell"
+
+    if len(root) < 3:
+        return generic_subject
+
+    # Build corpus from sources and findings
+    text_blocks = []
+    for source in state.sources_checked:
+        if source.title:
+            text_blocks.append(source.title)
+        if source.content_snippet:
+            text_blocks.append(source.content_snippet[:300])
+    for finding in state.findings:
+        text_blocks.append(finding.claim)
+    corpus = "\n".join(text_blocks)
+
+    # Find "<qualifier> <root>..." patterns ([ \t]+ avoids matching across lines)
+    pattern = re.compile(
+        r"\b((?:[A-Za-z][\w-]*[ \t]+){0,2}[A-Za-z][\w-]*)[ \t]+" + re.escape(root) + r"\w*\b",
+        re.IGNORECASE,
+    )
+    matches = pattern.findall(corpus)
+
+    # Count and filter
+    specific_lower = specific_subject.lower().replace("-", " ")
+    skip = {"other", "new", "the", "a", "an", "some", "many", "various", "different", "these", "those", "all",
+            "comparing", "compare", "versus", "between", "about", "called", "named", "using", "like", "than"}
+    candidates: Counter = Counter()
+    for match in matches:
+        name = match.strip().lower()
+        if not name or name in skip:
+            continue
+        first_word = name.split()[0]
+        if first_word in skip:
+            continue
+        if name in specific_lower or specific_lower.startswith(name):
+            continue
+        candidates[name] += 1
+
+    top = [name for name, _ in candidates.most_common(max_alternatives)]
+    if not top:
+        return generic_subject
+
+    # Format: "Solid-State Batteries, Sodium-Ion Batteries, and Flow Batteries"
+    def fmt(qualifier: str) -> str:
+        full = f"{qualifier} {root}ies" if root.endswith("er") or root.endswith("r") else f"{qualifier} {root}s"
+        return full.title()
+
+    names = [fmt(t) for t in top]
+    if len(names) == 1:
+        return names[0]
+    elif len(names) == 2:
+        return f"{names[0]} and {names[1]}"
+    else:
+        return f"{', '.join(names[:-1])}, and {names[-1]}"
 
 
 def _build_standard_prompt(
@@ -145,10 +236,11 @@ def _build_comparison_prompt(
 
 **Rules (follow exactly):**
 1. Structure as a COMPARISON between {subject_a} and {subject_b}. Every section must discuss BOTH subjects.
-2. Highlight similarities AND differences with specific evidence from the sources.
-3. Cite inline: "costs fell 40% [Bloomberg]". Every claim must name its source. Only cite facts from the provided sources — do not invent data.
-4. Note confidence inline: (High — 3+ sources), (Medium — 2 sources), (Low — 1 source).
-5. End with one sentence on what the sources do not cover.
+2. Compare ONLY the named subjects above. Use their specific names throughout — never write "other" as a subject name.
+3. Highlight similarities AND differences with specific evidence from the sources.
+4. Cite inline: "costs fell 40% [Bloomberg]". Every claim must name its source. Only cite facts from the provided sources — do not invent data.
+5. Note confidence inline: (High — 3+ sources), (Medium — 2 sources), (Low — 1 source).
+6. End with one sentence on what the sources do not cover.
 
 **Output format (follow this skeleton exactly):**
 
@@ -189,10 +281,17 @@ def synthesize(state: ResearchState) -> str:
     search_topic = state.refined_query or state.original_query
 
     # Select prompt based on whether query is comparative
-    from engine.query_refiner import detect_comparison
+    from engine.query_refiner import detect_comparison, _is_generic_subject
     comparison = detect_comparison(search_topic)
     if comparison["is_comparative"] and len(comparison["subjects"]) >= 2:
-        subjects = comparison["subjects"]
+        subjects = list(comparison["subjects"])
+        # Resolve generic subjects to specific names from sources
+        for i, subj in enumerate(subjects):
+            if _is_generic_subject(subj):
+                resolved = _resolve_generic_subject(subj, subjects[1 - i], state)
+                if resolved != subj:
+                    logger.info("Resolved generic subject '%s' -> '%s'", subj, resolved)
+                    subjects[i] = resolved
         logger.info("Using comparison synthesis template for: %s vs %s", subjects[0], subjects[1])
         prompt = _build_comparison_prompt(
             search_topic, subjects[0], subjects[1],

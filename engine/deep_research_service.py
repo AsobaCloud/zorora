@@ -65,6 +65,90 @@ def _clean_query_line(line: str) -> Optional[str]:
     return cleaned
 
 
+_CATEGORY_SUFFIXES_RE = re.compile(
+    r"\s+(?:technologies|technology|tech|solutions|types|options|alternatives|systems|methods)$",
+    re.IGNORECASE,
+)
+
+_SKIP_QUALIFIERS = frozenset({
+    "other", "new", "the", "a", "an", "some", "many", "various",
+    "different", "these", "those", "all", "comparing", "compare",
+    "versus", "between", "about", "called", "named", "using", "like", "than",
+})
+
+
+def _extract_specific_alternatives(
+    sources: List[Source],
+    generic_subject: str,
+    specific_subject: str,
+    max_alternatives: int = 3,
+) -> List[str]:
+    """Extract specific alternative names from preliminary search results.
+
+    Scans source titles and content snippets for '<qualifier> <category-root>'
+    patterns, filters out the known specific subject, and returns top
+    alternatives by frequency as complete search terms.
+
+    Returns empty list if extraction fails (caller should fall back).
+    """
+    from collections import Counter
+
+    cat_match = re.match(r"^other\s+(.+)$", generic_subject.strip(), re.IGNORECASE)
+    if not cat_match:
+        return []
+    category = cat_match.group(1).strip()
+
+    root = _CATEGORY_SUFFIXES_RE.sub("", category).strip()
+    if root.endswith("ies"):
+        root = root[:-3]
+    elif root.endswith("y"):
+        root = root[:-1]
+    elif root.endswith("s") and not root.endswith("ss"):
+        root = root[:-1]
+    if len(root) < 3:
+        return []
+
+    text_blocks = []
+    for source in sources:
+        if source.title:
+            text_blocks.append(source.title)
+        if source.content_snippet:
+            text_blocks.append(source.content_snippet[:300])
+    corpus = "\n".join(text_blocks)
+    if not corpus.strip():
+        return []
+
+    pattern = re.compile(
+        r"\b((?:[A-Za-z][\w-]*[ \t]+){0,2}[A-Za-z][\w-]*)[ \t]+"
+        + re.escape(root) + r"\w*\b",
+        re.IGNORECASE,
+    )
+    matches = pattern.findall(corpus)
+
+    specific_lower = specific_subject.lower().replace("-", " ")
+    candidates: Counter = Counter()
+    for match in matches:
+        name = match.strip().lower()
+        if not name or name in _SKIP_QUALIFIERS:
+            continue
+        if name.split()[0] in _SKIP_QUALIFIERS:
+            continue
+        if name in specific_lower or specific_lower.startswith(name):
+            continue
+        candidates[name] += 1
+
+    top = [name for name, _ in candidates.most_common(max_alternatives)]
+    if not top:
+        return []
+
+    def to_search_term(qualifier: str) -> str:
+        if root.endswith("r"):
+            return f"{qualifier} {root}ies"
+        return f"{qualifier} {root}s"
+
+    return [to_search_term(q) for q in top]
+
+
 def _generate_query_variants(query: str, num_variants: int) -> List[str]:
     """
     Generate query variants via subtopic decomposition for broader search coverage.
@@ -85,11 +169,42 @@ def _generate_query_variants(query: str, num_variants: int) -> List[str]:
     from engine.query_refiner import detect_comparison
     comparison = detect_comparison(query)
     if comparison["is_comparative"] and len(comparison["subjects"]) >= 2:
+        from engine.query_refiner import _is_generic_subject
+
         subjects = comparison["subjects"]
-        variants = [subjects[0], subjects[1]]
-        if num_variants >= 3:
-            variants.append(query)
-        return variants[:max(num_variants, 2)]
+        generic_indices = [i for i, s in enumerate(subjects) if _is_generic_subject(s)]
+
+        if generic_indices and len(generic_indices) < len(subjects):
+            # One specific + one generic subject
+            specific = subjects[1 - generic_indices[0]]
+            generic = subjects[generic_indices[0]]
+
+            # Quick preliminary search to discover specific alternatives
+            logger.info("Resolving generic subject '%s' via preliminary search", generic)
+            preliminary_sources = aggregate_sources(
+                f"{specific} alternatives",
+                max_results_per_source=3,
+                include_brave_news=False,
+            )
+            alternatives = _extract_specific_alternatives(
+                preliminary_sources, generic, specific, max_alternatives=3,
+            )
+
+            if alternatives:
+                variants = [specific] + alternatives
+                logger.info("Resolved generic '%s' to search terms: %s", generic, alternatives)
+            else:
+                # Fallback: current behavior
+                logger.info("No alternatives extracted, falling back to generic search")
+                variants = [specific, f"{specific} alternatives comparison"]
+
+            return variants[:max(num_variants, 3)]
+        else:
+            # Both subjects specific — use them as variants directly
+            variants = list(subjects)
+            if num_variants >= 3:
+                variants.append(query)
+            return variants[:max(num_variants, 2)]
 
     if num_variants <= 1:
         return [query]
