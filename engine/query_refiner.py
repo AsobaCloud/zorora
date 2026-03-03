@@ -1,150 +1,298 @@
 """Query refinement module for deep research.
 
 Analyzes user queries to detect missing dimensions (time period, geography,
-analysis type, scope) and returns structured refinement suggestions with
-option pills for the UI.
+analysis type, scope) using rule-based keyword/regex matching, and returns
+structured refinement suggestions with option pills for the UI.
 """
 
-import json
 import logging
 import re
-from datetime import date
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Keyword / regex definitions for each dimension
+# ---------------------------------------------------------------------------
+
+_TIME_PERIOD_PATTERN = re.compile(
+    r"""
+    \b(?:
+        \d{4}(?:\s*[-–]\s*\d{4})?          # 2024, 2024-2025
+      | Q[1-4]\s*\d{4}                      # Q1 2025
+      | (?:last|past|recent|since|next)      # relative markers
+        \s+\d*\s*(?:day|week|month|year|quarter)s?
+      | this\s+(?:year|quarter|month|week)
+      | current|latest|today|yesterday
+      | (?:last|past)\s+(?:year|quarter|month|week|decade)
+      | recent(?:ly)?
+    )\b
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+_GEOGRAPHIC_KEYWORDS = {
+    # Continents
+    "africa", "europe", "asia", "north america", "south america",
+    "latin america", "oceania", "antarctica", "middle east",
+    # Major regions / blocs
+    "eu", "european union", "sadc", "apac", "asia-pacific",
+    "asia pacific", "mena", "asean", "nafta", "usmca",
+    "sub-saharan", "sub saharan", "east africa", "west africa",
+    "southern africa", "north africa", "central africa",
+    "southeast asia", "south asia", "east asia", "central asia",
+    "western europe", "eastern europe", "northern europe",
+    "southern europe", "caribbean", "pacific islands",
+    # G20 countries
+    "argentina", "australia", "brazil", "canada", "china", "france",
+    "germany", "india", "indonesia", "italy", "japan", "mexico",
+    "russia", "saudi arabia", "south africa", "south korea",
+    "turkey", "turkiye", "united kingdom", "uk", "united states",
+    "us", "usa", "america",
+    # Additional notable countries
+    "nigeria", "kenya", "egypt", "morocco", "ghana", "ethiopia",
+    "tanzania", "rwanda", "zimbabwe", "zambia", "mozambique",
+    "botswana", "namibia", "angola", "senegal", "uganda",
+    "singapore", "malaysia", "thailand", "vietnam", "philippines",
+    "new zealand", "colombia", "chile", "peru", "israel",
+    "uae", "united arab emirates", "qatar", "kuwait",
+    "norway", "sweden", "denmark", "finland", "switzerland",
+    "netherlands", "belgium", "spain", "portugal", "poland",
+    "czech republic", "austria", "ireland", "scotland", "wales",
+    # Generic terms
+    "global", "worldwide", "international", "domestic", "regional",
+}
+
+_ANALYSIS_TYPE_KEYWORDS = {
+    "trend", "trends", "market", "overview", "comparison", "compare",
+    "forecast", "outlook", "impact", "assessment", "review", "benchmark",
+    "benchmarking", "cost analysis", "risk", "risk analysis",
+    "swot", "pestle", "pestel", "gap analysis", "competitive analysis",
+    "landscape", "deep dive", "case study", "survey", "audit",
+    "evaluation", "projection", "prediction", "scenario",
+    "policy review", "policy analysis", "market overview",
+    "trend analysis", "impact assessment",
+}
+
+_SCOPE_KEYWORDS = {
+    "residential", "commercial", "industrial", "enterprise",
+    "sme", "smes", "small business", "fortune 500", "startup",
+    "startups", "public sector", "private sector", "government",
+    "military", "defense", "defence", "healthcare", "health care",
+    "education", "retail", "wholesale", "manufacturing",
+    "agriculture", "mining", "construction", "transportation",
+    "logistics", "telecom", "telecommunications", "fintech",
+    "banking", "insurance", "real estate", "hospitality",
+    "tourism", "media", "entertainment", "pharmaceutical",
+    "biotech", "automotive", "aerospace", "consumer",
+    "b2b", "b2c", "nonprofit", "non-profit", "utility",
+    "utilities", "oil and gas", "oil & gas",
+}
+
+# ---------------------------------------------------------------------------
+# Comparative query detection patterns
+# ---------------------------------------------------------------------------
+
+_COMPARISON_PATTERNS = [
+    # "comparison/compare between/of X and Y"
+    re.compile(r"\b(?:comparison|compare|comparing)\s+(?:between|of)\s+(.+?)\s+and\s+(.+)", re.IGNORECASE),
+    # "compare X and/with/to/vs Y"
+    re.compile(r"\b(?:compare|comparing)\s+(.+?)\s+(?:and|with|to|versus|vs\.?)\s+(.+)", re.IGNORECASE),
+    # "X vs/versus Y"
+    re.compile(r"(.+?)\s+(?:vs\.?|versus)\s+(.+)", re.IGNORECASE),
+    # "X compared to/with Y"
+    re.compile(r"(.+?)\s+compared\s+(?:to|with)\s+(.+)", re.IGNORECASE),
+    # "difference(s) between X and Y"
+    re.compile(r"\bdifferences?\s+between\s+(.+?)\s+and\s+(.+)", re.IGNORECASE),
+]
+
+# ---------------------------------------------------------------------------
+# Static gap definitions (question + option pills per dimension)
+# ---------------------------------------------------------------------------
+
+_GAP_DEFINITIONS = {
+    "time_period": {
+        "question": "What time period should this cover?",
+        "options": [
+            "Last 30 days",
+            "Last 3 months",
+            "Last 12 months",
+            "2024-2025",
+            "2020-2025",
+        ],
+    },
+    "geographic_focus": {
+        "question": "What geographic focus?",
+        "options": [
+            "Global",
+            "United States",
+            "Europe",
+            "Africa",
+            "Asia-Pacific",
+        ],
+    },
+    "analysis_type": {
+        "question": "What type of analysis?",
+        "options": [
+            "Market overview",
+            "Trend analysis",
+            "Policy review",
+            "Impact assessment",
+        ],
+    },
+    "scope": {
+        "question": "What scope?",
+        "options": [
+            "All sectors",
+            "Residential",
+            "Commercial & industrial",
+            "Government & policy",
+        ],
+    },
+}
+
+# ---------------------------------------------------------------------------
+# Dimension detection helpers
+# ---------------------------------------------------------------------------
+
+
+def _detect_time_period(query_lower: str) -> tuple[bool, str | None]:
+    """Detect time period references via regex."""
+    match = _TIME_PERIOD_PATTERN.search(query_lower)
+    if match:
+        return True, match.group(0).strip()
+    return False, None
+
+
+def _detect_keyword_set(query_lower: str, keywords: set[str]) -> tuple[bool, str | None]:
+    """Check whether any keyword from the set appears in the query.
+
+    Tries longest keywords first so multi-word phrases are matched
+    preferentially (e.g. "south africa" before "africa").
+    """
+    for kw in sorted(keywords, key=len, reverse=True):
+        # Word-boundary match to avoid partial hits
+        if re.search(r"\b" + re.escape(kw) + r"\b", query_lower):
+            return True, kw
+    return False, None
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 
 def refine_query(raw_query: str) -> dict:
     """Analyze a research query and return structured refinement suggestions.
 
-    Uses the reasoning model to detect what dimensions are present vs. missing,
-    then returns a structured dict with detected dimensions, gaps (with suggested
-    options), and a refined query string.
+    Uses deterministic keyword/regex matching to detect which dimensions are
+    present vs. missing, then returns a structured dict with detected
+    dimensions, gaps (with suggested options), and the original query string.
 
     Args:
         raw_query: The user's original research question.
 
     Returns:
-        dict with keys: status, original_query, dimensions, gaps, refined_query,
-        skip_refinement.
+        dict with keys: status, original_query, dimensions, gaps,
+        refined_query, skip_refinement.
     """
     if not raw_query or not raw_query.strip():
         return _passthrough(raw_query)
 
-    today = date.today().isoformat()
+    query_lower = raw_query.lower().strip()
 
-    try:
-        import config
-        from tools.specialist.client import create_specialist_client
+    # Topic is always detected if query is non-empty
+    dimensions: dict[str, dict] = {
+        "topic": {"detected": True, "value": raw_query.strip()},
+    }
 
-        prompt = (
-            f"Today's date is {today}.\n\n"
-            f"Analyze this research query and identify which dimensions are specified "
-            f"and which are missing. Return ONLY valid JSON, no explanation.\n\n"
-            f"Query: {raw_query}\n\n"
-            f"Detect these dimensions:\n"
-            f"- topic: The main subject (always present if query is coherent)\n"
-            f"- time_period: Any time bounds (e.g., 'last 3 months', '2024-2025', 'recent')\n"
-            f"- geographic_focus: Any geographic scope (e.g., 'United States', 'global', 'Europe')\n"
-            f"- analysis_type: Type of analysis requested (e.g., 'market overview', 'trend analysis', 'policy review')\n"
-            f"- scope: Specific scope constraints (e.g., 'residential sector', 'Fortune 500 companies')\n\n"
-            f"Return JSON in this exact format:\n"
-            f'{{\n'
-            f'  "status": "needs_refinement" or "well_specified",\n'
-            f'  "dimensions": {{\n'
-            f'    "topic": {{"detected": true, "value": "extracted topic"}},\n'
-            f'    "time_period": {{"detected": true/false, "value": "extracted value or null"}},\n'
-            f'    "geographic_focus": {{"detected": true/false, "value": "extracted value or null"}},\n'
-            f'    "analysis_type": {{"detected": true/false, "value": "extracted value or null"}},\n'
-            f'    "scope": {{"detected": true/false, "value": "extracted value or null"}}\n'
-            f'  }},\n'
-            f'  "gaps": [\n'
-            f'    {{\n'
-            f'      "dimension": "time_period",\n'
-            f'      "question": "What time period should this cover?",\n'
-            f'      "options": ["Last 30 days", "Last 3 months", "Last 12 months", "2024-2025"]\n'
-            f'    }}\n'
-            f'  ],\n'
-            f'  "refined_query": "improved version of the query incorporating detected dimensions"\n'
-            f'}}\n\n'
-            f"Rules:\n"
-            f"- If 2 or fewer dimensions are missing, set status to 'well_specified'\n"
-            f"- Each gap must have 3-5 options as short labels\n"
-            f"- The refined_query should be a clear, specific research question\n"
-            f"- Return ONLY the JSON object, nothing else\n"
-        )
+    # Detect each dimension
+    detected_tp, value_tp = _detect_time_period(query_lower)
+    dimensions["time_period"] = {"detected": detected_tp, "value": value_tp}
 
-        model_config = config.SPECIALIZED_MODELS["reasoning"]
-        client = create_specialist_client("reasoning", model_config)
-        # Override timeout: refinement is non-critical UI enhancement,
-        # fail fast rather than block the request for minutes
-        client.adapter.timeout = 15
-        messages = [
-            {"role": "system", "content": "You are a JSON API. Return ONLY valid JSON objects. No prose, no explanation, no markdown."},
-            {"role": "user", "content": prompt},
-        ]
-        response = client.chat_complete(messages, tools=None)
-        result = client.extract_content(response)
+    detected_geo, value_geo = _detect_keyword_set(query_lower, _GEOGRAPHIC_KEYWORDS)
+    dimensions["geographic_focus"] = {"detected": detected_geo, "value": value_geo}
 
-        if not result or not result.strip():
-            logger.warning("Refinement model returned empty response")
-            return _passthrough(raw_query)
+    detected_at, value_at = _detect_keyword_set(query_lower, _ANALYSIS_TYPE_KEYWORDS)
+    dimensions["analysis_type"] = {"detected": detected_at, "value": value_at}
 
-        logger.debug(f"Refinement raw output (first 500 chars): {result[:500]}")
+    detected_sc, value_sc = _detect_keyword_set(query_lower, _SCOPE_KEYWORDS)
+    dimensions["scope"] = {"detected": detected_sc, "value": value_sc}
 
-        parsed = _parse_refinement_json(result)
-        if not parsed:
-            logger.warning(f"Failed to parse refinement JSON, using passthrough. Raw (first 300): {result[:300]}")
-            return _passthrough(raw_query)
+    # Build gaps list for undetected dimensions
+    gaps = []
+    for dim_name in ("time_period", "geographic_focus", "analysis_type", "scope"):
+        if not dimensions[dim_name]["detected"]:
+            defn = _GAP_DEFINITIONS[dim_name]
+            gaps.append({
+                "dimension": dim_name,
+                "question": defn["question"],
+                "options": defn["options"],
+            })
 
-        # Ensure required fields exist
-        parsed.setdefault("original_query", raw_query)
-        parsed.setdefault("status", "needs_refinement")
-        parsed.setdefault("dimensions", {})
-        parsed.setdefault("gaps", [])
-        parsed.setdefault("refined_query", raw_query)
+    # Status: needs_refinement if 3+ dimensions missing (i.e. <=1 detected
+    # out of the 4 non-topic dimensions), well_specified otherwise
+    missing_count = len(gaps)
+    status = "needs_refinement" if missing_count >= 3 else "well_specified"
+    skip = status == "well_specified" or len(gaps) == 0
 
-        # Determine skip_refinement
-        if parsed["status"] == "well_specified" or len(parsed.get("gaps", [])) == 0:
-            parsed["skip_refinement"] = True
-        else:
-            parsed["skip_refinement"] = False
+    result = {
+        "status": status,
+        "original_query": raw_query,
+        "dimensions": dimensions,
+        "gaps": gaps,
+        "refined_query": raw_query,
+        "skip_refinement": skip,
+    }
 
-        logger.info(f"Refinement result: status={parsed['status']}, gaps={len(parsed['gaps'])}, skip={parsed['skip_refinement']}")
-        return parsed
-
-    except Exception as e:
-        logger.warning(f"Query refinement failed: {e}")
-        return _passthrough(raw_query)
+    logger.info(
+        "Refinement result: status=%s, gaps=%d, skip=%s",
+        status, len(gaps), skip,
+    )
+    return result
 
 
-def _parse_refinement_json(text: str) -> dict | None:
-    """Parse JSON from model output, handling think tags and markdown fences."""
-    if not text:
-        return None
+# ---------------------------------------------------------------------------
+# Comparative query detection
+# ---------------------------------------------------------------------------
 
-    # Strip <think>...</think> tags
-    cleaned = re.sub(r"<think>[\s\S]*?</think>", "", text).strip()
 
-    # Strip markdown code fences
-    cleaned = re.sub(r"^```(?:json)?\s*\n?", "", cleaned, flags=re.MULTILINE)
-    cleaned = re.sub(r"\n?```\s*$", "", cleaned, flags=re.MULTILINE)
-    cleaned = cleaned.strip()
+def _clean_subject(text: str) -> str:
+    """Strip trailing punctuation and leading articles/prepositions from a subject."""
+    cleaned = text.strip()
+    # Strip trailing punctuation
+    cleaned = re.sub(r"[?.!,;:]+$", "", cleaned).strip()
+    # Strip leading articles and prepositions
+    cleaned = re.sub(r"^(?:the|a|an|of|in|on|for|to|with)\s+", "", cleaned, flags=re.IGNORECASE).strip()
+    return cleaned
 
-    # Try direct JSON parse
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError:
-        pass
 
-    # Try to extract JSON object from surrounding text
-    match = re.search(r"\{[\s\S]*\}", cleaned)
-    if match:
-        try:
-            return json.loads(match.group(0))
-        except json.JSONDecodeError:
-            pass
+def detect_comparison(query: str) -> dict:
+    """Detect whether a query is comparative and extract subjects.
 
-    return None
+    Iterates through compiled regex patterns to identify comparative
+    queries (e.g., "X vs Y", "compare X and Y", "differences between X and Y").
+
+    Args:
+        query: The user's research query.
+
+    Returns:
+        dict with keys:
+            is_comparative (bool): Whether a comparison was detected.
+            subjects (list[str]): Extracted subjects (2 items if comparative, else empty).
+    """
+    if not query or not query.strip():
+        return {"is_comparative": False, "subjects": []}
+
+    for pattern in _COMPARISON_PATTERNS:
+        match = pattern.search(query)
+        if match:
+            subject_a = _clean_subject(match.group(1))
+            subject_b = _clean_subject(match.group(2))
+            if subject_a and subject_b:
+                logger.info("Comparative query detected: [%s] vs [%s]", subject_a, subject_b)
+                return {"is_comparative": True, "subjects": [subject_a, subject_b]}
+
+    return {"is_comparative": False, "subjects": []}
 
 
 def _passthrough(raw_query: str) -> dict:

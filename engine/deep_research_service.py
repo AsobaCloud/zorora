@@ -6,7 +6,7 @@ import logging
 import re
 import threading
 import time
-from datetime import datetime
+from datetime import date, datetime
 from typing import Callable, List, Optional
 
 import config
@@ -28,6 +28,43 @@ def _emit(progress_callback: Optional[ProgressCallback], phase: str, message: st
         progress_callback(status, phase, message)
 
 
+_PROSE_PREFIXES = re.compile(
+    r"^(this query|this is|this provides|this examines|this looks|"
+    r"these |it's important|it could|it may|it might|"
+    r"note:|here are|the above|the following|the goal|the aim|"
+    r"i would|let me|below|in summary|to summarize|however|"
+    r"for example|for instance)",
+    re.IGNORECASE,
+)
+_MD_STRIP = re.compile(
+    r"^\*\*|^\#{1,4}\s*|^__|"      # leading ** ## __
+    r"\*\*\s*$|__\s*$|"            # trailing ** __
+    r"^\d+\.\s+|"                  # numbered list "1. "
+    r"^[-*+]\s+"                   # bullet list "- "
+)
+
+
+def _clean_query_line(line: str) -> Optional[str]:
+    """Strip markdown formatting and reject prose/degenerate lines."""
+    cleaned = line.strip()
+    if not cleaned:
+        return None
+    prev = None
+    while prev != cleaned:
+        prev = cleaned
+        cleaned = _MD_STRIP.sub("", cleaned).strip()
+    cleaned = cleaned.rstrip(":")
+    if len(cleaned) < 10 or len(cleaned) > 150:
+        return None
+    if _PROSE_PREFIXES.match(cleaned):
+        return None
+    if " " not in cleaned:
+        return None
+    if len(cleaned.split()) < 4:
+        return None
+    return cleaned
+
+
 def _generate_query_variants(query: str, num_variants: int) -> List[str]:
     """
     Generate query variants via subtopic decomposition for broader search coverage.
@@ -44,6 +81,16 @@ def _generate_query_variants(query: str, num_variants: int) -> List[str]:
     Returns:
         List of query strings (first is always the original)
     """
+    # Comparative queries: generate subject-specific variants for balanced coverage
+    from engine.query_refiner import detect_comparison
+    comparison = detect_comparison(query)
+    if comparison["is_comparative"] and len(comparison["subjects"]) >= 2:
+        subjects = comparison["subjects"]
+        variants = [subjects[0], subjects[1]]
+        if num_variants >= 3:
+            variants.append(query)
+        return variants[:max(num_variants, 2)]
+
     if num_variants <= 1:
         return [query]
 
@@ -63,9 +110,13 @@ def _generate_query_variants(query: str, num_variants: int) -> List[str]:
             )
             result = use_reasoning(prompt)
             if result and not result.startswith("Error:"):
-                lines = [line.strip() for line in result.strip().split("\n") if line.strip()]
-                # Filter out lines that look like explanations rather than queries
-                lines = [ln for ln in lines if len(ln) > 5 and len(ln) < 300]
+                raw_lines = result.strip().split("\n")
+                lines = []
+                for raw in raw_lines:
+                    cleaned = _clean_query_line(raw)
+                    if cleaned:
+                        lines.append(cleaned)
+                logger.info(f"Query variants: {len(raw_lines)} raw lines -> {len(lines)} cleaned")
                 if lines:
                     # Take up to num_variants-1 decomposed queries (original is variant[0])
                     for line in lines[:num_variants - 1]:
@@ -112,7 +163,7 @@ def _cluster_findings(query: str, sources: List[Source]) -> List[Finding]:
     char_budget = 8000
     chars_used = 0
     for i, source in enumerate(sources, 1):
-        snippet = source.content_snippet or source.title or ""
+        snippet = source.content_full or source.content_snippet or source.title or ""
         line = f"{i}. {source.title or 'Untitled'}: {snippet[:300]}"
         if chars_used + len(line) > char_budget:
             break
@@ -131,20 +182,40 @@ def _cluster_findings(query: str, sources: List[Source]) -> List[Finding]:
         if not use_reasoning:
             return _fallback_findings(sources)
 
+        today = date.today().isoformat()
         prompt = (
+            f"Today's date is {today}.\n\n"
             f"Below are {n} sources about: {query}\n\n"
             f"{source_text}\n\n"
             f"Identify 8-15 distinct thematic findings. For each finding:\n"
             f"- Write a clear 1-2 sentence claim\n"
-            f"- List the source numbers that support it\n"
+            f"- List ONLY the 1-5 source numbers that DIRECTLY support the specific claim\n"
             f"- Rate confidence: high (3+ sources), medium (2 sources), low (1 source)\n\n"
+            f"IMPORTANT: Cite only the sources that contain evidence for each specific "
+            f"claim. Do NOT list all sources — most findings should cite 2-4 sources. "
+            f"A finding citing more than 5 sources is almost certainly wrong.\n\n"
+            f"Output ONLY in the exact format shown below. Do not write preamble, explanations, or summary paragraphs.\n\n"
             f"Format each as:\n"
             f"FINDING: <claim>\n"
             f"SOURCES: <comma-separated numbers>\n"
-            f"CONFIDENCE: <high|medium|low>\n"
+            f"CONFIDENCE: <high|medium|low>\n\n"
+            f"Example 1:\n"
+            f"FINDING: Renewable energy investment surged 30% in 2025, driven by policy incentives and falling costs.\n"
+            f"SOURCES: 1, 4, 7\n"
+            f"CONFIDENCE: high\n\n"
+            f"Example 2:\n"
+            f"FINDING: Water scarcity in the region may worsen due to upstream dam construction.\n"
+            f"SOURCES: 9\n"
+            f"CONFIDENCE: low\n\n"
+            f"IMPORTANT: Only extract claims directly stated in the sources above. "
+            f"Do NOT invent events, dates, or statistics not found in the provided text. "
+            f"Do not reference events after today's date as established fact.\n\n"
+            f"Now analyze the sources above:\n"
         )
         result = use_reasoning(prompt)
+        logger.debug(f"Clustering raw output (first 500 chars): {(result or '')[:500]}")
         if not result or result.startswith("Error:"):
+            logger.warning(f"Clustering model returned empty/error — falling back to 1:1 mapping for {len(sources)} sources")
             return _fallback_findings(sources)
 
         findings = _parse_clustered_findings(result, sources)
@@ -153,7 +224,7 @@ def _cluster_findings(query: str, sources: List[Source]) -> List[Finding]:
             return findings
 
     except Exception as e:
-        logger.debug(f"Finding clustering failed: {e}")
+        logger.warning(f"Finding clustering failed, falling back to 1:1 mapping: {e}")
 
     return _fallback_findings(sources)
 
@@ -189,6 +260,14 @@ def _parse_clustered_findings(text: str, sources: List[Source]) -> List[Finding]
         if not source_ids:
             continue
 
+        max_allowed = max(5, len(sources) // 2)
+        if len(source_ids) > max_allowed:
+            logger.warning(
+                f"Skipping degenerate finding citing {len(source_ids)}/{len(sources)} "
+                f"sources (max {max_allowed}): {claim[:80]}..."
+            )
+            continue
+
         confidence = confidence_match.group(1).lower() if confidence_match else "medium"
 
         # Compute average credibility from backing sources
@@ -207,6 +286,9 @@ def _parse_clustered_findings(text: str, sources: List[Source]) -> List[Finding]
             average_credibility=avg_cred,
         ))
 
+    if len(findings) > 15:
+        logger.info(f"Capping {len(findings)} parsed findings to 15")
+        findings = findings[:15]
     return findings
 
 
@@ -214,7 +296,7 @@ def _fallback_findings(sources: List[Source]) -> List[Finding]:
     """Fallback: 1:1 source-to-finding mapping (pre-SEP-006 behavior)."""
     findings = []
     for source in sources:
-        claim = source.content_snippet or source.title
+        claim = source.content_full or source.content_snippet or source.title
         if claim:
             findings.append(Finding(
                 claim=claim[:500],
@@ -242,8 +324,12 @@ def run_deep_research(
     depth: int = 1,
     max_results_per_source: int = 10,
     progress_callback: Optional[ProgressCallback] = None,
+    refined_query: Optional[str] = None,
 ) -> ResearchState:
     """Execute the shared deep-research pipeline and return populated state."""
+    # Use refined query for search/analysis when available
+    search_query = refined_query or query
+
     # Look up depth profile
     profile = config.DEPTH_PROFILES.get(depth, config.DEPTH_PROFILES[1])
     effective_max_per_source = profile["max_results_per_source"]
@@ -251,7 +337,7 @@ def run_deep_research(
     num_variants = profile["query_variants"]
 
     # Generate query variants
-    variants = _generate_query_variants(query, num_variants)
+    variants = _generate_query_variants(search_query, num_variants)
     logger.info(f"Deep research depth={depth}: {len(variants)} query variant(s)")
 
     _emit(progress_callback, "aggregation", f"Searching with {len(variants)} query variant(s) (depth {depth})...")
@@ -272,7 +358,7 @@ def run_deep_research(
 
     _emit(progress_callback, "credibility", f"Found {len(unique_sources)} sources. Scoring credibility...")
 
-    state = ResearchState(original_query=query, max_depth=depth, max_iterations=1)
+    state = ResearchState(original_query=query, refined_query=refined_query, max_depth=depth, max_iterations=1)
 
     for i, source in enumerate(unique_sources):
         cross_ref_count = 1
@@ -318,7 +404,7 @@ def run_deep_research(
 
     # Rerank by relevance to original query
     _emit(progress_callback, "relevance", "Scoring source relevance...")
-    scored_sources = score_relevance(query, list(state.sources_checked))
+    scored_sources = score_relevance(search_query, list(state.sources_checked))
 
     # Enforce source budget from depth profile
     max_sources = profile.get("max_sources", 25)
@@ -336,7 +422,7 @@ def run_deep_research(
     # Cap clustering input — 7B model produces structured output reliably
     # with ≤25 sources (each gets ~320 chars in 8000-char budget)
     clustering_sources = state.sources_checked[:25]
-    state.findings = _cluster_findings(query, clustering_sources)
+    state.findings = _cluster_findings(search_query, clustering_sources)
 
     _emit(
         progress_callback,
@@ -386,6 +472,7 @@ def build_results_payload(state: ResearchState, query: str, research_id: Optiona
     return {
         "research_id": research_id,
         "query": query,
+        "refined_query": state.refined_query,
         "synthesis": state.synthesis,
         "total_sources": state.total_sources,
         "findings_count": len(state.findings),
