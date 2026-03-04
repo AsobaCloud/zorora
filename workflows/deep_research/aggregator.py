@@ -25,7 +25,9 @@ def parse_newsroom_results(articles: List[Dict[str, Any]], query: str) -> List[S
         # Relevance gate: at least one keyword must appear in title or tags
         if keywords:
             haystack = f"{article.get('headline', '')} {' '.join(str(t) for t in article.get('topic_tags', []))}".lower()
-            if not any(kw in haystack for kw in keywords):
+            matched = sum(1 for kw in keywords if kw in haystack)
+            min_required = 2 if len(keywords) >= 3 else 1
+            if matched < min_required:
                 continue
         url = article.get("url", "")
         title = article.get("headline", "No title")

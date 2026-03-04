@@ -20,8 +20,8 @@ BASE_CREDIBILITY = {
     "doi:": {"score": 0.65, "reason": "Has DOI (may be peer-reviewed)"},
 
     # Tier 3: Government (0.75-0.85)
-    ".gov": {"score": 0.85, "reason": "Government source"},
-    ".edu": {"score": 0.75, "reason": "Educational institution"},
+    ".gov": {"score": 0.65, "reason": "Government source"},
+    ".edu": {"score": 0.60, "reason": "Educational institution"},
     "europa.eu": {"score": 0.80, "reason": "European Union"},
     "un.org": {"score": 0.80, "reason": "United Nations"},
 
@@ -138,7 +138,7 @@ def score_source_credibility(
                 base_reason = domain
             else:
                 base_reason = source_title[:50]  # Truncate long titles
-        except:
+        except Exception:
             base_reason = source_title[:50] if source_title else "Unknown source"
 
     # Step 2: Check predatory publishers (override)

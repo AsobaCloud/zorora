@@ -219,7 +219,7 @@ def _generate_query_variants(query: str, num_variants: int) -> List[str]:
             prompt = (
                 f"Decompose this research query into {num_variants} distinct sub-topic "
                 f"search queries. Each should target a different angle or dimension "
-                f"(e.g., economic, political, security, humanitarian, diplomatic). "
+                f"(e.g., supply chain, market trends, data analysis, regional impact). "
                 f"Return ONLY the queries, one per line, no numbering or explanation.\n\n"
                 f"Query: {query}"
             )
@@ -245,9 +245,8 @@ def _generate_query_variants(query: str, num_variants: int) -> List[str]:
     question_words = r"^(what|why|how|when|where|who|is|are|do|does|did|can|could|should|will|would)\s+"
     stripped = re.sub(question_words, "", query, flags=re.IGNORECASE).strip()
     fallback_suffixes = [
-        "economic impact analysis trends",
-        "political implications challenges outlook",
-        "social humanitarian effects consequences",
+        "recent developments data analysis",
+        "market trends supply demand outlook",
     ]
     while len(variants) < num_variants and (len(variants) - 1) < len(fallback_suffixes):
         idx = len(variants) - 1

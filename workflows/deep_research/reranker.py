@@ -120,7 +120,7 @@ def score_relevance(query: str, sources: List[Source]) -> List[Source]:
     return sources
 
 
-def filter_relevant(sources: List[Source], min_score: float = 0.15,
+def filter_relevant(sources: List[Source], min_score: float = 0.40,
                     max_sources: int = 60) -> List[Source]:
     """Filter to sources above minimum relevance, capped at max_sources.
 
@@ -128,10 +128,10 @@ def filter_relevant(sources: List[Source], min_score: float = 0.15,
     dropped. Remaining sources are capped at max_sources, sorted by
     relevance descending.
     """
-    relevant = [s for s in sources if s.relevance_score > min_score]
-    # If filtering removes everything, keep top-K by relevance anyway
+    relevant = [s for s in sources if s.relevance_score >= min_score]
+    # If filtering removes everything, keep only top 5 by score (not all)
     if not relevant and sources:
-        relevant = sorted(sources, key=lambda s: s.relevance_score, reverse=True)
+        relevant = sorted(sources, key=lambda s: s.relevance_score, reverse=True)[:5]
     return relevant[:max_sources]
 
 
