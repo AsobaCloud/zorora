@@ -11,6 +11,7 @@ import warnings
 
 import requests
 import config
+from engine.models import Source
 
 logger = logging.getLogger(__name__)
 
@@ -378,27 +379,30 @@ def _check_scihub_availability(doi: Optional[str] = None, title: Optional[str] =
     return None
 
 
-def academic_search(query: str, max_results: int = 10) -> str:
+def academic_search_sources(query: str, max_results: int = 10) -> List[Source]:
     """
-    Search multiple academic sources and check Sci-Hub for full-text access.
-    
+    Search multiple academic sources and return structured Source objects.
+
+    Runs the same parallel search + Sci-Hub check + dedup pipeline as
+    academic_search(), but returns List[Source] instead of a formatted string.
+
     Args:
         query: Search query
         max_results: Maximum number of results to return
-        
+
     Returns:
-        Formatted academic search results with citations and full-text indicators
+        List of Source objects with structured data preserved
     """
-    logger.info(f"Academic search: {query[:100]}...")
-    
+    logger.info(f"Academic search (structured): {query[:100]}...")
+
     # Get config with defaults
     academic_config = getattr(config, 'ACADEMIC_SEARCH', {})
     academic_max = academic_config.get("default_max_results", 10)
     max_results = min(max_results, academic_max)
-    
+
     # Search all sources in parallel
     all_results = []
-    
+
     try:
         with ThreadPoolExecutor(max_workers=7) as executor:
             futures = {
@@ -410,17 +414,16 @@ def academic_search(query: str, max_results: int = 10) -> str:
                 executor.submit(_medrxiv_search_raw, query, max_results // 6): "medRxiv",
                 executor.submit(_pmc_search_raw, query, max_results // 4): "PMC"
             }
-            
+
             for future in as_completed(futures):
                 source = futures[future]
                 try:
-                    results = future.result(timeout=None)  # Allow interrupt during wait
+                    results = future.result(timeout=None)
                     if results:
                         all_results.extend(results)
                         logger.info(f"Academic search: {source} returned {len(results)} results")
                 except KeyboardInterrupt:
-                    # Cancel remaining futures and re-raise
-                    logger.info(f"Academic search interrupted, cancelling remaining searches...")
+                    logger.info("Academic search interrupted, cancelling remaining searches...")
                     for f in futures:
                         f.cancel()
                     raise
@@ -429,39 +432,36 @@ def academic_search(query: str, max_results: int = 10) -> str:
     except KeyboardInterrupt:
         logger.info("Academic search interrupted by user")
         raise
-    
+
     if not all_results:
-        return f"No academic results found for: {query}\n\nTry:\n- Using more specific keywords\n- Checking spelling\n- Using academic terminology"
-    
+        return []
+
     # Check Sci-Hub for full-text access in parallel
     logger.info(f"Checking Sci-Hub availability for {len(all_results)} papers...")
-    
+
     def check_scihub_for_result(result):
         """Helper function to check Sci-Hub for a single result."""
         doi = result.get("doi")
         title = result.get("title")
-        
+
         if doi or title:
             scihub_url = _check_scihub_availability(doi=doi, title=title)
             if scihub_url:
                 result["scihub_url"] = scihub_url
                 result["full_text_available"] = True
-                # Update description to indicate full text
                 desc = result.get("description", "")
                 if "[Full Text Available]" not in desc:
                     result["description"] = f"{desc} [Full Text Available]"
         return result
-    
-    # Check Sci-Hub in parallel (up to 10 concurrent checks)
+
     if all_results:
         try:
             with ThreadPoolExecutor(max_workers=min(10, len(all_results))) as executor:
                 futures = [executor.submit(check_scihub_for_result, result) for result in all_results]
                 for future in as_completed(futures):
                     try:
-                        future.result(timeout=None)  # Allow interrupt during wait
+                        future.result(timeout=None)
                     except KeyboardInterrupt:
-                        # Cancel remaining futures and re-raise
                         logger.info("Sci-Hub checking interrupted, cancelling remaining checks...")
                         for f in futures:
                             f.cancel()
@@ -469,7 +469,7 @@ def academic_search(query: str, max_results: int = 10) -> str:
         except KeyboardInterrupt:
             logger.info("Sci-Hub checking interrupted by user")
             raise
-    
+
     # Deduplicate by title/DOI
     seen = set()
     unique_results = []
@@ -478,45 +478,82 @@ def academic_search(query: str, max_results: int = 10) -> str:
         if key and key not in seen:
             seen.add(key)
             unique_results.append(result)
-    
+
     # Limit results
     unique_results = unique_results[:max_results]
-    
-    # Format results
-    formatted = [f"Academic search results for: {query}\n"]
-    
-    for i, result in enumerate(unique_results, 1):
-        title = result.get("title", "No title")
+
+    # Convert to Source objects
+    sources = []
+    tag_pattern = re.compile(r'^\[(Scholar|CORE|PubMed|arXiv|bioRxiv|medRxiv|PMC)\]\s*')
+
+    for result in unique_results:
         url = result.get("url", "")
+        doi = result.get("doi")
+        title = result.get("title", "No title")
+
+        # Construct URL from DOI if no direct URL
+        if not url and doi:
+            url = f"https://doi.org/{doi}"
+
+        # Generate source_id from best available identifier
+        id_key = url or (f"https://doi.org/{doi}" if doi else title)
+        source_id = Source.generate_id(id_key)
+
+        # Strip source tags from description (formatting artifacts)
         description = result.get("description", "")
-        
-        formatted.append(f"\n{i}. {title}")
-        if url:
-            formatted.append(f"   URL: {url}")
-        
-        # Add DOI if available
-        if result.get("doi"):
-            formatted.append(f"   DOI: {result['doi']}")
-        
+        description = tag_pattern.sub('', description).strip()
+        description = description.replace("[Full Text Available]", "").strip()
+
+        source = Source(
+            source_id=source_id,
+            url=url,
+            title=title,
+            source_type="academic",
+            content_snippet=description,
+            cited_by_count=result.get("citation_count", 0) or 0,
+            publication_date=str(result.get("year", "")) if result.get("year") else ""
+        )
+        sources.append(source)
+
+    return sources
+
+
+def academic_search(query: str, max_results: int = 10) -> str:
+    """
+    Search multiple academic sources and check Sci-Hub for full-text access.
+
+    Args:
+        query: Search query
+        max_results: Maximum number of results to return
+
+    Returns:
+        Formatted academic search results with citations and full-text indicators
+    """
+    sources = academic_search_sources(query, max_results)
+
+    if not sources:
+        return f"No academic results found for: {query}\n\nTry:\n- Using more specific keywords\n- Checking spelling\n- Using academic terminology"
+
+    # Format results from Source objects
+    formatted = [f"Academic search results for: {query}\n"]
+
+    for i, source in enumerate(sources, 1):
+        formatted.append(f"\n{i}. {source.title}")
+        if source.url:
+            formatted.append(f"   URL: {source.url}")
+
         # Add year and citations if available
         meta_parts = []
-        if result.get("year"):
-            meta_parts.append(f"Year: {result['year']}")
-        if result.get("citation_count") is not None:
-            meta_parts.append(f"Citations: {result['citation_count']}")
+        if source.publication_date:
+            meta_parts.append(f"Year: {source.publication_date}")
+        if source.cited_by_count:
+            meta_parts.append(f"Citations: {source.cited_by_count}")
         if meta_parts:
             formatted.append(f"   {' | '.join(meta_parts)}")
-        
-        # Add Sci-Hub link if available
-        if result.get("scihub_url"):
-            formatted.append(f"   [Full Text] Sci-Hub: {result['scihub_url']}")
-        
-        formatted.append(f"   {description}")
-    
-    # Add summary
-    full_text_count = sum(1 for r in unique_results if r.get("full_text_available"))
-    formatted.append(f"\n\nSummary: Found {len(unique_results)} papers")
-    if full_text_count > 0:
-        formatted.append(f" ({full_text_count} with full-text access via Sci-Hub)")
-    
+
+        if source.content_snippet:
+            formatted.append(f"   {source.content_snippet}")
+
+    formatted.append(f"\n\nSummary: Found {len(sources)} papers")
+
     return "\n".join(formatted)

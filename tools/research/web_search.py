@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 import requests
 import config
+from engine.models import Source
 
 # Import shared functions from academic_search
 from tools.research.academic_search import (
@@ -380,6 +381,143 @@ Provide a clear, well-structured answer that combines information from multiple 
     except Exception as e:
         logger.error(f"Synthesis failed: {e}")
         return f"Error: Failed to synthesize results: {e}"
+
+
+def web_search_sources(query: str, max_results: int = 5) -> List[Source]:
+    """
+    Search the web and return structured Source objects.
+
+    Simplified pipeline for the deep research workflow: raw search + academic
+    merge + dedup/processing. Intentionally omits LLM-tool-specific features
+    (caching, query optimization, intent routing, synthesis, content extraction)
+    since those are for the interactive tool, not the pipeline.
+
+    Args:
+        query: Search query
+        max_results: Maximum number of results to return
+
+    Returns:
+        List of Source objects with structured data preserved
+    """
+    if not query or not isinstance(query, str):
+        return []
+
+    # Clean meta-language from query (reuse existing regex cleaning block)
+    query = query.strip()
+
+    meta_prefixes = [
+        r'^(let\'?s\s+)?(do\s+a\s+)?(web\s+)?search\s+(for|to|about|on)\s+',
+        r'^(can\s+you\s+)?(please\s+)?(search\s+for|look\s+up|find\s+information\s+about)\s+',
+        r'^(i\s+want\s+to\s+)?(search|find|look\s+up)\s+(for|about|on)\s+',
+        r'^(help\s+me\s+)?(understand|learn|find\s+out)\s+(about|more\s+about)\s+',
+    ]
+    for pattern in meta_prefixes:
+        query = re.sub(pattern, '', query, flags=re.IGNORECASE).strip()
+
+    query = re.sub(r'\s+and\s+what\s+it\s+means\s+', ' ', query, flags=re.IGNORECASE).strip()
+
+    meta_suffixes = [
+        r'\s+what\s+does\s+this\s+mean.*$',
+        r'\s+what\s+is\s+the\s+context.*$',
+        r'\s+to\s+better\s+understand.*$',
+        r'\s+to\s+understand.*$',
+    ]
+    for pattern in meta_suffixes:
+        query = re.sub(pattern, '', query, flags=re.IGNORECASE).strip()
+
+    query = re.sub(r'\b(better\s+)?understand\s+(the\s+)?context\s+around\s+', '', query, flags=re.IGNORECASE).strip()
+    query = re.sub(r'\bthe\s+context\s+(behind|around|for|of)\s+', '', query, flags=re.IGNORECASE).strip()
+    query = re.sub(r'^(behind|about|regarding)\s+', '', query, flags=re.IGNORECASE).strip()
+
+    if not query:
+        return []
+
+    # Get raw web results
+    parallel_enabled = config.WEB_SEARCH.get("parallel_enabled", False)
+    brave_available = config.BRAVE_SEARCH.get("enabled") and config.BRAVE_SEARCH.get("api_key")
+    academic_max_results = config.WEB_SEARCH.get("academic_max_results", 3)
+
+    raw_results = None
+
+    if parallel_enabled and brave_available:
+        raw_results = _parallel_search_raw(query, max_results)
+    else:
+        if brave_available:
+            try:
+                raw_results = _brave_search_raw(query, max_results)
+            except Exception as e:
+                logger.warning(f"Brave Search failed: {e}, falling back to DuckDuckGo")
+
+        if raw_results is None:
+            try:
+                raw_results = _duckduckgo_search_raw(query, max_results)
+            except Exception as e:
+                logger.error(f"DuckDuckGo search failed: {e}")
+                return []
+
+    # Merge academic results
+    academic_results = []
+    try:
+        scholar_results = _scholar_search_raw(query, academic_max_results)
+        if scholar_results:
+            academic_results.extend(scholar_results)
+    except Exception as e:
+        logger.warning(f"Scholar search failed: {e}")
+
+    try:
+        pubmed_results = _pubmed_search_raw(query, academic_max_results)
+        if pubmed_results:
+            academic_results.extend(pubmed_results)
+    except Exception as e:
+        logger.warning(f"PubMed search failed: {e}")
+
+    if academic_results:
+        if raw_results:
+            raw_results = raw_results + academic_results
+        else:
+            raw_results = academic_results
+
+    if not raw_results:
+        return []
+
+    # Process/dedup via ResultProcessor
+    try:
+        from tools.utils._result_processor import ResultProcessor
+        processor = ResultProcessor(
+            max_domain_results=config.WEB_SEARCH.get("max_domain_results", 2)
+        )
+        processed_results = processor.process_results(raw_results, query)
+        processed_results = processed_results[:max_results]
+    except ImportError:
+        processed_results = raw_results[:max_results]
+    except Exception as e:
+        logger.warning(f"Result processing failed: {e}, using raw results")
+        processed_results = raw_results[:max_results]
+
+    # Convert to Source objects
+    sources = []
+    for result in processed_results:
+        url = result.get("url", "")
+        title = result.get("title", "No title")
+
+        id_key = url or title
+        source_id = Source.generate_id(id_key)
+
+        description = result.get("description", "")
+
+        pub_date = result.get("published_date", "") or result.get("age", "") or ""
+
+        source = Source(
+            source_id=source_id,
+            url=url,
+            title=title,
+            source_type="web",
+            content_snippet=description,
+            publication_date=str(pub_date) if pub_date else ""
+        )
+        sources.append(source)
+
+    return sources
 
 
 def web_search(query: str, max_results: int = 5) -> str:
