@@ -9,6 +9,20 @@ Zorora is a local-first deep research and analysis tool for policy, market, and 
 
 ![Zorora Web UI](docs/ui.png)
 
+## Features
+
+- **Deep research** — multi-source aggregation (academic, web, newsroom) with multi-stage synthesis (outline → per-section expansion), relevance scoring with stemming, cross-reference detection, and freshness signals
+- **Comparative queries** — auto-detects "X vs Y" queries and generates dimension-based comparison tables
+- **Source quality** — credibility scoring, cross-reference detection, and full article content extraction for grounded analysis
+- **Data analysis** — sandboxed Python execution with pandas, numpy, and matplotlib for structured dataset workflows
+- **Multi-provider LLM** — local models via LM Studio, plus HuggingFace, OpenAI, and Anthropic adapters
+- **Dual interfaces** — terminal REPL with Rich UI and web UI with two-column research layout and persistent history sidebar
+- **Follow-up chat** — conversational follow-ups grounded in source content snippets
+
+## Configuration
+
+Research depth profiles, model budgets, and synthesis settings are configured in `config.py`. See the [full documentation](https://code.asoba.co) for details.
+
 ## Get Started
 
 For detailed setup instructions, see the [setup documentation](https://code.asoba.co).
