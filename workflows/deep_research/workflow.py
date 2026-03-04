@@ -7,6 +7,7 @@ import config
 from engine.models import ResearchState, Finding
 from workflows.deep_research.aggregator import aggregate_sources
 from workflows.deep_research.credibility import score_source_credibility
+from workflows.deep_research.reranker import _count_cross_references
 from workflows.deep_research.synthesizer import synthesize
 from engine.deep_research_service import _generate_query_variants, _deduplicate_sources
 
@@ -84,15 +85,8 @@ class DeepResearchWorkflow:
         # Phase 2: Credibility Scoring
         logger.info("Phase 2: Scoring credibility...")
         for source in unique_sources:
-            # Calculate cross-reference count (how many sources mention similar topics)
-            # Simplified: count sources with similar titles/content
-            cross_ref_count = 1
-            for other_source in unique_sources:
-                if other_source.source_id != source.source_id:
-                    # Simple similarity check (in real impl, use embeddings)
-                    if source.title.lower() in other_source.title.lower() or \
-                       other_source.title.lower() in source.title.lower():
-                        cross_ref_count += 1
+            # Calculate cross-reference count via stemmed keyword overlap
+            cross_ref_count = _count_cross_references(source, unique_sources)
             
             cred_result = score_source_credibility(
                 url=source.url or source.title,
@@ -129,7 +123,7 @@ class DeepResearchWorkflow:
         logger.info("Phase 3: Cross-referencing...")
         for source in state.sources_checked:
             # Create finding from source content
-            claim = source.content_snippet or source.title
+            claim = source.content_full or source.content_snippet or source.title
             if claim:
                 finding = Finding(
                     claim=claim[:500],  # Truncate long claims

@@ -13,7 +13,7 @@ import config
 from engine.models import ResearchState, Source, Finding
 from workflows.deep_research.aggregator import aggregate_sources
 from workflows.deep_research.credibility import score_source_credibility
-from workflows.deep_research.reranker import score_relevance, filter_relevant
+from workflows.deep_research.reranker import score_relevance, filter_relevant, _count_cross_references
 from workflows.deep_research.synthesizer import synthesize
 
 
@@ -478,11 +478,7 @@ def run_deep_research(
     state = ResearchState(original_query=query, refined_query=refined_query, max_depth=depth, max_iterations=1)
 
     for i, source in enumerate(unique_sources):
-        cross_ref_count = 1
-        for other_source in unique_sources:
-            if other_source.source_id != source.source_id:
-                if source.title.lower() in other_source.title.lower() or other_source.title.lower() in source.title.lower():
-                    cross_ref_count += 1
+        cross_ref_count = _count_cross_references(source, unique_sources)
 
         if not source.title or source.title.strip() == "":
             source.title = source.url if source.url else f"Source {i + 1}"
