@@ -46,6 +46,9 @@ from tools.image import analyze_image, generate_image, web_image_search
 from tools.data_analysis.execute import execute_analysis
 from tools.data_analysis.nehanda_local import nehanda_query
 
+# Import market data tools (from modules)
+from tools.market.tool import get_market_summary
+
 # Tool function mapping
 TOOL_FUNCTIONS: Dict[str, Callable[..., str]] = {
     # Research tools
@@ -76,6 +79,8 @@ TOOL_FUNCTIONS: Dict[str, Callable[..., str]] = {
     # Data analysis tools
     "execute_analysis": execute_analysis,
     "nehanda_query": nehanda_query,
+    # Market data tools
+    "get_market_data": get_market_summary,
     # Convenience aliases
     "use_codestral": use_coding_agent,
     "search": use_search_model,
@@ -450,6 +455,26 @@ TOOLS_DEFINITION: List[DictType[str, Any]] = [
                     }
                 },
                 "required": ["query"]
+            }
+        }
+    },
+    # Market data tools
+    {
+        "type": "function",
+        "function": {
+            "name": "get_market_data",
+            "description": "Get current market data and trend summary from FRED and yfinance. Covers commodities (oil, gold, gas), US treasuries (2Y-30Y), FX rates (EUR, GBP, CNY, ZAR), fed funds rate, renewable metals (copper, silver, platinum, palladium, aluminum, iron ore, steel), and ETF proxies (lithium, uranium, rare earth miners).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "group": {
+                        "type": "string",
+                        "description": "Data group to retrieve: 'commodities', 'treasuries', 'fx', 'rates', 'metals', 'etf_proxies', or 'all' (default: 'all')",
+                        "enum": ["commodities", "treasuries", "fx", "rates", "metals", "etf_proxies", "all"],
+                        "default": "all"
+                    }
+                },
+                "required": []
             }
         }
     },

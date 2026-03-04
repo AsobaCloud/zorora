@@ -321,6 +321,60 @@ class REPLCommandProcessor:
 
             return (result, execution_time) if result else None
 
+        # /market [subcommand] [--force]
+        elif cmd_lower.startswith("/market"):
+            import time
+            start_time = time.time()
+
+            args = command[7:].strip()
+            parts = args.split() if args else []
+
+            force_update = "--force" in parts
+            parts = [p for p in parts if p != "--force"]
+            subcommand = parts[0] if parts else "dashboard"
+
+            valid_groups = {"commodities", "treasuries", "fx", "rates", "metals", "etf_proxies"}
+            group = None
+
+            if subcommand in valid_groups:
+                group = subcommand
+                subcommand = "dashboard"
+            elif subcommand == "update":
+                # /market update [group]
+                if len(parts) > 1 and parts[1] in valid_groups:
+                    group = parts[1]
+            elif subcommand != "dashboard":
+                self.repl.ui.console.print("[red]Usage: /market [commodities|treasuries|fx|rates|metals|etf_proxies|update] [--force][/red]")
+                return None
+
+            self.repl.ui.console.print(f"[cyan]{'Updating' if subcommand == 'update' else 'Generating'} market data{' for ' + group if group else ''}...[/cyan]")
+
+            from workflows.market_workflow import MarketWorkflow
+            workflow = MarketWorkflow()
+            analysis, chart_paths = workflow.execute(
+                subcommand=subcommand,
+                group=group,
+                force_update=force_update,
+            )
+
+            execution_time = time.time() - start_time
+
+            # Display charts inline if available
+            for path in chart_paths:
+                try:
+                    if hasattr(self.repl.ui, 'display_image'):
+                        self.repl.ui.display_image(path)
+                    else:
+                        self.repl.ui.console.print(f"[dim]Chart: {path}[/dim]")
+                except Exception:
+                    self.repl.ui.console.print(f"[dim]Chart: {path}[/dim]")
+
+            if analysis:
+                self.repl.ui.console.print(analysis)
+                self.repl.conversation.add_assistant_message(content=analysis)
+
+            return (analysis, execution_time) if analysis else None
+
         return None
 
     def handle_slash_command(self, command: str):
@@ -403,6 +457,7 @@ class REPLCommandProcessor:
   [cyan]/vision <path> [task][/cyan]   - Analyze image with vision model
   [cyan]/develop <request>[/cyan]      - Multi-step code development (explore, plan, execute, lint)
   [cyan]/digest <days> [topic][/cyan] - Generate news trend digest by continent
+  [cyan]/market [subcommand][/cyan]    - Market data dashboard (commodities|treasuries|fx|rates|metals|etf_proxies|update)
 
 [bold cyan]System Commands:[/bold cyan]
 
