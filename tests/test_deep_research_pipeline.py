@@ -1,15 +1,17 @@
-"""Tests for deep research pipeline bugs (SEP-022).
+"""Tests for deep research pipeline bugs (SEP-022, SEP-023).
 
 Covers: reranker threshold/fallback, credibility scoring, newsroom AND-gate,
-query decomposition suffixes, Brave endpoint config, and validation hook.
+query decomposition suffixes, Brave endpoint config, validation hook,
+variant keyword union scoring, and funnel logging.
 """
 
 import os
 import subprocess
 import unittest
+from unittest.mock import patch, MagicMock
 
 from engine.models import Source
-from workflows.deep_research.reranker import filter_relevant
+from workflows.deep_research.reranker import score_relevance, filter_relevant
 from workflows.deep_research.credibility import BASE_CREDIBILITY
 
 
@@ -206,6 +208,483 @@ class TestRecordValidationScript(unittest.TestCase):
             # validate_pending should exist
             pending_path = os.path.join(tmpdir, "validate_pending")
             self.assertTrue(os.path.exists(pending_path), "validate_pending marker should be created")
+
+
+# ---------------------------------------------------------------------------
+# SEP-023 — Variant keyword union scoring
+# ---------------------------------------------------------------------------
+class TestVariantKeywordUnion(unittest.TestCase):
+    def test_score_relevance_with_extra_keywords(self):
+        """Source matching only variant keywords must get relevance_score > 0."""
+        # "market supply" appears in snippet but NOT in original query keywords
+        s = _make_source("Lithium market supply chain overview",
+                         snippet="market supply demand analysis",
+                         relevance=0.0,
+                         url="https://example.com/variant-match")
+        result = score_relevance("lithium price trends Zimbabwe mining",
+                                 [s],
+                                 extra_keywords=["market", "supply", "demand", "outlook"])
+        self.assertGreater(result[0].relevance_score, 0.0)
+
+    def test_extra_keywords_expand_denominator(self):
+        """3 original + 3 extra (no overlap): matching 3/6 should score 0.50."""
+        # Original query keywords (stemmed): "alpha", "beta", "gamma"
+        # Extra keywords: "delta", "epsilon", "zeta"
+        # Source matches: "alpha", "delta", "epsilon" → 3/6 = 0.50
+        s = _make_source("alpha delta epsilon content",
+                         snippet="alpha delta epsilon text",
+                         relevance=0.0,
+                         url="https://example.com/denom-test")
+        result = score_relevance("alpha beta gamma",
+                                 [s],
+                                 extra_keywords=["delta", "epsilon", "zeta"])
+        self.assertAlmostEqual(result[0].relevance_score, 3.0 / 6.0, places=2)
+
+    def test_no_extra_keywords_unchanged(self):
+        """Calling without extra_keywords must behave identically to before."""
+        s = _make_source("lithium price trends in mining",
+                         snippet="lithium mining price data",
+                         relevance=0.0,
+                         url="https://example.com/no-extra")
+        result = score_relevance("lithium price trends Zimbabwe mining", [s])
+        # Should score based on original keywords only — regression guard
+        self.assertGreater(result[0].relevance_score, 0.0)
+
+
+# ---------------------------------------------------------------------------
+# SEP-023 — Funnel diagnostic logging
+# ---------------------------------------------------------------------------
+class TestFunnelLogging(unittest.TestCase):
+    @patch("engine.deep_research_service.synthesize")
+    @patch("engine.deep_research_service._cluster_findings")
+    @patch("engine.deep_research_service.filter_relevant")
+    @patch("engine.deep_research_service.score_relevance")
+    @patch("engine.deep_research_service.score_source_credibility")
+    @patch("engine.deep_research_service._count_cross_references", return_value=1)
+    @patch("engine.deep_research_service.aggregate_sources")
+    def test_funnel_logs_emitted(self, mock_agg, mock_xref, mock_cred,
+                                  mock_score, mock_filter, mock_cluster,
+                                  mock_synth):
+        """Pipeline must emit INFO logs containing 'Funnel:' at each stage."""
+        from engine.deep_research_service import run_deep_research
+
+        # Setup mocks
+        src1 = _make_source("Source 1", relevance=0.5, url="https://ex.com/1")
+        src2 = _make_source("Source 2", relevance=0.6, url="https://ex.com/2")
+        mock_agg.return_value = [src1, src2]
+        mock_cred.return_value = {"score": 0.6, "category": "Standard"}
+        mock_score.return_value = [src1, src2]
+        mock_filter.return_value = [src1, src2]
+        mock_cluster.return_value = []
+        mock_synth.return_value = "Test synthesis"
+
+        with self.assertLogs("engine.deep_research_service", level="INFO") as cm:
+            run_deep_research("test query", depth=1)
+
+        funnel_logs = [line for line in cm.output if "Funnel:" in line]
+        self.assertGreaterEqual(len(funnel_logs), 3,
+                                f"Expected ≥3 Funnel: log lines, got {len(funnel_logs)}: {funnel_logs}")
+
+
+# ---------------------------------------------------------------------------
+# SEP-026 — Per-intent pipeline for compound queries
+# ---------------------------------------------------------------------------
+class TestPerIntentPipeline(unittest.TestCase):
+    @patch("engine.deep_research_service.synthesize")
+    @patch("engine.deep_research_service._cluster_findings")
+    @patch("engine.deep_research_service.filter_relevant")
+    @patch("engine.deep_research_service.score_relevance")
+    @patch("engine.deep_research_service.score_source_credibility")
+    @patch("engine.deep_research_service._count_cross_references", return_value=1)
+    @patch("engine.deep_research_service.aggregate_sources")
+    @patch("engine.deep_research_service.decompose_query")
+    def test_compound_query_per_intent_scoring(self, mock_decompose, mock_agg,
+                                                mock_xref, mock_cred,
+                                                mock_score, mock_filter,
+                                                mock_cluster, mock_synth):
+        """Compound query: score_relevance called once per intent with intent query."""
+        from engine.deep_research_service import run_deep_research
+        from engine.query_decomposer import SearchIntent
+
+        mock_decompose.return_value = [
+            SearchIntent(intent_query="lithium price trends", parent_query="compound", is_primary=True),
+            SearchIntent(intent_query="Zimbabwe mining impact on lithium", parent_query="compound", is_primary=False),
+        ]
+        src1 = _make_source("Lithium prices", relevance=0.5, url="https://ex.com/1")
+        _make_source("Zimbabwe mining", relevance=0.6, url="https://ex.com/2")
+        mock_agg.return_value = [src1]
+        mock_cred.return_value = {"score": 0.6, "category": "Standard"}
+        mock_score.side_effect = lambda q, srcs, **kw: srcs
+        mock_filter.side_effect = lambda srcs, **kw: srcs
+        mock_cluster.return_value = []
+        mock_synth.return_value = "Test synthesis"
+
+        run_deep_research("compound query", depth=1)
+
+        # score_relevance must be called twice — once per intent
+        self.assertEqual(mock_score.call_count, 2)
+        # First call with first intent query
+        self.assertEqual(mock_score.call_args_list[0][0][0], "lithium price trends")
+        # Second call with second intent query
+        self.assertEqual(mock_score.call_args_list[1][0][0], "Zimbabwe mining impact on lithium")
+
+    @patch("engine.deep_research_service.synthesize")
+    @patch("engine.deep_research_service._cluster_findings")
+    @patch("engine.deep_research_service.filter_relevant")
+    @patch("engine.deep_research_service.score_relevance")
+    @patch("engine.deep_research_service.score_source_credibility")
+    @patch("engine.deep_research_service._count_cross_references", return_value=1)
+    @patch("engine.deep_research_service.aggregate_sources")
+    @patch("engine.deep_research_service.decompose_query")
+    def test_single_intent_uses_existing_path(self, mock_decompose, mock_agg,
+                                               mock_xref, mock_cred,
+                                               mock_score, mock_filter,
+                                               mock_cluster, mock_synth):
+        """Single intent: existing variant generation path used, score_relevance called once."""
+        from engine.deep_research_service import run_deep_research
+        from engine.query_decomposer import SearchIntent
+
+        mock_decompose.return_value = [
+            SearchIntent(intent_query="lithium price trends", parent_query="lithium price trends", is_primary=True),
+        ]
+        src1 = _make_source("Lithium prices", relevance=0.5, url="https://ex.com/1")
+        mock_agg.return_value = [src1]
+        mock_cred.return_value = {"score": 0.6, "category": "Standard"}
+        mock_score.return_value = [src1]
+        mock_filter.return_value = [src1]
+        mock_cluster.return_value = []
+        mock_synth.return_value = "Test synthesis"
+
+        run_deep_research("lithium price trends", depth=1)
+
+        # Single intent — score_relevance called once with original query
+        self.assertEqual(mock_score.call_count, 1)
+
+
+# ---------------------------------------------------------------------------
+# SEP-027 — Research type passthrough
+# ---------------------------------------------------------------------------
+class TestResearchTypePassthrough(unittest.TestCase):
+    @patch("engine.deep_research_service.synthesize")
+    @patch("engine.deep_research_service._cluster_findings")
+    @patch("engine.deep_research_service.filter_relevant")
+    @patch("engine.deep_research_service.score_relevance")
+    @patch("engine.deep_research_service.score_source_credibility")
+    @patch("engine.deep_research_service._count_cross_references", return_value=1)
+    @patch("engine.deep_research_service.aggregate_sources")
+    @patch("engine.deep_research_service.decompose_query")
+    def test_research_type_passed_to_pipeline(self, mock_decompose, mock_agg,
+                                               mock_xref, mock_cred,
+                                               mock_score, mock_filter,
+                                               mock_cluster, mock_synth):
+        """research_type='trend_analysis' must be stored in ResearchState."""
+        from engine.deep_research_service import run_deep_research
+        from engine.query_decomposer import SearchIntent
+
+        mock_decompose.return_value = [
+            SearchIntent(intent_query="test query", parent_query="test query", is_primary=True),
+        ]
+        src = _make_source("Test", relevance=0.5, url="https://ex.com/1")
+        mock_agg.return_value = [src]
+        mock_cred.return_value = {"score": 0.6, "category": "Standard"}
+        mock_score.return_value = [src]
+        mock_filter.return_value = [src]
+        mock_cluster.return_value = []
+        mock_synth.return_value = "Test synthesis"
+
+        state = run_deep_research("test query", depth=1, research_type="trend_analysis")
+        self.assertEqual(state.research_type, "trend_analysis")
+
+    @patch("engine.deep_research_service.synthesize")
+    @patch("engine.deep_research_service._cluster_findings")
+    @patch("engine.deep_research_service.filter_relevant")
+    @patch("engine.deep_research_service.score_relevance")
+    @patch("engine.deep_research_service.score_source_credibility")
+    @patch("engine.deep_research_service._count_cross_references", return_value=1)
+    @patch("engine.deep_research_service.aggregate_sources")
+    @patch("engine.deep_research_service.decompose_query")
+    def test_research_type_defaults_none(self, mock_decompose, mock_agg,
+                                          mock_xref, mock_cred,
+                                          mock_score, mock_filter,
+                                          mock_cluster, mock_synth):
+        """Calling without research_type must default to None (backward compat)."""
+        from engine.deep_research_service import run_deep_research
+        from engine.query_decomposer import SearchIntent
+
+        mock_decompose.return_value = [
+            SearchIntent(intent_query="test query", parent_query="test query", is_primary=True),
+        ]
+        src = _make_source("Test", relevance=0.5, url="https://ex.com/1")
+        mock_agg.return_value = [src]
+        mock_cred.return_value = {"score": 0.6, "category": "Standard"}
+        mock_score.return_value = [src]
+        mock_filter.return_value = [src]
+        mock_cluster.return_value = []
+        mock_synth.return_value = "Test synthesis"
+
+        state = run_deep_research("test query", depth=1)
+        self.assertIsNone(state.research_type)
+        self.assertEqual(state.compare_subjects, [])
+
+    @patch("engine.deep_research_service.synthesize")
+    @patch("engine.deep_research_service._cluster_findings")
+    @patch("engine.deep_research_service.filter_relevant")
+    @patch("engine.deep_research_service.score_relevance")
+    @patch("engine.deep_research_service.score_source_credibility")
+    @patch("engine.deep_research_service._count_cross_references", return_value=1)
+    @patch("engine.deep_research_service.aggregate_sources")
+    @patch("engine.deep_research_service.decompose_query")
+    def test_comparative_type_with_subjects(self, mock_decompose, mock_agg,
+                                             mock_xref, mock_cred,
+                                             mock_score, mock_filter,
+                                             mock_cluster, mock_synth):
+        """research_type='comparative' with subjects must store both."""
+        from engine.deep_research_service import run_deep_research
+        from engine.query_decomposer import SearchIntent
+
+        mock_decompose.return_value = [
+            SearchIntent(intent_query="test query", parent_query="test query", is_primary=True),
+        ]
+        src = _make_source("Test", relevance=0.5, url="https://ex.com/1")
+        mock_agg.return_value = [src]
+        mock_cred.return_value = {"score": 0.6, "category": "Standard"}
+        mock_score.return_value = [src]
+        mock_filter.return_value = [src]
+        mock_cluster.return_value = []
+        mock_synth.return_value = "Test synthesis"
+
+        state = run_deep_research("test query", depth=1,
+                                   research_type="comparative",
+                                   compare_subjects=["solar", "wind"])
+        self.assertEqual(state.research_type, "comparative")
+        self.assertEqual(state.compare_subjects, ["solar", "wind"])
+
+
+# ---------------------------------------------------------------------------
+# SEP-028 — Outline parser must handle normalized headers
+# ---------------------------------------------------------------------------
+class TestOutlineParserNormalization(unittest.TestCase):
+    def test_parse_outline_with_quadruple_hash_headers(self):
+        """Outline using #### headers must parse correctly after normalization."""
+        from workflows.deep_research.synthesizer import _normalize_outline_headers, _parse_outline
+        raw = """#### Executive Summary
+Lithium prices have fluctuated significantly due to supply and demand dynamics.
+
+#### Historical Price Trends
+- Price volatility driven by EV adoption
+- Supply constraints from key producing regions
+
+#### Supply Chain Impact
+- Zimbabwe mining operations expanding
+- Export policies affecting global supply
+
+#### Demand Drivers
+- Electric vehicle market growth
+- Battery technology advancement
+
+#### Future Outlook
+- Price stabilization expected
+- New mining projects coming online
+"""
+        normalized = _normalize_outline_headers(raw)
+        result = _parse_outline(normalized, is_comparison=False, subjects=None)
+        self.assertIsNotNone(result, "Outline with #### headers should parse after normalization")
+        self.assertEqual(len(result.sections), 4)  # 4 theme sections (exec summary excluded)
+        self.assertIn("Lithium prices", result.executive_summary)
+
+    def test_normalize_preserves_double_hash(self):
+        """## headers must pass through normalization unchanged."""
+        from workflows.deep_research.synthesizer import _normalize_outline_headers
+        raw = "## Executive Summary\nSome text\n## Theme\n- bullet"
+        self.assertEqual(_normalize_outline_headers(raw), raw)
+
+    def test_normalize_converts_triple_hash(self):
+        """### headers must be normalized to ##."""
+        from workflows.deep_research.synthesizer import _normalize_outline_headers
+        raw = "### Executive Summary\nSome text"
+        self.assertEqual(_normalize_outline_headers(raw), "## Executive Summary\nSome text")
+
+
+class TestOutlineBoldHeaderStripping(unittest.TestCase):
+    """SEP-028: Bold markers in headers must be stripped during normalization."""
+
+    def test_normalize_strips_bold_from_headers(self):
+        """#### **Executive Summary** must normalize to ## Executive Summary."""
+        from workflows.deep_research.synthesizer import _normalize_outline_headers
+        raw = "#### **Executive Summary**\nSome text"
+        result = _normalize_outline_headers(raw)
+        self.assertEqual(result, "## Executive Summary\nSome text")
+
+    def test_normalize_strips_bold_from_theme_headers(self):
+        """#### **Theme Title** must normalize to ## Theme Title."""
+        from workflows.deep_research.synthesizer import _normalize_outline_headers
+        raw = "#### **Historical Price Trends**\n- bullet"
+        result = _normalize_outline_headers(raw)
+        self.assertEqual(result, "## Historical Price Trends\n- bullet")
+
+    def test_normalize_strips_italic_from_headers(self):
+        """#### *Italic Title* must normalize to ## Italic Title."""
+        from workflows.deep_research.synthesizer import _normalize_outline_headers
+        raw = "### *Some Title*\ntext"
+        result = _normalize_outline_headers(raw)
+        self.assertEqual(result, "## Some Title\ntext")
+
+    def test_outline_parses_bold_wrapped_headers(self):
+        """Full outline with bold-wrapped #### headers must parse after normalization."""
+        from workflows.deep_research.synthesizer import _normalize_outline_headers, _parse_outline
+        raw = """#### **Executive Summary**
+Lithium prices have fluctuated significantly due to supply and demand dynamics.
+
+#### **Historical Price Trends**
+- Price volatility driven by EV adoption
+- Supply constraints from key producing regions
+
+#### **Supply Chain Impact**
+- Zimbabwe mining operations expanding
+- Export policies affecting global supply
+
+#### **Demand Drivers**
+- Electric vehicle market growth
+- Battery technology advancement
+
+#### **Future Outlook**
+- Price stabilization expected
+- New mining projects coming online
+"""
+        normalized = _normalize_outline_headers(raw)
+        result = _parse_outline(normalized, is_comparison=False, subjects=None)
+        self.assertIsNotNone(result, "Outline with bold #### headers should parse after normalization")
+        self.assertEqual(len(result.sections), 4)
+        self.assertIn("Lithium prices", result.executive_summary)
+        # Verify bold markers are gone from section titles
+        for section in result.sections:
+            self.assertNotIn("**", section.title)
+
+    def test_double_hash_bold_also_stripped(self):
+        """## **Already Level 2** must also have bold stripped."""
+        from workflows.deep_research.synthesizer import _normalize_outline_headers
+        raw = "## **Executive Summary**\ntext"
+        result = _normalize_outline_headers(raw)
+        self.assertEqual(result, "## Executive Summary\ntext")
+
+
+class TestClusteredFindingsParserTolerance(unittest.TestCase):
+    def test_bold_finding_prefix(self):
+        """**FINDING:** (bold markdown) must parse as FINDING:."""
+        from engine.deep_research_service import _parse_clustered_findings
+        text = (
+            "**FINDING:** Lithium prices surged 40% in 2025.\n"
+            "SOURCES: 1, 3\n"
+            "CONFIDENCE: high\n"
+        )
+        src1 = _make_source("S1", url="https://ex.com/1")
+        src2 = _make_source("S2", url="https://ex.com/2")
+        src3 = _make_source("S3", url="https://ex.com/3")
+        findings = _parse_clustered_findings(text, [src1, src2, src3])
+        self.assertEqual(len(findings), 1)
+        self.assertIn("Lithium prices surged", findings[0].claim)
+
+    def test_mixed_case_finding_prefix(self):
+        """Finding: (title case) must parse."""
+        from engine.deep_research_service import _parse_clustered_findings
+        text = (
+            "Finding: Mining output declined.\n"
+            "Sources: 2\n"
+            "Confidence: medium\n"
+        )
+        src1 = _make_source("S1", url="https://ex.com/1")
+        src2 = _make_source("S2", url="https://ex.com/2")
+        findings = _parse_clustered_findings(text, [src1, src2])
+        self.assertEqual(len(findings), 1)
+
+
+# ---------------------------------------------------------------------------
+# SEP-027 — SSE race condition: pipeline must not emit status="completed"
+# ---------------------------------------------------------------------------
+class TestNoCompletedStatusFromPipeline(unittest.TestCase):
+    @patch("engine.deep_research_service.synthesize")
+    @patch("engine.deep_research_service._cluster_findings")
+    @patch("engine.deep_research_service.filter_relevant")
+    @patch("engine.deep_research_service.score_relevance")
+    @patch("engine.deep_research_service.score_source_credibility")
+    @patch("engine.deep_research_service._count_cross_references", return_value=1)
+    @patch("engine.deep_research_service.aggregate_sources")
+    @patch("engine.deep_research_service.decompose_query")
+    def test_progress_callback_never_emits_completed(self, mock_decompose, mock_agg,
+                                                      mock_xref, mock_cred,
+                                                      mock_score, mock_filter,
+                                                      mock_cluster, mock_synth):
+        """run_deep_research must never emit status='completed' via progress_callback.
+
+        The caller (_run_research_with_progress) owns the completed signal because
+        only it can attach the results payload. If the pipeline emits 'completed',
+        the SSE client sees it without results and displayResults() never fires.
+        """
+        from engine.deep_research_service import run_deep_research
+        from engine.query_decomposer import SearchIntent
+
+        mock_decompose.return_value = [
+            SearchIntent(intent_query="test query", parent_query="test query", is_primary=True),
+        ]
+        src = _make_source("Test", relevance=0.5, url="https://ex.com/1")
+        mock_agg.return_value = [src]
+        mock_cred.return_value = {"score": 0.6, "category": "Standard"}
+        mock_score.return_value = [src]
+        mock_filter.return_value = [src]
+        mock_cluster.return_value = []
+        mock_synth.return_value = "Test synthesis"
+
+        # Collect all progress callback invocations
+        progress_events = []
+
+        def capture_progress(status, phase, message):
+            progress_events.append({"status": status, "phase": phase, "message": message})
+
+        run_deep_research("test query", depth=1, progress_callback=capture_progress)
+
+        # Pipeline must never emit status="completed" — only "running"
+        completed_events = [e for e in progress_events if e["status"] == "completed"]
+        self.assertEqual(
+            len(completed_events), 0,
+            f"Pipeline emitted {len(completed_events)} 'completed' event(s), "
+            f"but only the caller should signal completion. Events: {completed_events}"
+        )
+
+
+class TestSynthesizeSectionHeaderStripping(unittest.TestCase):
+    """SEP-028: synthesize_section must strip ALL markdown header levels."""
+
+    @patch("tools.registry.TOOL_FUNCTIONS", {
+        "use_reasoning_model": lambda prompt: (
+            "#### Sub-heading leaked\n"
+            "Some body text.\n"
+            "##### Another leaked header\n"
+            "###### Deep header\n"
+            "## Expected stripped\n"
+            "# Also stripped\n"
+            "### Mid-level header\n"
+            "Final paragraph."
+        ),
+    })
+    def test_all_header_levels_stripped(self):
+        """Headers # through ###### must be stripped from section output."""
+        from workflows.deep_research.synthesizer import synthesize_section, OutlineSection
+
+        section = OutlineSection(title="Test Section", bullets=["Q?"])
+        result = synthesize_section(
+            section=section,
+            sources=[],
+            findings=[],
+            state=MagicMock(),
+            is_comparison=False,
+            subjects=None,
+        )
+        self.assertIsNotNone(result)
+        for line in result.split("\n"):
+            self.assertFalse(
+                line.strip().startswith("#"),
+                f"Header leaked into output: {line!r}",
+            )
 
 
 if __name__ == "__main__":

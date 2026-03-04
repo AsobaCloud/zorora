@@ -160,6 +160,22 @@ def format_claims_only(state: ResearchState) -> str:
     return "\n".join(lines)
 
 
+def _normalize_outline_headers(raw: str) -> str:
+    """Normalize any markdown header level (##–######) to ## and strip bold/italic markers from header text."""
+    lines = []
+    for line in raw.split("\n"):
+        stripped = line.lstrip()
+        match = re.match(r"^(#{2,6})\s+(.*)", stripped)
+        if match:
+            header_text = match.group(2).strip()
+            # Strip bold/italic markers: **text** → text, *text* → text
+            header_text = re.sub(r"\*{1,2}(.*?)\*{1,2}", r"\1", header_text)
+            lines.append(f"## {header_text}")
+        else:
+            lines.append(line)
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Stage 1: Outline generation
 # ---------------------------------------------------------------------------
@@ -179,7 +195,7 @@ def _build_outline_prompt(search_topic: str, claims_text: str, today: str) -> st
 2. Then list {min_sections}-{max_sections} thematic sections. For each section give a title and 2-3 bullet directions.
 3. Group related claims across sources into themes. Do NOT organize by individual source.
 
-**Output format (follow exactly):**
+**Output format (follow exactly — use ## for ALL headers, never ### or ####):**
 
 ## Executive Summary
 [2-3 sentences]
@@ -217,7 +233,7 @@ def _build_comparison_outline_prompt(
 2. Then list {min_sections}-{max_sections} comparison dimensions. For each give a title and 2-3 bullet directions.
 3. Every dimension must compare BOTH {subject_a} and {subject_b}.
 
-**Output format (follow exactly):**
+**Output format (follow exactly — use ## for ALL headers, never ### or ####):**
 
 ## Executive Summary
 [2-3 sentences]
@@ -356,6 +372,7 @@ def synthesize_outline(state: ResearchState) -> Optional[OutlineResult]:
             logger.warning("Outline model returned empty/error")
             return None
 
+        raw = _normalize_outline_headers(raw)
         return _parse_outline(raw, is_comparison, subjects)
 
     except Exception as e:
@@ -434,6 +451,7 @@ def _build_section_prompt(
     routed_sources: List[Source],
     routed_findings: List[Finding],
     today: str,
+    market_context: str = "",
 ) -> str:
     """Build a standard section expansion prompt."""
     max_chars = config.MODEL_BUDGETS.get("synthesis_section", {}).get("max_input_chars", 5250)
@@ -454,6 +472,10 @@ def _build_section_prompt(
 
     bullets_text = "\n".join(f"- {b}" for b in section.bullets)
 
+    market_block = ""
+    if market_context:
+        market_block = f"\n**Market Data (for context — do not cite as a 'source'):**\n{market_context}\n"
+
     return f"""Today's date is {today}. Write one analytical paragraph for the section below.
 
 **Section:** {section.title}
@@ -465,7 +487,7 @@ def _build_section_prompt(
 
 **Source excerpts:**
 {sources_text}
-
+{market_block}
 **Rules:**
 1. Synthesize across sources — do not summarize one source at a time.
 2. Cite inline: "costs fell 40% [Source Title]". Every claim must name its source.
@@ -482,6 +504,7 @@ def _build_comparison_section_prompt(
     routed_findings: List[Finding],
     subjects: List[str],
     today: str,
+    market_context: str = "",
 ) -> str:
     """Build a comparison section expansion prompt."""
     max_chars = config.MODEL_BUDGETS.get("synthesis_section", {}).get("max_input_chars", 5250)
@@ -500,6 +523,10 @@ def _build_comparison_section_prompt(
 
     bullets_text = "\n".join(f"- {b}" for b in section.bullets)
 
+    market_block = ""
+    if market_context:
+        market_block = f"\n**Market Data (for context — do not cite as a 'source'):**\n{market_context}\n"
+
     return f"""Today's date is {today}. Write one analytical paragraph comparing {subjects[0]} and {subjects[1]} on this dimension.
 
 **Dimension:** {section.title}
@@ -511,7 +538,7 @@ def _build_comparison_section_prompt(
 
 **Source excerpts:**
 {sources_text}
-
+{market_block}
 **Rules:**
 1. Compare BOTH {subjects[0]} and {subjects[1]} on this dimension.
 2. Highlight similarities AND differences with specific evidence.
@@ -530,14 +557,15 @@ def synthesize_section(
     state: ResearchState,
     is_comparison: bool,
     subjects: Optional[List[str]],
+    market_context: str = "",
 ) -> Optional[str]:
     """Stage 2: Expand a single section via reasoning model."""
     today = date.today().isoformat()
 
     if is_comparison and subjects:
-        prompt = _build_comparison_section_prompt(section, sources, findings, subjects, today)
+        prompt = _build_comparison_section_prompt(section, sources, findings, subjects, today, market_context=market_context)
     else:
-        prompt = _build_section_prompt(section, sources, findings, today)
+        prompt = _build_section_prompt(section, sources, findings, today, market_context=market_context)
 
     try:
         from tools.registry import TOOL_FUNCTIONS
@@ -553,7 +581,7 @@ def synthesize_section(
         lines = raw.strip().split("\n")
         cleaned = []
         for line in lines:
-            if line.strip().startswith("## ") or line.strip().startswith("# "):
+            if re.match(r"^#{1,6}\s", line.strip()):
                 continue
             cleaned.append(line)
         return "\n".join(cleaned).strip() or None
@@ -609,6 +637,22 @@ def synthesize(state: ResearchState, progress_callback=None) -> str:
     """
     logger.info("Synthesizing findings (two-stage pipeline)...")
 
+    # Build market context if query involves financial topics
+    market_context = ""
+    try:
+        from engine.query_refiner import detect_market_intent
+        if detect_market_intent(state.original_query):
+            logger.info("Market intent detected — injecting FRED context")
+            from workflows.market_workflow import MarketWorkflow
+            from tools.market.context import build_market_context
+            wf = MarketWorkflow()
+            wf.update_all()
+            summaries = wf.compute_summary()
+            if summaries:
+                market_context = build_market_context(summaries)
+    except Exception as exc:
+        logger.warning("Market context build failed (non-fatal): %s", exc)
+
     # Stage 1: Outline
     _emit_progress(progress_callback, "synthesis", "Generating outline from findings...")
     outline = synthesize_outline(state)
@@ -637,6 +681,7 @@ def synthesize(state: ResearchState, progress_callback=None) -> str:
         paragraph = synthesize_section(
             section, routed_src, routed_fnd, state,
             outline.is_comparison, outline.subjects,
+            market_context=market_context,
         )
         expanded_sections.append(paragraph)
         if paragraph:
