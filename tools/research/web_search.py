@@ -387,8 +387,8 @@ def web_search_sources(query: str, max_results: int = 5) -> List[Source]:
     """
     Search the web and return structured Source objects.
 
-    Simplified pipeline for the deep research workflow: raw search + academic
-    merge + dedup/processing. Intentionally omits LLM-tool-specific features
+    Simplified pipeline for the deep research workflow: raw web search +
+    dedup/processing. Intentionally omits LLM-tool-specific features
     (caching, query optimization, intent routing, synthesis, content extraction)
     since those are for the interactive tool, not the pipeline.
 
@@ -435,8 +435,6 @@ def web_search_sources(query: str, max_results: int = 5) -> List[Source]:
     # Get raw web results
     parallel_enabled = config.WEB_SEARCH.get("parallel_enabled", False)
     brave_available = config.BRAVE_SEARCH.get("enabled") and config.BRAVE_SEARCH.get("api_key")
-    academic_max_results = config.WEB_SEARCH.get("academic_max_results", 3)
-
     raw_results = None
 
     if parallel_enabled and brave_available:
@@ -454,28 +452,6 @@ def web_search_sources(query: str, max_results: int = 5) -> List[Source]:
             except Exception as e:
                 logger.error(f"DuckDuckGo search failed: {e}")
                 return []
-
-    # Merge academic results
-    academic_results = []
-    try:
-        scholar_results = _scholar_search_raw(query, academic_max_results)
-        if scholar_results:
-            academic_results.extend(scholar_results)
-    except Exception as e:
-        logger.warning(f"Scholar search failed: {e}")
-
-    try:
-        pubmed_results = _pubmed_search_raw(query, academic_max_results)
-        if pubmed_results:
-            academic_results.extend(pubmed_results)
-    except Exception as e:
-        logger.warning(f"PubMed search failed: {e}")
-
-    if academic_results:
-        if raw_results:
-            raw_results = raw_results + academic_results
-        else:
-            raw_results = academic_results
 
     if not raw_results:
         return []

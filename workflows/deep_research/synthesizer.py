@@ -44,6 +44,15 @@ _CATEGORY_SUFFIXES = re.compile(
     re.IGNORECASE,
 )
 
+_LOW_VALUE_SENTENCE_PATTERNS = [
+    re.compile(r"\b(i cannot guarantee|cannot guarantee|can't guarantee)\b", re.IGNORECASE),
+    re.compile(r"\bimportant to note\b", re.IGNORECASE),
+    re.compile(r"\bshould be read in conjunction\b", re.IGNORECASE),
+    re.compile(r"\bfurther research is needed\b", re.IGNORECASE),
+    re.compile(r"\bconsult additional sources\b", re.IGNORECASE),
+    re.compile(r"\bthis is a snapshot in time\b", re.IGNORECASE),
+]
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -86,6 +95,48 @@ def _format_finding_citations(finding: Finding, source_lookup: dict, max_sources
     if not labels:
         return "[Unattributed Source]"
     return "".join(f"[{label}]" for label in labels)
+
+
+def _format_claims_for_prompt(
+    routed_findings: List[Finding],
+    source_lookup: dict,
+    max_sources_per_claim: int = 2,
+) -> str:
+    """Format routed finding claims with inline source titles for grounding."""
+    if not routed_findings:
+        return "- No high-signal claim routed; rely on source excerpts below."
+
+    lines = []
+    for finding in routed_findings:
+        claim = _normalize_sentence(finding.claim, max_chars=260)
+        if not claim:
+            continue
+        citations = _format_finding_citations(
+            finding,
+            source_lookup=source_lookup,
+            max_sources=max_sources_per_claim,
+        )
+        lines.append(f"- {claim} {citations}")
+
+    return "\n".join(lines) if lines else "- No high-signal claim routed; rely on source excerpts below."
+
+
+def _strip_low_value_sentences(text: str) -> str:
+    """Drop boilerplate hedging/disclaimer sentences from model output."""
+    chunks = re.split(r"(?<=[.!?])\s+", (text or "").strip())
+    kept = []
+    for chunk in chunks:
+        sentence = chunk.strip()
+        if not sentence:
+            continue
+        if any(pattern.search(sentence) for pattern in _LOW_VALUE_SENTENCE_PATTERNS):
+            continue
+        kept.append(sentence)
+    return " ".join(kept).strip()
+
+
+def _has_inline_citation(text: str) -> bool:
+    return bool(re.search(r"\[[^\]]+\]", text or ""))
 
 
 def _deterministic_section_paragraph(
@@ -576,11 +627,15 @@ def route_findings(
     if not section_words:
         return findings[:max_findings]
 
-    scored: List[Tuple[float, Finding]] = []
+    confidence_rank = {"high": 3.0, "medium": 2.0, "low": 1.0}
+    scored: List[Tuple[Tuple[float, float, float, float], Finding]] = []
     for finding in findings:
         finding_words = _extract_words(finding.claim)
-        overlap = len(section_words & finding_words)
-        scored.append((overlap, finding))
+        overlap = float(len(section_words & finding_words))
+        support = float(len(finding.sources))
+        confidence = confidence_rank.get((finding.confidence or "").lower(), 1.0)
+        avg_cred = float(finding.average_credibility or 0.0)
+        scored.append(((overlap, support, confidence, avg_cred), finding))
 
     scored.sort(key=lambda t: t[0], reverse=True)
     return [f for _, f in scored[:max_findings]]
@@ -595,13 +650,16 @@ def _build_section_prompt(
     routed_sources: List[Source],
     routed_findings: List[Finding],
     today: str,
+    source_lookup: Optional[dict] = None,
     market_context: str = "",
 ) -> str:
     """Build a standard section expansion prompt."""
     max_chars = config.MODEL_BUDGETS.get("synthesis_section", {}).get("max_input_chars", 5250)
 
-    # Format finding claims
-    claims = "\n".join(f"- {f.claim}" for f in routed_findings)
+    claims = _format_claims_for_prompt(
+        routed_findings,
+        source_lookup=source_lookup or _build_source_lookup(routed_sources),
+    )
 
     # Format source excerpts with per-source budget
     overhead = 600  # prompt template + section title + bullets + claims
@@ -633,10 +691,13 @@ def _build_section_prompt(
 {sources_text}
 {market_block}
 **Rules:**
-1. Synthesize across sources — do not summarize one source at a time.
-2. Cite inline: "costs fell 40% [Source Title]". Every claim must name its source.
-3. One paragraph only. No sub-headings.
-4. Only cite facts from the provided sources — do not invent data.
+1. Open with the strongest evidence-backed conclusion for this section.
+2. Synthesize across sources — do not summarize one source at a time.
+3. Cite inline: "costs fell 40% [Source Title]". Every claim must name its source.
+4. Include at least 2 cited facts and explicitly mention any key conflict/uncertainty in evidence.
+5. No boilerplate caveats ("I cannot guarantee...", "consult more sources", etc.).
+6. One paragraph only. No sub-headings.
+7. Only cite facts from the provided sources — do not invent data.
 
 Begin:
 """
@@ -648,12 +709,16 @@ def _build_comparison_section_prompt(
     routed_findings: List[Finding],
     subjects: List[str],
     today: str,
+    source_lookup: Optional[dict] = None,
     market_context: str = "",
 ) -> str:
     """Build a comparison section expansion prompt."""
     max_chars = config.MODEL_BUDGETS.get("synthesis_section", {}).get("max_input_chars", 5250)
 
-    claims = "\n".join(f"- {f.claim}" for f in routed_findings)
+    claims = _format_claims_for_prompt(
+        routed_findings,
+        source_lookup=source_lookup or _build_source_lookup(routed_sources),
+    )
 
     overhead = 600
     source_budget = max(200, (max_chars - overhead) // max(len(routed_sources), 1))
@@ -685,10 +750,13 @@ def _build_comparison_section_prompt(
 {market_block}
 **Rules:**
 1. Compare BOTH {subjects[0]} and {subjects[1]} on this dimension.
-2. Highlight similarities AND differences with specific evidence.
-3. Cite inline: "costs fell 40% [Source Title]". Every claim must name its source.
-4. One paragraph only. No sub-headings.
-5. Only cite facts from the provided sources — do not invent data.
+2. Open with the strongest evidence-backed comparison conclusion.
+3. Highlight similarities AND differences with specific cited evidence.
+4. Cite inline: "costs fell 40% [Source Title]". Every claim must name its source.
+5. Include at least 2 cited facts and mention key uncertainty/conflict if present.
+6. No boilerplate caveats ("I cannot guarantee...", "consult more sources", etc.).
+7. One paragraph only. No sub-headings.
+8. Only cite facts from the provided sources — do not invent data.
 
 Begin:
 """
@@ -701,15 +769,31 @@ def synthesize_section(
     state: ResearchState,
     is_comparison: bool,
     subjects: Optional[List[str]],
+    source_lookup: Optional[dict] = None,
     market_context: str = "",
 ) -> Optional[str]:
     """Stage 2: Expand a single section via reasoning model."""
     today = date.today().isoformat()
 
     if is_comparison and subjects:
-        prompt = _build_comparison_section_prompt(section, sources, findings, subjects, today, market_context=market_context)
+        prompt = _build_comparison_section_prompt(
+            section,
+            sources,
+            findings,
+            subjects,
+            today,
+            source_lookup=source_lookup,
+            market_context=market_context,
+        )
     else:
-        prompt = _build_section_prompt(section, sources, findings, today, market_context=market_context)
+        prompt = _build_section_prompt(
+            section,
+            sources,
+            findings,
+            today,
+            source_lookup=source_lookup,
+            market_context=market_context,
+        )
 
     try:
         from tools.registry import TOOL_FUNCTIONS
@@ -728,7 +812,17 @@ def synthesize_section(
             if re.match(r"^#{1,6}\s", line.strip()):
                 continue
             cleaned.append(line)
-        return "\n".join(cleaned).strip() or None
+        paragraph = "\n".join(cleaned).strip()
+        paragraph = _strip_low_value_sentences(paragraph)
+        if not paragraph:
+            return None
+
+        # Reliability gate: section text must carry explicit citations.
+        if not _has_inline_citation(paragraph):
+            logger.warning("Section expansion dropped due to missing inline citations: %s", section.title)
+            return None
+
+        return paragraph
 
     except Exception as e:
         logger.error("Section expansion failed for '%s': %s", section.title, e)
@@ -826,6 +920,7 @@ def synthesize(state: ResearchState, progress_callback=None) -> str:
         paragraph = synthesize_section(
             section, routed_src, routed_fnd, state,
             outline.is_comparison, outline.subjects,
+            source_lookup=source_lookup,
             market_context=market_context,
         )
         if not paragraph:

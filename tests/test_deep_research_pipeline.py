@@ -139,6 +139,88 @@ class TestQueryDecomposition(unittest.TestCase):
         self.assertEqual(len(suffixes), 2, f"Expected 2 fallback suffixes, got {len(suffixes)}: {suffixes}")
 
 
+class TestRefinedIntentNormalization(unittest.TestCase):
+    def test_decompose_query_collapses_empty_pipe_segments(self):
+        """Refined query cleanup must remove empty pipe segments from core intent."""
+        from engine.query_refiner import decompose_query
+
+        intents = decompose_query("What are the historical price trends of lithium | | | ")
+        self.assertGreaterEqual(len(intents), 1)
+        self.assertEqual(intents[0].intent_query, "What are the historical price trends of lithium")
+
+        for intent in intents:
+            self.assertNotIn("| |", intent.intent_query)
+            self.assertNotIn("||", intent.intent_query)
+
+    def test_decompose_query_keeps_refinement_segments(self):
+        """Selected refinement dimensions should still produce dedicated intents."""
+        from engine.query_refiner import decompose_query
+
+        query = (
+            "What are the historical price trends of lithium"
+            " | time period: Last 12 months | geography: Global | scope: All sectors"
+        )
+        intents = decompose_query(query)
+        intent_text = [i.intent_query for i in intents]
+
+        self.assertTrue(any("Last 12 months" in text for text in intent_text))
+        self.assertTrue(any("Global" in text for text in intent_text))
+        self.assertTrue(any("All sectors" in text for text in intent_text))
+
+
+class TestVariantSanitization(unittest.TestCase):
+    def test_clean_query_line_rejects_decomposition_preamble(self):
+        """Model preambles like 'query can be decomposed...' must not become queries."""
+        from engine.deep_research_service import _clean_query_line
+
+        line = "The given research query can be decomposed into two distinct sub-topic searches as follows"
+        self.assertIsNone(_clean_query_line(line))
+
+    @patch("tools.registry.TOOL_FUNCTIONS", {
+        "use_reasoning_model": lambda prompt: (
+            "The given research query can be decomposed into two distinct sub-topic searches as follows\n"
+            "Lithium carbonate historical price index trends 2024 2026"
+        ),
+    })
+    def test_generate_query_variants_ignores_prose_and_keeps_topical_query(self):
+        """Variant generation should discard prose lines and keep topical sub-queries."""
+        from engine.deep_research_service import _generate_query_variants
+
+        query = "What are the historical price trends of lithium"
+        variants = _generate_query_variants(query, num_variants=2)
+        self.assertEqual(variants[0], query)
+        self.assertEqual(len(variants), 2)
+        self.assertIn("lithium", variants[1].lower())
+        self.assertNotIn("decomposed into", variants[1].lower())
+
+
+class TestWebSourcesIsolation(unittest.TestCase):
+    def test_web_search_sources_does_not_merge_academic(self):
+        """Structured web source path should remain web-only (academic handled separately)."""
+        import importlib
+        web_search_module = importlib.import_module("tools.research.web_search")
+
+        with patch.object(web_search_module, "_duckduckgo_search_raw") as mock_ddg:
+            with patch.object(web_search_module, "_scholar_search_raw") as mock_scholar:
+                with patch.object(web_search_module, "_pubmed_search_raw") as mock_pubmed:
+                    mock_ddg.return_value = [
+                        {
+                            "title": "Lithium prices rise on supply constraints",
+                            "url": "https://example.com/lithium-prices",
+                            "description": "Spot prices increased amid tighter supply.",
+                        }
+                    ]
+
+                    with patch.dict("config.BRAVE_SEARCH", {"enabled": False, "api_key": ""}, clear=False):
+                        with patch.dict("config.WEB_SEARCH", {"parallel_enabled": False, "max_domain_results": 2}, clear=False):
+                            sources = web_search_module.web_search_sources("lithium price trends", max_results=5)
+
+        self.assertEqual(len(sources), 1)
+        self.assertEqual(sources[0].source_type, "web")
+        mock_scholar.assert_not_called()
+        mock_pubmed.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # Bug #1 — Brave Search endpoint config
 # ---------------------------------------------------------------------------
@@ -709,6 +791,45 @@ class TestTopicalGateInService(unittest.TestCase):
         self.assertEqual(state.total_sources, 0)
         mock_cred.assert_not_called()
 
+    @patch("engine.deep_research_service.filter_relevant")
+    @patch("engine.deep_research_service.score_relevance")
+    def test_strict_topical_floor_drops_low_scoring_sources(self, mock_score, mock_filter):
+        """Service topical gate should reject sources below the stricter final floor."""
+        from engine.deep_research_service import _score_and_filter_intent_sources
+
+        src = _make_source("Borderline source", relevance=0.20, url="https://ex.com/borderline")
+        mock_score.return_value = [src]
+        mock_filter.return_value = [src]
+
+        result = _score_and_filter_intent_sources(
+            intent_query="lithium price trends",
+            sources=[src],
+            variants=["lithium price trends"],
+            max_sources=10,
+            relevance_min=0.15,
+        )
+        self.assertEqual(result, [])
+
+    @patch("engine.deep_research_service.filter_relevant")
+    @patch("engine.deep_research_service.score_relevance")
+    def test_strict_topical_floor_keeps_high_scoring_sources(self, mock_score, mock_filter):
+        """Service topical gate should keep sources at/above strict topical floor."""
+        from engine.deep_research_service import _score_and_filter_intent_sources
+
+        src = _make_source("Strong source", relevance=0.30, url="https://ex.com/strong")
+        mock_score.return_value = [src]
+        mock_filter.return_value = [src]
+
+        result = _score_and_filter_intent_sources(
+            intent_query="lithium price trends",
+            sources=[src],
+            variants=["lithium price trends"],
+            max_sources=10,
+            relevance_min=0.15,
+        )
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].source_id, src.source_id)
+
 
 class TestDeterministicSynthesisFallback(unittest.TestCase):
     @patch("workflows.deep_research.synthesizer.synthesize_outline", return_value=None)
@@ -736,6 +857,83 @@ class TestDeterministicSynthesisFallback(unittest.TestCase):
         self.assertIn("## Evidence Highlights", result)
         self.assertIn("[Market Signal Source]", result)
         self.assertNotIn("# Research Synthesis:", result)
+
+
+class TestFindingFallbackQuality(unittest.TestCase):
+    def test_fallback_findings_skip_low_signal_marketing_noise(self):
+        """Fallback findings should prioritize concise evidence and skip ad-like noise."""
+        from engine.deep_research_service import _fallback_findings
+
+        noisy = _make_source(
+            title="Bitget: Ranked top 4 in global daily trading volume",
+            snippet="Welcome gift package for new users worth 6200 USDT. Claim now.",
+            relevance=0.5,
+            url="https://example.com/noisy",
+        )
+        good = _make_source(
+            title="Lithium Carbonate Price Trend Q4 2025",
+            snippet="Prices rose in Q4 2025 due to supply constraints in China.",
+            relevance=0.6,
+            url="https://example.com/good",
+        )
+
+        findings = _fallback_findings([noisy, good])
+        claims = [f.claim.lower() for f in findings]
+
+        self.assertTrue(any("lithium carbonate price trend" in c for c in claims))
+        self.assertFalse(any("welcome gift package" in c for c in claims))
+
+
+class TestSynthesisQualityGuards(unittest.TestCase):
+    @patch("tools.registry.TOOL_FUNCTIONS", {
+        "use_reasoning_model": lambda prompt: (
+            "I cannot guarantee the accuracy of this summary. "
+            "The market changed materially over the period."
+        ),
+    })
+    def test_synthesize_section_requires_inline_citations(self):
+        """Section expansion without inline citations must be rejected."""
+        from workflows.deep_research.synthesizer import synthesize_section, OutlineSection
+
+        section = OutlineSection(title="Price Dynamics", bullets=["Track major moves"])
+        src = _make_source(
+            title="Lithium Price Report",
+            snippet="Lithium prices rose 18% in Q4 2025 due to supply constraints.",
+            relevance=0.6,
+            url="https://example.com/lithium-report",
+        )
+
+        result = synthesize_section(
+            section=section,
+            sources=[src],
+            findings=[],
+            state=MagicMock(),
+            is_comparison=False,
+            subjects=None,
+        )
+        self.assertIsNone(result)
+
+    def test_route_findings_prefers_supported_claims_when_overlap_ties(self):
+        """When overlap ties, route_findings should prefer stronger support/confidence."""
+        from workflows.deep_research.synthesizer import route_findings, OutlineSection
+        from engine.models import Finding
+
+        section = OutlineSection(title="Price trend analysis", bullets=["market trend"])
+        low_support = Finding(
+            claim="Lithium price trend moved modestly across the year",
+            sources=["s1"],
+            confidence="low",
+            average_credibility=0.4,
+        )
+        high_support = Finding(
+            claim="Lithium price trend moved modestly across the year",
+            sources=["s1", "s2", "s3"],
+            confidence="high",
+            average_credibility=0.7,
+        )
+
+        routed = route_findings(section, [low_support, high_support], max_findings=1)
+        self.assertEqual(routed[0].confidence, "high")
 
 
 class TestResearchStateCompatibility(unittest.TestCase):
@@ -770,13 +968,13 @@ class TestSynthesizeSectionHeaderStripping(unittest.TestCase):
     @patch("tools.registry.TOOL_FUNCTIONS", {
         "use_reasoning_model": lambda prompt: (
             "#### Sub-heading leaked\n"
-            "Some body text.\n"
+            "Some body text with a citation [Test Source].\n"
             "##### Another leaked header\n"
             "###### Deep header\n"
             "## Expected stripped\n"
             "# Also stripped\n"
             "### Mid-level header\n"
-            "Final paragraph."
+            "Final paragraph [Test Source]."
         ),
     })
     def test_all_header_levels_stripped(self):

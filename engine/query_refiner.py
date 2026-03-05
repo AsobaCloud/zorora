@@ -297,6 +297,20 @@ def _normalize_clause(text: str) -> str:
     return cleaned.strip(" ,;:.")
 
 
+def _normalize_refined_query_text(text: str) -> str:
+    """Collapse pipe-delimited refined queries and drop empty segments."""
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+
+    if "|" not in raw:
+        return _normalize_clause(raw)
+
+    parts = [_normalize_clause(part) for part in raw.split("|")]
+    parts = [part for part in parts if part]
+    return " | ".join(parts)
+
+
 def _extract_refinement_segments(query: str) -> List[str]:
     """Extract wizard-added segments from refined query text."""
     segments: List[str] = []
@@ -311,7 +325,7 @@ def _extract_refinement_segments(query: str) -> List[str]:
 
 def decompose_query(query: str) -> List[SearchIntent]:
     """Decompose query into targeted intents while preserving full context."""
-    normalized_query = _normalize_clause(query)
+    normalized_query = _normalize_refined_query_text(query)
     if not normalized_query:
         return []
 
@@ -319,7 +333,7 @@ def decompose_query(query: str) -> List[SearchIntent]:
     core_query = normalized_query
     for pattern in _REFINEMENT_SEGMENT_PATTERNS:
         core_query = pattern.sub("", core_query)
-    core_query = _normalize_clause(core_query) or normalized_query
+    core_query = _normalize_refined_query_text(core_query) or normalized_query
 
     intents: List[SearchIntent] = [
         SearchIntent(intent_query=core_query, parent_query=normalized_query, is_primary=True)
@@ -355,7 +369,7 @@ def decompose_query(query: str) -> List[SearchIntent]:
     if "|" in normalized_query:
         for part in normalized_query.split("|"):
             clause = _normalize_clause(part)
-            if clause:
+            if clause and clause.lower() != core_query.lower():
                 intent_query = _normalize_clause(f"{core_query} {clause}")
                 intents.append(
                     SearchIntent(

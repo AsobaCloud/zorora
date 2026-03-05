@@ -44,6 +44,61 @@ _MD_STRIP = re.compile(
     r"^\d+\.\s+|"                  # numbered list "1. "
     r"^[-*+]\s+"                   # bullet list "- "
 )
+_PROSE_SUBSTRINGS = (
+    "query can be decomposed",
+    "decompose this research query",
+    "distinct sub-topic",
+    "as follows",
+    "return only the queries",
+    "one per line",
+    "no numbering or explanation",
+)
+_QUERY_STOPWORDS = frozenset({
+    "what", "why", "how", "when", "where", "who", "which", "whose",
+    "the", "a", "an", "in", "on", "at", "to", "for", "of", "and", "or",
+    "is", "was", "were", "are", "be", "been", "being", "do", "does", "did",
+    "with", "from", "about", "that", "this", "it", "not", "as", "by",
+    "query", "research", "search", "sub", "topic", "topics", "distinct",
+    "decompose", "decomposed", "follows", "line", "lines", "return", "only",
+    "please", "given", "into", "two", "three",
+})
+_GENERIC_QUERY_TERMS = frozenset({
+    "market", "markets", "trend", "trends", "analysis", "data", "recent",
+    "latest", "global", "sector", "sectors", "price", "prices", "outlook",
+    "impact", "changes", "change", "history", "historical",
+})
+
+
+def _query_terms(text: str) -> set:
+    """Extract normalized query terms for overlap checks."""
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]{3,}", (text or "").lower())
+        if token not in _QUERY_STOPWORDS
+    }
+
+
+def _is_topically_related_variant(candidate: str, base_query: str) -> bool:
+    """Keep decomposition variants tied to the original query topic."""
+    candidate_terms = _query_terms(candidate)
+    base_terms = _query_terms(base_query)
+    if not candidate_terms or not base_terms:
+        return False
+
+    shared = candidate_terms & base_terms
+    if len(shared) >= 2:
+        return True
+
+    if len(shared) == 1:
+        only = next(iter(shared))
+        # A single highly generic overlap is usually noise.
+        if only in _GENERIC_QUERY_TERMS:
+            return False
+        # For short queries, one specific overlap (e.g., "lithium") is still useful.
+        if len(base_terms) <= 5:
+            return True
+
+    return False
 
 
 def _clean_query_line(line: str) -> Optional[str]:
@@ -59,6 +114,9 @@ def _clean_query_line(line: str) -> Optional[str]:
     if len(cleaned) < 10 or len(cleaned) > 150:
         return None
     if _PROSE_PREFIXES.match(cleaned):
+        return None
+    lowered = cleaned.lower()
+    if any(fragment in lowered for fragment in _PROSE_SUBSTRINGS):
         return None
     if " " not in cleaned:
         return None
@@ -231,8 +289,17 @@ def _generate_query_variants(query: str, num_variants: int) -> List[str]:
                 lines = []
                 for raw in raw_lines:
                     cleaned = _clean_query_line(raw)
-                    if cleaned:
+                    if cleaned and _is_topically_related_variant(cleaned, query):
                         lines.append(cleaned)
+                # Preserve order, remove duplicates.
+                deduped_lines = []
+                seen = set()
+                for line in lines:
+                    key = line.lower()
+                    if key not in seen:
+                        seen.add(key)
+                        deduped_lines.append(line)
+                lines = deduped_lines
                 logger.info(f"Query variants: {len(raw_lines)} raw lines -> {len(lines)} cleaned")
                 if lines:
                     # Take up to num_variants-1 decomposed queries (original is variant[0])
@@ -420,15 +487,47 @@ def _parse_clustered_findings(text: str, sources: List[Source]) -> List[Finding]
 
 
 def _fallback_findings(sources: List[Source]) -> List[Finding]:
-    """Fallback: 1:1 source-to-finding mapping (pre-SEP-006 behavior)."""
+    """Fallback: build concise source-backed findings when clustering fails."""
+    low_signal = (
+        "welcome gift package",
+        "download now",
+        "fear and greed index",
+        "claim now",
+        "app store",
+        "google play",
+    )
     findings = []
     for source in sources:
-        claim = source.content_full or source.content_snippet or source.title
+        title = (source.title or "").strip()
+        snippet = (source.content_snippet or "").strip()
+        claim_parts = [part for part in [title, snippet] if part]
+        claim = ". ".join(claim_parts)
+        claim = re.sub(r"\s+", " ", claim).strip()
+        if len(claim) > 320:
+            claim = claim[:317].rstrip() + "..."
+
+        lowered = claim.lower()
+        if not claim or any(token in lowered for token in low_signal):
+            continue
+
+        findings.append(Finding(
+            claim=claim,
+            sources=[source.source_id],
+            confidence="low",
+            average_credibility=source.credibility_score,
+        ))
+
+    if findings:
+        return findings
+
+    # Absolute fallback if all snippets were empty/noisy.
+    for source in sources:
+        claim = (source.title or "").strip()
         if claim:
             findings.append(Finding(
-                claim=claim[:500],
+                claim=claim[:220],
                 sources=[source.source_id],
-                confidence="medium",
+                confidence="low",
                 average_credibility=source.credibility_score,
             ))
     return findings
@@ -509,19 +608,21 @@ def _score_and_filter_intent_sources(
     scored_sources = score_relevance(intent_query, sources, extra_keywords=extra_keywords)
     filtered_sources = filter_relevant(scored_sources, min_score=relevance_min, max_sources=max_sources)
 
-    # Service-level topical gate: never pass zero-relevance items to synthesis.
+    # Service-level topical gate: enforce a stricter floor before synthesis.
     if not filtered_sources:
         return []
 
+    strict_min = max(relevance_min, float(config.SYNTHESIS.get("service_topical_min_score", 0.25)))
     topical = [
         source
         for source in filtered_sources
-        if (source.relevance_score or 0.0) > 0.0
+        if (source.relevance_score or 0.0) >= strict_min
     ]
     if not topical:
         logger.info(
-            "Topical gate dropped %d zero-relevance sources for intent '%s'",
+            "Topical gate dropped %d sources below %.2f for intent '%s'",
             len(filtered_sources),
+            strict_min,
             intent_query[:80],
         )
         return []
