@@ -525,6 +525,58 @@ def _infer_signal_direction(text: str) -> str:
     return "shifting materially"
 
 
+def _select_deterministic_excerpts(
+    section: OutlineSection,
+    routed_sources: List[Source],
+    max_excerpts: int = 2,
+) -> List[Tuple[Source, str]]:
+    """Select section-relevant excerpts, prioritizing credibility then relevance."""
+    section_words = _extract_words(f"{section.title} {' '.join(section.bullets)}")
+    candidates: List[Tuple[Tuple[int, float, float], Source, str]] = []
+
+    for source in routed_sources:
+        excerpt = _extract_source_fact(source, max_chars=220)
+        if not excerpt:
+            continue
+        excerpt_words = _extract_words(f"{source.title or ''} {excerpt}")
+        overlap = len(section_words & excerpt_words) if section_words else 1
+        if section_words and overlap == 0:
+            continue
+        score = (
+            overlap,
+            float(source.credibility_score or 0.0),
+            float(source.relevance_score or 0.0),
+        )
+        candidates.append((score, source, excerpt))
+
+    if not candidates:
+        for source in routed_sources:
+            excerpt = _extract_source_fact(source, max_chars=220)
+            if not excerpt:
+                continue
+            score = (
+                0,
+                float(source.credibility_score or 0.0),
+                float(source.relevance_score or 0.0),
+            )
+            candidates.append((score, source, excerpt))
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+
+    selected: List[Tuple[Source, str]] = []
+    seen_titles = set()
+    for _, source, excerpt in candidates:
+        title = (source.title or "Untitled Source").strip()
+        if title in seen_titles:
+            continue
+        seen_titles.add(title)
+        selected.append((source, excerpt))
+        if len(selected) >= max_excerpts:
+            break
+
+    return selected
+
+
 def _deterministic_section_paragraph(
     section: OutlineSection,
     routed_sources: List[Source],
@@ -532,21 +584,20 @@ def _deterministic_section_paragraph(
     source_lookup: dict,
 ) -> str:
     """Build an evidence-grounded section paragraph without relying on model output."""
+    excerpt_pairs = _select_deterministic_excerpts(section, routed_sources, max_excerpts=2)
     evidence_sentences: List[str] = []
 
-    for finding in routed_findings[:2]:
-        claim = _normalize_sentence(finding.claim, max_chars=220)
-        if claim:
-            evidence_sentences.append(
-                f"The strongest signal is {claim} {_format_finding_citations(finding, source_lookup)}"
-            )
+    for source, excerpt in excerpt_pairs:
+        title = source.title or "Untitled Source"
+        evidence_sentences.append(f'"{excerpt}" [{title}]')
 
     if not evidence_sentences:
-        for source in routed_sources[:2]:
-            snippet = _extract_source_fact(source, max_chars=220)
-            title = source.title or "Untitled Source"
-            if snippet:
-                evidence_sentences.append(f"Source reporting shows {snippet} [{title}]")
+        for finding in routed_findings[:2]:
+            claim = _normalize_sentence(finding.claim, max_chars=220)
+            if claim:
+                evidence_sentences.append(
+                    f"The strongest signal is {claim} {_format_finding_citations(finding, source_lookup)}"
+                )
 
     if not evidence_sentences:
         return f"Evidence for {section.title.lower()} is limited in the retrieved corpus."

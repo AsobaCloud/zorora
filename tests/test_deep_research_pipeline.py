@@ -1247,6 +1247,88 @@ class TestSynthesisProvenanceAndSalvage(unittest.TestCase):
         _ = synthesize(state)
         self.assertEqual(state.synthesis_model, "deterministic")
 
+    def test_deterministic_section_prefers_more_credible_excerpt(self):
+        """Deterministic section paragraphs should lead with highest-credibility relevant excerpt."""
+        from workflows.deep_research.synthesizer import _deterministic_section_paragraph, OutlineSection
+
+        section = OutlineSection(title="Regulatory Impact", bullets=["price cap mechanism"])
+        high_cred = _make_source(
+            title="Council Policy Brief",
+            snippet="EU price cap mechanism reduced extreme gas transaction spikes in winter auctions.",
+            relevance=0.55,
+            url="https://example.com/high-cred",
+        )
+        low_cred = _make_source(
+            title="Market Blog",
+            snippet="Analysts discussed a price cap mechanism but offered limited supporting data.",
+            relevance=0.9,
+            url="https://example.com/low-cred",
+        )
+        high_cred.credibility_score = 0.92
+        low_cred.credibility_score = 0.35
+
+        paragraph = _deterministic_section_paragraph(
+            section=section,
+            routed_sources=[low_cred, high_cred],
+            routed_findings=[],
+            source_lookup={},
+        )
+
+        self.assertIn("[Council Policy Brief]", paragraph)
+        self.assertIn("[Market Blog]", paragraph)
+        self.assertIn('"', paragraph)
+        self.assertLess(
+            paragraph.find("[Council Policy Brief]"),
+            paragraph.find("[Market Blog]"),
+        )
+
+    @patch("workflows.deep_research.synthesizer.synthesize_outline")
+    @patch("workflows.deep_research.synthesizer.synthesize_section", return_value=None)
+    def test_all_section_deterministic_uses_source_excerpts(self, _mock_synth_section, mock_outline):
+        """All-section deterministic mode should include quoted source excerpts with citations."""
+        from engine.models import ResearchState, Finding
+        from workflows.deep_research.synthesizer import synthesize, OutlineResult, OutlineSection
+
+        src_a = _make_source(
+            title="Grid Operations Update",
+            snippet="LNG delivery delays tightened balancing markets and lifted day-ahead prices in EU hubs.",
+            relevance=0.65,
+            url="https://example.com/grid-update",
+        )
+        src_b = _make_source(
+            title="Regulatory Gazette",
+            snippet="Temporary intervention capped exceptional gas trades but pass-through remained elevated.",
+            relevance=0.62,
+            url="https://example.com/reg-gazette",
+        )
+        src_a.credibility_score = 0.88
+        src_b.credibility_score = 0.84
+
+        state = ResearchState(original_query="eu hub pricing dynamics")
+        state.sources_checked = [src_a, src_b]
+        state.total_sources = 2
+        state.findings = [
+            Finding(
+                claim="LNG delays tightened EU balancing markets.",
+                sources=[src_a.source_id],
+                confidence="high",
+                average_credibility=0.88,
+            )
+        ]
+
+        mock_outline.return_value = OutlineResult(
+            executive_summary="Summary [Grid Operations Update]",
+            sections=[OutlineSection(title="Market Effects", bullets=["balancing and pass-through"])],
+            is_comparison=False,
+            subjects=None,
+        )
+
+        synthesis = synthesize(state)
+        self.assertEqual(state.synthesis_model, "deterministic")
+        self.assertIn("## Market Effects", synthesis)
+        self.assertIn("[Grid Operations Update]", synthesis)
+        self.assertIn('"', synthesis)
+
     @patch("workflows.deep_research.synthesizer.synthesize_outline")
     @patch("workflows.deep_research.synthesizer.synthesize_section", return_value=None)
     @patch(
