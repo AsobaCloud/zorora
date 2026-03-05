@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 import config
 from engine.models import Source
+from tools.research.academic_search import _sanitize_provider_query
 
 logger = logging.getLogger(__name__)
 
@@ -25,10 +26,15 @@ def _congress_gov_search_raw(query: str, max_results: int = 5) -> List[Dict[str,
     endpoint = cg_config.get("endpoint", "https://api.congress.gov/v3/bill")
     timeout = cg_config.get("timeout", 15)
 
+    provider_query = _sanitize_provider_query(query, "policy")
+    if not provider_query:
+        return []
+
     params = {
         "api_key": api_key,
         "format": "json",
         "limit": min(max_results, 20),
+        "query": provider_query,
     }
 
     try:
@@ -77,8 +83,12 @@ def _govtrack_search_raw(query: str, max_results: int = 5) -> List[Dict[str, Any
     endpoint = gt_config.get("endpoint", "https://www.govtrack.us/api/v2/bill")
     timeout = gt_config.get("timeout", 15)
 
+    provider_query = _sanitize_provider_query(query, "policy")
+    if not provider_query:
+        return []
+
     params = {
-        "q": query,
+        "q": provider_query,
         "limit": min(max_results, 20),
         "format": "json",
     }
@@ -126,8 +136,12 @@ def _federal_register_search_raw(query: str, max_results: int = 5) -> List[Dict[
     endpoint = fr_config.get("endpoint", "https://www.federalregister.gov/api/v1/documents.json")
     timeout = fr_config.get("timeout", 15)
 
+    provider_query = _sanitize_provider_query(query, "policy")
+    if not provider_query:
+        return []
+
     params = {
-        "conditions[term]": query,
+        "conditions[term]": provider_query,
         "per_page": min(max_results, 20),
         "order": "relevance",
     }

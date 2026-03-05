@@ -6,6 +6,7 @@ from typing import List, Dict, Any
 import requests
 import config
 from engine.models import Source
+from tools.research.academic_search import _sanitize_provider_query
 
 logger = logging.getLogger(__name__)
 
@@ -23,8 +24,12 @@ def _sec_edgar_search_raw(query: str, max_results: int = 10) -> List[Dict[str, A
     timeout = sec_config.get("timeout", 15)
     user_agent = sec_config.get("user_agent", "Asoba admin@asoba.co")
 
+    provider_query = _sanitize_provider_query(query, "sec")
+    if not provider_query:
+        return []
+
     params = {
-        "q": query,
+        "q": provider_query,
         "dateRange": "custom",
         "startdt": "2020-01-01",
         "forms": "10-K,10-Q,8-K",

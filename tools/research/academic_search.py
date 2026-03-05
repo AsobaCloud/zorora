@@ -8,6 +8,7 @@ from urllib.parse import quote
 import time
 import ssl
 import warnings
+import threading
 
 import requests
 import config
@@ -17,6 +18,115 @@ logger = logging.getLogger(__name__)
 
 # Suppress BeautifulSoup encoding warnings
 logging.getLogger("bs4.dammit").setLevel(logging.ERROR)
+
+_QUERY_STOPWORDS = frozenset({
+    "the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "from",
+    "with", "by", "as", "is", "are", "was", "were", "be", "been", "being",
+    "what", "how", "why", "when", "where", "which",
+})
+_REFINEMENT_ARTIFACTS_RE = re.compile(
+    r"\b(?:time period|geography|geographic focus|analysis type|scope)\s*:\s*",
+    re.IGNORECASE,
+)
+_PROVIDER_QUERY_LIMITS = {
+    "core": (18, 180),
+    "openalex": (16, 140),
+    "openalex_fallback": (10, 90),
+    "semantic_scholar": (14, 140),
+    "semantic_scholar_fallback": (10, 90),
+    "world_bank": (10, 90),
+    "policy": (12, 100),
+    "sec": (10, 90),
+    "default": (20, 220),
+}
+_PROVIDER_DEFAULT_BACKOFF = {
+    "openalex": 1.0,
+    "semantic_scholar": 30.0,
+    "core": 1.0,
+}
+_PROVIDER_STATE_LOCK = threading.Lock()
+_PROVIDER_COOLDOWN_UNTIL: Dict[str, float] = {}
+
+
+def _sanitize_provider_query(raw_query: str, provider: str) -> str:
+    """Normalize refined/decomposed queries for provider API compatibility."""
+    if not raw_query:
+        return ""
+
+    max_terms, max_chars = _PROVIDER_QUERY_LIMITS.get(
+        provider, _PROVIDER_QUERY_LIMITS["default"]
+    )
+    cleaned = raw_query.replace("|", " ")
+    cleaned = _REFINEMENT_ARTIFACTS_RE.sub(" ", cleaned)
+    cleaned = re.sub(r"\bfocus on\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"[^A-Za-z0-9%$€£/\-+.\s]", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+
+    tokens = re.findall(r"[A-Za-z0-9%$€£][A-Za-z0-9%$€£/\-+.]*", cleaned)
+    deduped = []
+    seen = set()
+    for token in tokens:
+        lower = token.lower()
+        if lower in _QUERY_STOPWORDS:
+            continue
+        if lower in seen:
+            continue
+        seen.add(lower)
+        deduped.append(token)
+        if len(deduped) >= max_terms:
+            break
+
+    normalized = " ".join(deduped).strip()
+    if not normalized:
+        normalized = cleaned[:max_chars].strip()
+    if len(normalized) > max_chars:
+        normalized = normalized[:max_chars].strip()
+
+    return normalized
+
+
+def _respect_provider_cooldown(provider: str) -> None:
+    """Sleep only if provider is currently in cooldown due to prior 429."""
+    with _PROVIDER_STATE_LOCK:
+        now = time.monotonic()
+        until = _PROVIDER_COOLDOWN_UNTIL.get(provider, 0.0)
+        wait = max(0.0, until - now)
+    if wait > 0:
+        time.sleep(wait)
+
+
+def _provider_cooldown_remaining(provider: str) -> float:
+    with _PROVIDER_STATE_LOCK:
+        now = time.monotonic()
+        until = _PROVIDER_COOLDOWN_UNTIL.get(provider, 0.0)
+        return max(0.0, until - now)
+
+
+def _set_provider_cooldown(provider: str, seconds: float) -> None:
+    if seconds <= 0:
+        return
+    with _PROVIDER_STATE_LOCK:
+        now = time.monotonic()
+        current_until = _PROVIDER_COOLDOWN_UNTIL.get(provider, 0.0)
+        next_until = now + seconds
+        _PROVIDER_COOLDOWN_UNTIL[provider] = max(current_until, next_until)
+
+
+def _parse_retry_after_seconds(response: requests.Response, default: float) -> float:
+    """Parse Retry-After header; fallback to provider default delay."""
+    retry_after = ""
+    try:
+        retry_after = (response.headers or {}).get("Retry-After", "")
+    except Exception:
+        retry_after = ""
+    if retry_after:
+        try:
+            parsed = float(retry_after)
+            if parsed > 0:
+                return parsed
+        except Exception:
+            pass
+    return default
 
 
 def _duckduckgo_search_raw(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
@@ -102,7 +212,8 @@ def _scholar_search_raw(query: str, max_results: int = 5) -> List[Dict[str, Any]
     Returns:
         List of result dictionaries with [Scholar] tag in description
     """
-    scholar_query = f"site:scholar.google.com {query}"
+    provider_query = _sanitize_provider_query(query, "default")
+    scholar_query = f"site:scholar.google.com {provider_query}"
     results = _duckduckgo_search_raw(scholar_query, max_results)
     
     # Tag results as Scholar
@@ -127,7 +238,8 @@ def _pubmed_search_raw(query: str, max_results: int = 5) -> List[Dict[str, Any]]
     Returns:
         List of result dictionaries with [PubMed] tag in description
     """
-    pubmed_query = f"site:pubmed.ncbi.nlm.nih.gov {query}"
+    provider_query = _sanitize_provider_query(query, "default")
+    pubmed_query = f"site:pubmed.ncbi.nlm.nih.gov {provider_query}"
     results = _duckduckgo_search_raw(pubmed_query, max_results)
     
     # Tag results as PubMed
@@ -158,19 +270,31 @@ def _core_api_search(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
         logger.warning("CORE API key not configured, skipping CORE search")
         return []
     
+    provider_query = _sanitize_provider_query(query, "core")
+    if not provider_query:
+        return []
+
     endpoint = "https://api.core.ac.uk/v3/search/works/"
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Accept": "application/json"
     }
     params = {
-        "q": query,
+        "q": provider_query,
         "limit": min(max_results, 10),  # CORE API limit
         "page": 1
     }
-    
+
     try:
+        _respect_provider_cooldown("core")
         response = requests.get(endpoint, headers=headers, params=params, timeout=10)
+        if response.status_code == 429:
+            delay = _parse_retry_after_seconds(
+                response, _PROVIDER_DEFAULT_BACKOFF["core"]
+            )
+            _set_provider_cooldown("core", delay)
+            logger.warning("CORE rate limited; backing off %.1fs", delay)
+            return []
         response.raise_for_status()
         
         data = response.json()
@@ -225,7 +349,8 @@ def _core_api_search(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
 
 def _arxiv_search_raw(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
     """Search arXiv via DuckDuckGo."""
-    arxiv_query = f"site:arxiv.org {query}"
+    provider_query = _sanitize_provider_query(query, "default")
+    arxiv_query = f"site:arxiv.org {provider_query}"
     results = _duckduckgo_search_raw(arxiv_query, max_results)
     for result in results:
         result["description"] = f"[arXiv] {result.get('description', 'Preprint')}"
@@ -235,7 +360,8 @@ def _arxiv_search_raw(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
 
 def _biorxiv_search_raw(query: str, max_results: int = 3) -> List[Dict[str, Any]]:
     """Search bioRxiv via DuckDuckGo."""
-    biorxiv_query = f"site:biorxiv.org {query}"
+    provider_query = _sanitize_provider_query(query, "default")
+    biorxiv_query = f"site:biorxiv.org {provider_query}"
     results = _duckduckgo_search_raw(biorxiv_query, max_results)
     for result in results:
         result["description"] = f"[bioRxiv] {result.get('description', 'Biology preprint')}"
@@ -245,7 +371,8 @@ def _biorxiv_search_raw(query: str, max_results: int = 3) -> List[Dict[str, Any]
 
 def _medrxiv_search_raw(query: str, max_results: int = 3) -> List[Dict[str, Any]]:
     """Search medRxiv via DuckDuckGo."""
-    medrxiv_query = f"site:medrxiv.org {query}"
+    provider_query = _sanitize_provider_query(query, "default")
+    medrxiv_query = f"site:medrxiv.org {provider_query}"
     results = _duckduckgo_search_raw(medrxiv_query, max_results)
     for result in results:
         result["description"] = f"[medRxiv] {result.get('description', 'Medical preprint')}"
@@ -258,11 +385,15 @@ def _pmc_search_raw(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
     # DuckDuckGo site: filters are unreliable for PMC, so use keyword search + URL filtering
     pmc_keywords = ["PMC", "open access", "PubMed Central"]
     
+    provider_query = _sanitize_provider_query(query, "default")
+    if not provider_query:
+        return []
+
     # Try queries with PMC keywords (avoid site: filter which causes errors)
     search_queries = [
-        f"{query} {' '.join(pmc_keywords)}",
-        f"{query} PMC",
-        f"{query} PubMed Central open access",
+        f"{provider_query} {' '.join(pmc_keywords)}",
+        f"{provider_query} PMC",
+        f"{provider_query} PubMed Central open access",
     ]
     
     for search_query in search_queries:
@@ -327,70 +458,100 @@ def _openalex_search_raw(query: str, max_results: int = 5) -> List[Dict[str, Any
     timeout = openalex_config.get("timeout", 15)
     email = openalex_config.get("polite_email", "")
 
-    params = {
-        "search": query,
-        "per_page": min(max_results, 25),
-    }
-    if email:
-        params["mailto"] = email
-
-    try:
-        response = requests.get(endpoint, params=params, timeout=timeout)
-        response.raise_for_status()
-        data = response.json()
-
-        results = []
-        for work in data.get("results", []):
-            # Reconstruct abstract from inverted index
-            abstract = _reconstruct_abstract(work.get("abstract_inverted_index"))
-
-            # Extract authors
-            authors = []
-            for authorship in work.get("authorships", []):
-                author = authorship.get("author", {})
-                name = author.get("display_name", "")
-                if name:
-                    authors.append(name)
-
-            authors_str = ", ".join(authors[:3])
-            if len(authors) > 3:
-                authors_str += " et al."
-
-            # Build description
-            desc_parts = ["[OpenAlex]"]
-            if authors_str:
-                desc_parts.append(authors_str)
-            year = work.get("publication_date", "")[:4] if work.get("publication_date") else ""
-            if year:
-                desc_parts.append(f"({year})")
-            cite_count = work.get("cited_by_count", 0)
-            if cite_count:
-                desc_parts.append(f"Citations: {cite_count}")
-            description = " ".join(desc_parts)
-            if abstract:
-                description += f" - {abstract[:200]}"
-
-            # DOI handling
-            doi_raw = work.get("doi", "")
-            doi = doi_raw.replace("https://doi.org/", "") if doi_raw else ""
-            url = doi_raw or ""
-
-            results.append({
-                "title": work.get("title", "No title"),
-                "url": url,
-                "description": description,
-                "doi": doi,
-                "year": int(year) if year else None,
-                "citation_count": cite_count,
-                "source": "OpenAlex",
-            })
-
-        logger.info(f"OpenAlex returned {len(results)} results for: {query[:60]}...")
-        return results
-
-    except Exception as e:
-        logger.warning(f"OpenAlex search failed: {e}")
+    active_query = _sanitize_provider_query(query, "openalex")
+    if not active_query:
         return []
+
+    if _provider_cooldown_remaining("openalex") > 0:
+        logger.info("OpenAlex in cooldown window; skipping request")
+        return []
+
+    max_retries = 3
+    for attempt in range(max_retries):
+        params = {
+            "search": active_query,
+            "per_page": min(max_results, 25),
+        }
+        if email:
+            params["mailto"] = email
+
+        try:
+            _respect_provider_cooldown("openalex")
+            response = requests.get(endpoint, params=params, timeout=timeout)
+            if response.status_code == 400 and attempt == 0:
+                fallback_query = _sanitize_provider_query(active_query, "openalex_fallback")
+                if fallback_query and fallback_query != active_query:
+                    logger.warning(
+                        "OpenAlex rejected query shape; retrying with provider-safe fallback query"
+                    )
+                    active_query = fallback_query
+                    continue
+                return []
+            if response.status_code == 429 and attempt < max_retries - 1:
+                delay = _parse_retry_after_seconds(
+                    response,
+                    _PROVIDER_DEFAULT_BACKOFF["openalex"] * (attempt + 1),
+                )
+                _set_provider_cooldown("openalex", delay)
+                logger.warning("OpenAlex rate limited; backing off %.1fs", delay)
+                return []
+            response.raise_for_status()
+            data = response.json()
+
+            results = []
+            for work in data.get("results", []):
+                # Reconstruct abstract from inverted index
+                abstract = _reconstruct_abstract(work.get("abstract_inverted_index"))
+
+                # Extract authors
+                authors = []
+                for authorship in work.get("authorships", []):
+                    author = authorship.get("author", {})
+                    name = author.get("display_name", "")
+                    if name:
+                        authors.append(name)
+
+                authors_str = ", ".join(authors[:3])
+                if len(authors) > 3:
+                    authors_str += " et al."
+
+                # Build description
+                desc_parts = ["[OpenAlex]"]
+                if authors_str:
+                    desc_parts.append(authors_str)
+                year = work.get("publication_date", "")[:4] if work.get("publication_date") else ""
+                if year:
+                    desc_parts.append(f"({year})")
+                cite_count = work.get("cited_by_count", 0)
+                if cite_count:
+                    desc_parts.append(f"Citations: {cite_count}")
+                description = " ".join(desc_parts)
+                if abstract:
+                    description += f" - {abstract[:200]}"
+
+                # DOI handling
+                doi_raw = work.get("doi", "")
+                doi = doi_raw.replace("https://doi.org/", "") if doi_raw else ""
+                url = doi_raw or ""
+
+                results.append({
+                    "title": work.get("title", "No title"),
+                    "url": url,
+                    "description": description,
+                    "doi": doi,
+                    "year": int(year) if year else None,
+                    "citation_count": cite_count,
+                    "source": "OpenAlex",
+                })
+
+            logger.info(f"OpenAlex returned {len(results)} results for: {active_query[:60]}...")
+            return results
+
+        except Exception as e:
+            logger.warning(f"OpenAlex search failed: {e}")
+            return []
+
+    return []
 
 
 def _semantic_scholar_search_raw(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
@@ -405,9 +566,15 @@ def _semantic_scholar_search_raw(query: str, max_results: int = 5) -> List[Dict[
     endpoint = ss_config.get("endpoint", "https://api.semanticscholar.org/graph/v1/paper/search")
     timeout = ss_config.get("timeout", 15)
     api_key = ss_config.get("api_key", "")
+    active_query = _sanitize_provider_query(query, "semantic_scholar")
+    if not active_query:
+        return []
+    if _provider_cooldown_remaining("semantic_scholar") > 0:
+        logger.info("Semantic Scholar in cooldown window; skipping request")
+        return []
 
     params = {
-        "query": query,
+        "query": active_query,
         "limit": min(max_results, 20),
         "fields": "title,url,year,citationCount,abstract,authors,externalIds",
     }
@@ -415,13 +582,33 @@ def _semantic_scholar_search_raw(query: str, max_results: int = 5) -> List[Dict[
     if api_key:
         headers["x-api-key"] = api_key
 
-    # Exponential backoff for rate limiting
+    # Provider-specific backoff for rate limiting.
     for attempt in range(3):
         try:
-            if attempt > 0:
-                time.sleep(2 ** attempt)
-
+            _respect_provider_cooldown("semantic_scholar")
             response = requests.get(endpoint, params=params, headers=headers, timeout=timeout)
+            if response.status_code == 400 and attempt == 0:
+                fallback_query = _sanitize_provider_query(active_query, "semantic_scholar_fallback")
+                if fallback_query and fallback_query != active_query:
+                    active_query = fallback_query
+                    params["query"] = active_query
+                    logger.warning(
+                        "Semantic Scholar rejected query shape; retrying with provider-safe fallback query"
+                    )
+                    continue
+                return []
+            if response.status_code == 429 and attempt < 2:
+                delay = _parse_retry_after_seconds(
+                    response,
+                    _PROVIDER_DEFAULT_BACKOFF["semantic_scholar"] * (attempt + 1),
+                )
+                _set_provider_cooldown("semantic_scholar", delay)
+                logger.warning(
+                    "Semantic Scholar rate limited (attempt %d), backing off %.1fs...",
+                    attempt + 1,
+                    delay,
+                )
+                return []
             response.raise_for_status()
             data = response.json()
 
@@ -462,13 +649,10 @@ def _semantic_scholar_search_raw(query: str, max_results: int = 5) -> List[Dict[
                     "source": "SemanticScholar",
                 })
 
-            logger.info(f"Semantic Scholar returned {len(results)} results for: {query[:60]}...")
+            logger.info(f"Semantic Scholar returned {len(results)} results for: {active_query[:60]}...")
             return results
 
         except Exception as e:
-            if "429" in str(e) and attempt < 2:
-                logger.warning(f"Semantic Scholar rate limited (attempt {attempt + 1}), backing off...")
-                continue
             logger.warning(f"Semantic Scholar search failed: {e}")
             return []
 

@@ -699,6 +699,76 @@ class TestClusteredFindingsParserTolerance(unittest.TestCase):
         self.assertEqual(len(findings), 1)
 
 
+class TestClusteredFindingsQualityGates(unittest.TestCase):
+    def test_parse_clustered_findings_rejects_generic_boilerplate_claim(self):
+        """Generic report-style claims should be dropped from parsed findings."""
+        from engine.deep_research_service import _parse_clustered_findings
+
+        text = (
+            "FINDING: The following thematic findings can be extracted from the provided sources.\n"
+            "SOURCES: 1, 2\n"
+            "CONFIDENCE: high\n"
+        )
+        src1 = _make_source("S1", url="https://ex.com/1")
+        src2 = _make_source("S2", url="https://ex.com/2")
+
+        findings = _parse_clustered_findings(text, [src1, src2], query="eu power prices")
+        self.assertEqual(findings, [])
+
+    def test_parse_clustered_findings_rejects_query_unrelated_claim(self):
+        """Claims with no lexical overlap to query should be dropped."""
+        from engine.deep_research_service import _parse_clustered_findings
+
+        text = (
+            "FINDING: Regional fisheries stocks improved after marine habitat restoration.\n"
+            "SOURCES: 1\n"
+            "CONFIDENCE: medium\n"
+        )
+        src1 = _make_source("S1", url="https://ex.com/1")
+
+        findings = _parse_clustered_findings(text, [src1], query="european power prices shipping costs")
+        self.assertEqual(findings, [])
+
+    def test_parse_clustered_findings_rejects_all_sources_degeneration(self):
+        """Claims citing the full source set should be treated as degenerate and dropped."""
+        from engine.deep_research_service import _parse_clustered_findings
+
+        text = (
+            "FINDING: Shipping disruptions increased fuel freight premiums across Europe.\n"
+            "SOURCES: 1, 2, 3, 4\n"
+            "CONFIDENCE: high\n"
+        )
+        srcs = [
+            _make_source("S1", url="https://ex.com/1"),
+            _make_source("S2", url="https://ex.com/2"),
+            _make_source("S3", url="https://ex.com/3"),
+            _make_source("S4", url="https://ex.com/4"),
+        ]
+
+        findings = _parse_clustered_findings(text, srcs, query="europe power price shipping impact")
+        self.assertEqual(findings, [])
+
+    def test_parse_clustered_findings_keeps_query_grounded_fact_claim(self):
+        """Specific, query-grounded claims with bounded citations should pass."""
+        from engine.deep_research_service import _parse_clustered_findings
+
+        text = (
+            "FINDING: EU ETS maritime allowance costs increased freight premiums and raised gas-linked power prices in Europe.\n"
+            "SOURCES: 1, 2\n"
+            "CONFIDENCE: high\n"
+        )
+        src1 = _make_source("S1", url="https://ex.com/1")
+        src2 = _make_source("S2", url="https://ex.com/2")
+
+        findings = _parse_clustered_findings(
+            text,
+            [src1, src2],
+            query="EU ETS maritime costs impact on European power prices",
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertIn("EU ETS maritime allowance costs", findings[0].claim)
+
+
 # ---------------------------------------------------------------------------
 # SEP-027 — SSE race condition: pipeline must not emit status="completed"
 # ---------------------------------------------------------------------------
@@ -972,6 +1042,64 @@ class TestSynthesisQualityGuards(unittest.TestCase):
         )
         self.assertIsNone(result)
 
+    @patch(
+        "workflows.deep_research.synthesizer._call_research_synthesis_model",
+        return_value=(
+            "The provided evidence indicates regulatory pressure in power markets [Policy Source]. "
+            "Here are the key findings and insights: 1. Interventions capped pass-through in selected hubs."
+        ),
+    )
+    def test_synthesize_section_rejects_list_style_findings_dump(self, _mock_call_model):
+        """List-style report framing should fail section quality and fall back deterministically."""
+        from workflows.deep_research.synthesizer import synthesize_section, OutlineSection
+
+        section = OutlineSection(title="Regulatory Response", bullets=["Assess intervention impact"])
+        src = _make_source(
+            title="Policy Source",
+            snippet="Regulatory interventions capped pass-through in selected hubs.",
+            relevance=0.65,
+            url="https://example.com/policy-source",
+        )
+
+        result = synthesize_section(
+            section=section,
+            sources=[src],
+            findings=[],
+            state=MagicMock(),
+            is_comparison=False,
+            subjects=None,
+        )
+        self.assertIsNone(result)
+
+    @patch(
+        "workflows.deep_research.synthesizer._call_research_synthesis_model",
+        return_value=(
+            "Price climb in market as outage widens spreads and volatility rises [Grid Source]."
+        ),
+    )
+    def test_synthesize_section_accepts_morphology_variant_overlap(self, _mock_call_model):
+        """Grounding gate should tolerate singular/plural and tense variants across evidence."""
+        from workflows.deep_research.synthesizer import synthesize_section, OutlineSection
+
+        section = OutlineSection(title="Price Dynamics", bullets=["Track market pricing shifts"])
+        src = _make_source(
+            title="Grid Source",
+            snippet="Prices climbed in markets as outages widened spreads.",
+            relevance=0.7,
+            url="https://example.com/grid-source",
+        )
+
+        paragraph = synthesize_section(
+            section=section,
+            sources=[src],
+            findings=[],
+            state=MagicMock(),
+            is_comparison=False,
+            subjects=None,
+        )
+        self.assertIsNotNone(paragraph)
+        self.assertIn("[Grid Source]", paragraph)
+
 
 class TestSynthesisProvenanceAndSalvage(unittest.TestCase):
     @patch(
@@ -1001,6 +1129,36 @@ class TestSynthesisProvenanceAndSalvage(unittest.TestCase):
             section=section,
             sources=[src],
             findings=[fnd],
+            state=MagicMock(),
+            is_comparison=False,
+            subjects=None,
+        )
+
+        self.assertIsNotNone(paragraph)
+        self.assertIn("[EU Power Price Monitor]", paragraph)
+
+    @patch(
+        "workflows.deep_research.synthesizer._call_research_synthesis_model",
+        return_value=(
+            " ".join(["market"] * 190) + " [EU Power Price Monitor]."
+        ),
+    )
+    def test_synthesize_section_readds_citation_after_truncation(self, _mock_call_model):
+        """If truncation strips the only citation, salvage should re-add inline citations."""
+        from workflows.deep_research.synthesizer import synthesize_section, OutlineSection
+
+        section = OutlineSection(title="Price Impact", bullets=["Assess market pass-through"])
+        src = _make_source(
+            title="EU Power Price Monitor",
+            snippet="Market conditions tightened after LNG delays in Europe.",
+            relevance=0.7,
+            url="https://example.com/power-monitor",
+        )
+
+        paragraph = synthesize_section(
+            section=section,
+            sources=[src],
+            findings=[],
             state=MagicMock(),
             is_comparison=False,
             subjects=None,
@@ -1090,6 +1248,49 @@ class TestSynthesisProvenanceAndSalvage(unittest.TestCase):
         self.assertEqual(state.synthesis_model, "deterministic")
 
     @patch("workflows.deep_research.synthesizer.synthesize_outline")
+    @patch("workflows.deep_research.synthesizer.synthesize_section", return_value=None)
+    @patch(
+        "workflows.deep_research.synthesizer._deterministic_section_paragraph",
+        return_value="Deterministic section synthesis [Policy Note].",
+    )
+    def test_all_section_fallback_keeps_outline_structure(
+        self,
+        _mock_det_section,
+        _mock_synth_section,
+        mock_outline,
+    ):
+        """When all model sections fail, keep outline assembly with deterministic sections."""
+        from engine.models import ResearchState, Finding
+        from workflows.deep_research.synthesizer import synthesize, OutlineResult, OutlineSection
+
+        src = _make_source("Policy Note", relevance=0.5, url="https://example.com/policy")
+        state = ResearchState(original_query="policy impact")
+        state.sources_checked = [src]
+        state.total_sources = 1
+        state.findings = [
+            Finding(
+                claim="Policy adjustments altered dispatch economics.",
+                sources=[src.source_id],
+                confidence="low",
+                average_credibility=0.6,
+            )
+        ]
+
+        mock_outline.return_value = OutlineResult(
+            executive_summary="Summary [Policy Note]",
+            sections=[OutlineSection(title="Policy", bullets=["rule changes"])],
+            is_comparison=False,
+            subjects=None,
+        )
+
+        synthesis = synthesize(state)
+
+        self.assertEqual(state.synthesis_model, "deterministic")
+        self.assertIn("## Policy", synthesis)
+        self.assertIn("Deterministic section synthesis [Policy Note].", synthesis)
+        self.assertNotIn("## Evidence Highlights", synthesis)
+
+    @patch("workflows.deep_research.synthesizer.synthesize_outline")
     @patch("workflows.deep_research.synthesizer.synthesize_section")
     def test_rewrites_low_quality_executive_summary(
         self,
@@ -1133,6 +1334,47 @@ class TestSynthesisProvenanceAndSalvage(unittest.TestCase):
 
         self.assertNotIn("The following are key insights", synthesis)
         self.assertIn("[EU Power Price Monitor]", synthesis)
+
+    @patch("workflows.deep_research.synthesizer.synthesize_outline")
+    @patch("workflows.deep_research.synthesizer.synthesize_section")
+    def test_rewrites_uncited_executive_summary(self, mock_synth_section, mock_outline):
+        """Executive summaries without citations should be rewritten from evidence."""
+        from engine.models import ResearchState, Finding
+        from workflows.deep_research.synthesizer import synthesize, OutlineResult, OutlineSection
+
+        src = _make_source(
+            title="Regional Grid Bulletin",
+            snippet="Power prices rose after pipeline maintenance constrained fuel supply.",
+            relevance=0.8,
+            url="https://example.com/grid-bulletin",
+        )
+        state = ResearchState(original_query="regional power market pressure")
+        state.sources_checked = [src]
+        state.total_sources = 1
+        state.findings = [
+            Finding(
+                claim="Power prices rose after pipeline maintenance constrained fuel supply.",
+                sources=[src.source_id],
+                confidence="high",
+                average_credibility=0.75,
+            )
+        ]
+
+        mock_outline.return_value = OutlineResult(
+            executive_summary="Power markets tightened during the period due to fuel bottlenecks.",
+            sections=[OutlineSection(title="Drivers", bullets=["fuel constraints"])],
+            is_comparison=False,
+            subjects=None,
+        )
+        mock_synth_section.return_value = (
+            "Fuel bottlenecks tightened dispatch economics and lifted spot prices "
+            "[Regional Grid Bulletin]."
+        )
+
+        synthesis = synthesize(state)
+
+        exec_summary = synthesis.split("## Drivers")[0]
+        self.assertIn("[Regional Grid Bulletin]", exec_summary)
 
 
 class TestResearchStateCompatibility(unittest.TestCase):

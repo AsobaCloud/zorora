@@ -6,6 +6,7 @@ aggregator channel inclusion, and credibility baselines.
 """
 
 import unittest
+import importlib
 from unittest.mock import patch, MagicMock
 
 from engine.models import Source
@@ -51,42 +52,55 @@ class TestOpenAlexRaw(unittest.TestCase):
         ]
     }
 
-    @patch("tools.research.academic_search.requests.get")
-    def test_openalex_raw_parsing(self, mock_get):
-        mock_get.return_value = _mock_response(self.SAMPLE_RESPONSE)
-        from tools.research.academic_search import _openalex_search_raw
+    def test_openalex_raw_parsing(self):
+        academic_module = importlib.import_module("tools.research.academic_search")
+        with patch.object(academic_module.requests, "get") as mock_get:
+            mock_get.return_value = _mock_response(self.SAMPLE_RESPONSE)
+            results = academic_module._openalex_search_raw("solar africa", max_results=5)
 
-        results = _openalex_search_raw("solar africa", max_results=5)
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["title"], "Solar Energy in Sub-Saharan Africa")
         self.assertIn("Solar energy is growing in Africa", results[0]["description"])
         self.assertEqual(results[0]["citation_count"], 42)
         self.assertEqual(results[0]["source"], "OpenAlex")
 
-    @patch("tools.research.academic_search.requests.get")
-    def test_openalex_empty_abstract(self, mock_get):
+    def test_openalex_empty_abstract(self):
+        academic_module = importlib.import_module("tools.research.academic_search")
         data = {"results": [{"id": "W1", "title": "Test", "abstract_inverted_index": None}]}
-        mock_get.return_value = _mock_response(data)
-        from tools.research.academic_search import _openalex_search_raw
+        with patch.object(academic_module.requests, "get") as mock_get:
+            mock_get.return_value = _mock_response(data)
+            results = academic_module._openalex_search_raw("test")
 
-        results = _openalex_search_raw("test")
         self.assertEqual(len(results), 1)
         # Should not crash on None abstract
 
-    @patch("tools.research.academic_search.requests.get")
-    def test_openalex_abstract_reconstruction(self, mock_get):
+    def test_openalex_abstract_reconstruction(self):
         from tools.research.academic_search import _reconstruct_abstract
 
         inverted = {"Hello": [0], "world": [1], "foo": [3], "bar": [2]}
         self.assertEqual(_reconstruct_abstract(inverted), "Hello world bar foo")
 
-    @patch("tools.research.academic_search.requests.get")
-    def test_openalex_empty_results(self, mock_get):
-        mock_get.return_value = _mock_response({"results": []})
-        from tools.research.academic_search import _openalex_search_raw
+    def test_openalex_empty_results(self):
+        academic_module = importlib.import_module("tools.research.academic_search")
+        with patch.object(academic_module.requests, "get") as mock_get:
+            mock_get.return_value = _mock_response({"results": []})
+            results = academic_module._openalex_search_raw("nonexistent")
 
-        results = _openalex_search_raw("nonexistent")
         self.assertEqual(results, [])
+
+    def test_openalex_uses_provider_sanitized_query(self):
+        academic_module = importlib.import_module("tools.research.academic_search")
+        query = "power prices | geography: Europe | focus on regulatory and policy shifts"
+        with patch.object(academic_module.requests, "get") as mock_get:
+            mock_get.return_value = _mock_response({"results": []})
+            academic_module._openalex_search_raw(query, max_results=5)
+
+        self.assertTrue(mock_get.called)
+        params = mock_get.call_args.kwargs.get("params", {})
+        sent_query = params.get("search", "")
+        self.assertNotIn("|", sent_query)
+        self.assertNotIn("geography:", sent_query.lower())
+        self.assertNotIn("focus on", sent_query.lower())
 
 
 # ---------------------------------------------------------------------------
@@ -108,28 +122,64 @@ class TestSemanticScholarRaw(unittest.TestCase):
         ]
     }
 
-    @patch("tools.research.academic_search.requests.get")
-    def test_semantic_scholar_raw_parsing(self, mock_get):
-        mock_get.return_value = _mock_response(self.SAMPLE_RESPONSE)
-        from tools.research.academic_search import _semantic_scholar_search_raw
+    def test_semantic_scholar_raw_parsing(self):
+        academic_module = importlib.import_module("tools.research.academic_search")
+        with patch.object(academic_module.requests, "get") as mock_get:
+            mock_get.return_value = _mock_response(self.SAMPLE_RESPONSE)
+            academic_module._PROVIDER_COOLDOWN_UNTIL.clear()
+            results = academic_module._semantic_scholar_search_raw("ML climate", max_results=5)
 
-        results = _semantic_scholar_search_raw("ML climate", max_results=5)
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["title"], "Machine Learning for Climate")
         self.assertEqual(results[0]["citation_count"], 15)
         self.assertEqual(results[0]["source"], "SemanticScholar")
         self.assertEqual(results[0]["doi"], "10.5678/ml-climate")
 
-    @patch("tools.research.academic_search.requests.get")
-    def test_semantic_scholar_429_returns_empty(self, mock_get):
+    def test_semantic_scholar_429_returns_empty(self):
+        academic_module = importlib.import_module("tools.research.academic_search")
         resp = MagicMock()
         resp.status_code = 429
+        resp.headers = {}
         resp.raise_for_status.side_effect = Exception("429 Too Many Requests")
-        mock_get.return_value = resp
-        from tools.research.academic_search import _semantic_scholar_search_raw
+        with patch.object(academic_module.requests, "get") as mock_get:
+            mock_get.return_value = resp
+            academic_module._PROVIDER_COOLDOWN_UNTIL.clear()
+            results = academic_module._semantic_scholar_search_raw("test")
 
-        results = _semantic_scholar_search_raw("test")
         self.assertEqual(results, [])
+        self.assertEqual(mock_get.call_count, 1)
+
+    def test_semantic_scholar_respects_retry_after_header(self):
+        academic_module = importlib.import_module("tools.research.academic_search")
+        throttled = MagicMock()
+        throttled.status_code = 429
+        throttled.headers = {"Retry-After": "0.5"}
+        throttled.raise_for_status.side_effect = Exception("429 Too Many Requests")
+        with patch.object(academic_module.requests, "get") as mock_get:
+            mock_get.return_value = throttled
+            academic_module._PROVIDER_COOLDOWN_UNTIL.clear()
+            first = academic_module._semantic_scholar_search_raw("power price policy shipping", max_results=5)
+
+        self.assertEqual(first, [])
+        self.assertEqual(mock_get.call_count, 1)
+
+        # Second call should short-circuit due provider cooldown window.
+        second = academic_module._semantic_scholar_search_raw("power price policy shipping", max_results=5)
+        self.assertEqual(second, [])
+        self.assertEqual(mock_get.call_count, 1)
+
+
+class TestProviderQuerySanitization(unittest.TestCase):
+    def test_sanitize_provider_query_removes_refinement_artifacts(self):
+        from tools.research.academic_search import _sanitize_provider_query
+
+        raw = "eu power prices | geography: Europe | time period: 2025 | focus on regulatory and policy shifts"
+        cleaned = _sanitize_provider_query(raw, provider="openalex")
+
+        self.assertNotIn("|", cleaned)
+        self.assertNotIn("geography:", cleaned.lower())
+        self.assertNotIn("time period:", cleaned.lower())
+        self.assertNotIn("focus on", cleaned.lower())
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +210,20 @@ class TestWorldBankRaw(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["title"], "Africa Development Report 2023")
         self.assertIn("Economic growth", results[0]["description"])
+
+    @patch("tools.research.worldbank_search.requests.get")
+    def test_worldbank_uses_provider_sanitized_query(self, mock_get):
+        mock_get.return_value = _mock_response({"documents": {}, "total": 0})
+        from tools.research.worldbank_search import _worldbank_document_search_raw
+
+        _worldbank_document_search_raw(
+            "power prices | geography: Europe | focus on regulatory shifts",
+            max_results=5,
+        )
+        params = mock_get.call_args.kwargs.get("params", {})
+        sent = params.get("qterm", "")
+        self.assertNotIn("|", sent)
+        self.assertNotIn("geography:", sent.lower())
 
     @patch("tools.research.worldbank_search.requests.get")
     def test_worldbank_sources_conversion(self, mock_get):
@@ -237,6 +301,17 @@ class TestPolicySearchRaw(unittest.TestCase):
         self.assertEqual(results[0]["source"], "Congress.gov")
 
     @patch("tools.research.policy_search.requests.get")
+    def test_policy_queries_are_sanitized(self, mock_get):
+        mock_get.return_value = _mock_response({"bills": []})
+        from tools.research.policy_search import _congress_gov_search_raw
+
+        _congress_gov_search_raw("clean energy | scope: policy | focus on emissions", max_results=5)
+        params = mock_get.call_args.kwargs.get("params", {})
+        sent = params.get("query", "")
+        self.assertNotIn("|", sent)
+        self.assertNotIn("scope:", sent.lower())
+
+    @patch("tools.research.policy_search.requests.get")
     def test_govtrack_raw_parsing(self, mock_get):
         mock_get.return_value = _mock_response(self.GOVTRACK_RESPONSE)
         from tools.research.policy_search import _govtrack_search_raw
@@ -303,6 +378,17 @@ class TestSECEdgarRaw(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertIn("Tesla", results[0]["title"])
         self.assertEqual(results[0]["source"], "SEC_EDGAR")
+
+    @patch("tools.research.sec_search.requests.get")
+    def test_sec_query_is_sanitized(self, mock_get):
+        mock_get.return_value = _mock_response({"hits": {"hits": []}})
+        from tools.research.sec_search import _sec_edgar_search_raw
+
+        _sec_edgar_search_raw("Tesla filing | scope: policy | focus on compliance")
+        params = mock_get.call_args.kwargs.get("params", {})
+        sent = params.get("q", "")
+        self.assertNotIn("|", sent)
+        self.assertNotIn("scope:", sent.lower())
 
     @patch("tools.research.sec_search.requests.get")
     def test_sec_sources_conversion(self, mock_get):

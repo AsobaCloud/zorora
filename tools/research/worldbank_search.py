@@ -6,6 +6,7 @@ from typing import List, Dict, Any
 import requests
 import config
 from engine.models import Source
+from tools.research.academic_search import _sanitize_provider_query
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +24,13 @@ def _worldbank_document_search_raw(query: str, max_results: int = 10) -> List[Di
     endpoint = wb_config.get("search_endpoint", "https://search.worldbank.org/api/v2/wds")
     timeout = wb_config.get("timeout", 15)
 
+    provider_query = _sanitize_provider_query(query, "world_bank")
+    if not provider_query:
+        return []
+
     params = {
         "format": "json",
-        "qterm": query,
+        "qterm": provider_query,
         "rows": min(max_results, 30),
     }
 

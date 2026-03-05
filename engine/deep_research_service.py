@@ -23,11 +23,99 @@ logger = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[str, str, str], None]
 
+_CLUSTERING_SYSTEM_PROMPT = (
+    "You are a senior energy and electricity market intelligence analyst. "
+    "Extract concise, evidence-grounded thematic findings from source records only. "
+    "Avoid generic framing, planning language, and report boilerplate. "
+    "Each finding must be specific, factual, and tied to listed source IDs."
+)
+
+_GENERIC_FINDING_PATTERNS = [
+    re.compile(r"\bthe following (?:thematic )?findings\b", re.IGNORECASE),
+    re.compile(r"\bprovided sources\b", re.IGNORECASE),
+    re.compile(r"\bbased on the available evidence\b", re.IGNORECASE),
+    re.compile(r"\bthis analysis\b", re.IGNORECASE),
+    re.compile(r"\bto address the question\b", re.IGNORECASE),
+]
+_QUERY_STOPWORDS = frozenset({
+    "the", "a", "an", "and", "or", "of", "to", "in", "on", "for",
+    "from", "with", "by", "as", "is", "are", "was", "were", "be",
+    "been", "being", "that", "this", "it", "its", "at", "into",
+    "how", "what", "when", "where", "why", "which",
+})
+
 
 def _emit(progress_callback: Optional[ProgressCallback], phase: str, message: str, status: str = "running") -> None:
     """Emit progress update if callback is provided."""
     if progress_callback:
         progress_callback(status, phase, message)
+
+
+def _query_terms(text: str) -> set:
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]{3,}", (text or "").lower())
+        if token not in _QUERY_STOPWORDS
+    }
+
+
+def _is_generic_finding_claim(claim: str) -> bool:
+    normalized = re.sub(r"\s+", " ", (claim or "").strip())
+    if not normalized:
+        return True
+    return any(pattern.search(normalized) for pattern in _GENERIC_FINDING_PATTERNS)
+
+
+def _call_clustering_model(prompt: str) -> Optional[str]:
+    """Call reasoning endpoint with clustering-specific analyst instructions."""
+    if not prompt or not prompt.strip():
+        return None
+
+    try:
+        from tools.specialist.client import create_specialist_client
+
+        model_config = config.SPECIALIZED_MODELS["reasoning"]
+        client = create_specialist_client("reasoning", model_config)
+        messages = [
+            {"role": "system", "content": _CLUSTERING_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ]
+        response = client.chat_complete(messages, tools=None)
+        content = client.extract_content(response)
+        if content and str(content).strip():
+            return str(content).strip()
+        logger.warning("Clustering client returned empty content")
+    except Exception as exc:
+        logger.warning("Clustering client failed, trying tool fallback: %s", exc)
+
+    try:
+        from tools.registry import TOOL_FUNCTIONS
+
+        use_reasoning = TOOL_FUNCTIONS.get("use_reasoning_model")
+        if use_reasoning:
+            raw = use_reasoning(prompt)
+            if raw and not raw.startswith("Error:"):
+                return raw.strip()
+    except Exception as exc:
+        logger.warning("Clustering tool fallback failed: %s", exc)
+
+    return None
+
+
+def _rank_findings(findings: List[Finding]) -> List[Finding]:
+    """Rank findings by support breadth and confidence for synthesis routing."""
+    confidence_rank = {"high": 3, "medium": 2, "low": 1}
+    ranked = sorted(
+        findings,
+        key=lambda f: (
+            len(f.sources),
+            confidence_rank.get((f.confidence or "").lower(), 1),
+            float(f.average_credibility or 0.0),
+            len(_query_terms(f.claim)),
+        ),
+        reverse=True,
+    )
+    return ranked
 
 
 _PROSE_PREFIXES = re.compile(
@@ -361,11 +449,6 @@ def _cluster_findings(query: str, sources: List[Source]) -> List[Finding]:
     n = len(source_lines)
 
     try:
-        from tools.registry import TOOL_FUNCTIONS
-        use_reasoning = TOOL_FUNCTIONS.get("use_reasoning_model")
-        if not use_reasoning:
-            return _fallback_findings(sources)
-
         today = date.today().isoformat()
         prompt = (
             f"Today's date is {today}.\n\n"
@@ -396,16 +479,19 @@ def _cluster_findings(query: str, sources: List[Source]) -> List[Finding]:
             f"Do not reference events after today's date as established fact.\n\n"
             f"Now analyze the sources above:\n"
         )
-        result = use_reasoning(prompt)
+        result = _call_clustering_model(prompt)
         logger.debug(f"Clustering raw output (first 500 chars): {(result or '')[:500]}")
-        if not result or result.startswith("Error:"):
+        if not result:
             logger.warning(f"Clustering model returned empty/error — falling back to 1:1 mapping for {len(sources)} sources")
             return _fallback_findings(sources)
 
-        findings = _parse_clustered_findings(result, sources)
+        findings = _parse_clustered_findings(result, sources, query=query)
         if findings:
-            logger.info(f"Clustered {len(sources)} sources into {len(findings)} thematic findings")
-            return findings
+            ranked = _rank_findings(findings)
+            max_findings = config.SYNTHESIS.get("max_findings", 15)
+            ranked = ranked[:max_findings]
+            logger.info(f"Clustered {len(sources)} sources into {len(ranked)} thematic findings")
+            return ranked
 
     except Exception as e:
         logger.warning(f"Finding clustering failed, falling back to 1:1 mapping: {e}")
@@ -413,9 +499,11 @@ def _cluster_findings(query: str, sources: List[Source]) -> List[Finding]:
     return _fallback_findings(sources)
 
 
-def _parse_clustered_findings(text: str, sources: List[Source]) -> List[Finding]:
+def _parse_clustered_findings(text: str, sources: List[Source], query: Optional[str] = None) -> List[Finding]:
     """Parse FINDING/SOURCES/CONFIDENCE blocks from reasoning model output."""
     findings = []
+    query_terms = _query_terms(query or "")
+    source_count = max(len(sources), 1)
 
     # Normalize common model formatting variants:
     # - **FINDING:** -> FINDING:
@@ -440,6 +528,8 @@ def _parse_clustered_findings(text: str, sources: List[Source]) -> List[Finding]
             continue
 
         claim = claim_match.group(1).strip()
+        if _is_generic_finding_claim(claim):
+            continue
 
         # Parse source numbers and map to source_ids
         source_ids = []
@@ -460,6 +550,15 @@ def _parse_clustered_findings(text: str, sources: List[Source]) -> List[Finding]
                 f"sources (max {max_allowed}): {claim[:80]}..."
             )
             continue
+        if source_count >= 4 and len(source_ids) >= source_count:
+            logger.warning("Skipping finding citing all %d sources: %s", source_count, claim[:80])
+            continue
+
+        if query_terms:
+            claim_terms = _query_terms(claim)
+            overlap = claim_terms & query_terms
+            if len(overlap) < 2:
+                continue
 
         confidence = confidence_match.group(1).lower() if confidence_match else "medium"
 

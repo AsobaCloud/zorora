@@ -55,9 +55,13 @@ _LOW_VALUE_SENTENCE_PATTERNS = [
 
 _LOW_QUALITY_SECTION_PATTERNS = [
     re.compile(r"\bhere are (?:my )?conclusions\b", re.IGNORECASE),
+    re.compile(r"\bhere are (?:(?:some|the)\s+)?key findings(?: and insights)?\b", re.IGNORECASE),
+    re.compile(r"\bkey findings and insights\b", re.IGNORECASE),
+    re.compile(r"\bthe provided sources\b", re.IGNORECASE),
     re.compile(r"\bthe following (?:is|are)\b", re.IGNORECASE),
     re.compile(r"\bfirstly\b|\bsecondly\b|\bthirdly\b", re.IGNORECASE),
     re.compile(r"\baccording to the source\b", re.IGNORECASE),
+    re.compile(r"\baccording to (?:the )?(?:report|article|document)\b", re.IGNORECASE),
 ]
 _LOW_QUALITY_SUMMARY_PATTERNS = [
     re.compile(r"\bthe following are key insights\b", re.IGNORECASE),
@@ -181,31 +185,83 @@ def _format_claims_for_prompt(
 
 def _extract_source_fact(source: Source, max_chars: int = 220) -> str:
     """Extract one compact, evidence-like sentence from a source."""
-    text = source.content_full or source.content_snippet or source.title or ""
+    text = source.content_full or source.content_snippet or ""
     text = re.sub(r"\s+", " ", text).strip()
     if not text:
         return ""
+
+    title = (source.title or "").strip()
+    if title:
+        title_norm = re.sub(r"\s+", " ", title)
+        if text.lower().startswith(title_norm.lower()):
+            text = text[len(title_norm):].strip(" .:-")
+        text = text.replace(title_norm, "").strip()
 
     sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
     chosen = ""
 
     # Prefer concrete statements with numbers.
     for sentence in sentences:
-        if len(sentence) >= 30 and re.search(r"\d", sentence):
-            chosen = sentence
+        normalized = re.sub(r"^(firstly|secondly|thirdly|however|in summary),?\s+", "", sentence, flags=re.IGNORECASE)
+        if len(normalized) >= 30 and re.search(r"\d", normalized):
+            chosen = normalized
             break
 
-    # Otherwise use the first substantive sentence.
+    # Otherwise use first substantive non-boilerplate sentence.
     if not chosen:
         for sentence in sentences:
-            if len(sentence) >= 20:
-                chosen = sentence
+            normalized = re.sub(r"^(firstly|secondly|thirdly|however|in summary),?\s+", "", sentence, flags=re.IGNORECASE)
+            if len(normalized) >= 20:
+                chosen = normalized
                 break
 
     if not chosen:
         chosen = text
 
+    chosen = re.sub(r"\[[^\]]{30,}\]", "", chosen).strip()
+    if chosen.count("[") > 1:
+        return ""
+    if re.match(r"^[A-Z][a-z]{2,9}\s+\d{1,2},\s+\d{4}\b", chosen):
+        return ""
     return _normalize_sentence(chosen, max_chars=max_chars)
+
+
+def _is_summary_source_usable(source: Source) -> bool:
+    title = (source.title or "").strip()
+    if not title:
+        return False
+    if len(title) > 160:
+        return False
+    if title.count("[") > 1:
+        return False
+    lowered = title.lower()
+    if "..." in title or " | " in title and len(title) > 120:
+        return False
+    if "download" in lowered and "pdf" in lowered:
+        return False
+    return True
+
+
+def _summary_source_priority(source: Source) -> int:
+    source_type = (source.source_type or "").lower()
+    if source_type in {"web", "news", "newsroom", "policy", "world_bank", "sec_filing"}:
+        return 2
+    if source_type == "academic":
+        return 1
+    return 0
+
+
+def _summary_candidate_sources(state: ResearchState) -> List[Source]:
+    ranked = sorted(
+        state.sources_checked,
+        key=lambda s: (
+            _summary_source_priority(s),
+            s.relevance_score or 0.0,
+            s.credibility_score or 0.0,
+        ),
+        reverse=True,
+    )
+    return [s for s in ranked if _is_summary_source_usable(s)]
 
 
 def _format_evidence_records(
@@ -393,6 +449,8 @@ def _normalize_section_output(paragraph: str, max_sentences: int = 4, max_words:
     for sentence in sentences:
         sentence = re.sub(r"^\d+\.\s*", "", sentence).strip()
         sentence = re.sub(r"^\*\*[^*]+\*\*:\s*", "", sentence).strip()
+        sentence = sentence.replace("**", "")
+        sentence = re.sub(r":\s*\d+\.\s*", ": ", sentence)
         if not sentence:
             continue
         if any(pattern.search(sentence) for pattern in _LOW_VALUE_SENTENCE_PATTERNS):
@@ -402,12 +460,15 @@ def _normalize_section_output(paragraph: str, max_sentences: int = 4, max_words:
             break
 
     normalized = " ".join(kept).strip() if kept else text
+    normalized = re.sub(r"(?:^|\s)\d+\.\s*$", "", normalized).strip()
     return _truncate_to_words(normalized, max_words=max_words)
 
 
 def _summary_needs_rewrite(summary: str, max_words: int = 110) -> bool:
     text = re.sub(r"\s+", " ", (summary or "").strip())
     if not text:
+        return True
+    if not _has_inline_citation(text):
         return True
     if any(pattern.search(text) for pattern in _LOW_QUALITY_SUMMARY_PATTERNS):
         return True
@@ -419,14 +480,14 @@ def _summary_needs_rewrite(summary: str, max_words: int = 110) -> bool:
 
 def _deterministic_executive_summary(state: ResearchState, max_points: int = 2) -> str:
     """Build a concise summary from top findings/sources when model summary is poor."""
-    source_by_id = {s.source_id: s for s in state.sources_checked}
+    candidate_sources = {s.source_id: s for s in _summary_candidate_sources(state)}
     points: List[str] = []
 
     for finding in state.findings[:8]:
         source = None
         for sid in finding.sources:
-            if sid in source_by_id:
-                source = source_by_id[sid]
+            if sid in candidate_sources:
+                source = candidate_sources[sid]
                 break
         if not source:
             continue
@@ -438,11 +499,7 @@ def _deterministic_executive_summary(state: ResearchState, max_points: int = 2) 
             break
 
     if not points:
-        top_sources = sorted(
-            state.sources_checked,
-            key=lambda s: ((s.relevance_score or 0.0), (s.credibility_score or 0.0)),
-            reverse=True,
-        )[:max_points]
+        top_sources = _summary_candidate_sources(state)[:max_points]
         for source in top_sources:
             fact = _extract_source_fact(source, max_chars=180)
             title = source.title or "Untitled Source"
@@ -452,7 +509,20 @@ def _deterministic_executive_summary(state: ResearchState, max_points: int = 2) 
     if not points:
         return "Retrieved evidence is limited; conclusions remain preliminary."
 
-    return _truncate_to_words(" ".join(points), max_words=85)
+    if len(points) == 1:
+        summary = f"Evidence indicates {points[0]}"
+    else:
+        summary = f"Evidence indicates three linked signals: {' '.join(points[:max_points])}"
+    return _truncate_to_words(summary, max_words=90)
+
+
+def _infer_signal_direction(text: str) -> str:
+    lowered = (text or "").lower()
+    if re.search(r"\b(rise|rose|rising|increase|increased|tighten|surge|spike|up)\b", lowered):
+        return "tilted upward"
+    if re.search(r"\b(fall|fell|falling|decline|declined|decrease|decreased|ease|down)\b", lowered):
+        return "tilted downward"
+    return "shifting materially"
 
 
 def _deterministic_section_paragraph(
@@ -462,24 +532,33 @@ def _deterministic_section_paragraph(
     source_lookup: dict,
 ) -> str:
     """Build an evidence-grounded section paragraph without relying on model output."""
-    sentences: List[str] = []
+    evidence_sentences: List[str] = []
 
     for finding in routed_findings[:2]:
         claim = _normalize_sentence(finding.claim, max_chars=220)
         if claim:
-            sentences.append(f"Evidence indicates {claim} {_format_finding_citations(finding, source_lookup)}")
+            evidence_sentences.append(
+                f"The strongest signal is {claim} {_format_finding_citations(finding, source_lookup)}"
+            )
 
-    if not sentences:
+    if not evidence_sentences:
         for source in routed_sources[:2]:
             snippet = _extract_source_fact(source, max_chars=220)
             title = source.title or "Untitled Source"
             if snippet:
-                sentences.append(f"Source reporting suggests {snippet} [{title}]")
+                evidence_sentences.append(f"Source reporting shows {snippet} [{title}]")
 
-    if not sentences:
+    if not evidence_sentences:
         return f"Evidence for {section.title.lower()} is limited in the retrieved corpus."
 
-    return " ".join(sentences)
+    lead = evidence_sentences[0]
+    support = evidence_sentences[1] if len(evidence_sentences) > 1 else ""
+    direction = _infer_signal_direction(" ".join(evidence_sentences))
+    implication = (
+        f"Taken together, this indicates {section.title.lower()} remains {direction} "
+        "in the current evidence window."
+    )
+    return " ".join(part for part in [lead, support, implication] if part)
 
 
 def _deterministic_evidence_synthesis(state: ResearchState, reason: str) -> str:
@@ -1158,6 +1237,13 @@ def synthesize_section(
             source_lookup=source_lookup or _build_source_lookup(sources),
         )
         paragraph = _normalize_section_output(paragraph)
+        if not _has_inline_citation(paragraph):
+            paragraph = _salvage_inline_citations(
+                paragraph=paragraph,
+                routed_findings=findings,
+                routed_sources=sources,
+                source_lookup=source_lookup or _build_source_lookup(sources),
+            )
 
         # Reliability gate: section text must carry explicit citations.
         if not _has_inline_citation(paragraph):
@@ -1281,15 +1367,21 @@ def synthesize(state: ResearchState, progress_callback=None) -> str:
         expanded_sections.append(paragraph)
 
     if model_section_count == 0:
-        logger.warning("All section expansions unavailable, using deterministic evidence synthesis")
-        return _deterministic_evidence_synthesis(state, reason="section_expansion_unavailable")
+        logger.warning(
+            "All section expansions unavailable from model; assembling deterministic section output"
+        )
 
     # Stage 3: Assembly
     _emit_progress(progress_callback, "synthesis", "Assembling final synthesis...")
     synthesis = assemble_synthesis(outline, expanded_sections)
 
     state.synthesis = synthesis
-    state.synthesis_model = "mixed" if deterministic_section_count > 0 else "reasoning"
+    if model_section_count == 0 and deterministic_section_count > 0:
+        state.synthesis_model = "deterministic"
+    elif deterministic_section_count > 0:
+        state.synthesis_model = "mixed"
+    else:
+        state.synthesis_model = "reasoning"
     logger.info(
         "Synthesis complete (%d model sections, %d deterministic fallback sections, total=%d)",
         model_section_count,
