@@ -885,13 +885,14 @@ class TestFindingFallbackQuality(unittest.TestCase):
 
 
 class TestSynthesisQualityGuards(unittest.TestCase):
-    @patch("tools.registry.TOOL_FUNCTIONS", {
-        "use_reasoning_model": lambda prompt: (
+    @patch(
+        "workflows.deep_research.synthesizer._call_research_synthesis_model",
+        return_value=(
             "I cannot guarantee the accuracy of this summary. "
             "The market changed materially over the period."
         ),
-    })
-    def test_synthesize_section_requires_inline_citations(self):
+    )
+    def test_synthesize_section_requires_inline_citations(self, _mock_call_model):
         """Section expansion without inline citations must be rejected."""
         from workflows.deep_research.synthesizer import synthesize_section, OutlineSection
 
@@ -935,6 +936,204 @@ class TestSynthesisQualityGuards(unittest.TestCase):
         routed = route_findings(section, [low_support, high_support], max_findings=1)
         self.assertEqual(routed[0].confidence, "high")
 
+    @patch(
+        "workflows.deep_research.synthesizer._call_research_synthesis_model",
+        return_value=(
+            "Firstly, the following is a summary of findings [Grid Evidence]. "
+            + " ".join(["This paragraph repeats generic framing instead of focused synthesis."] * 40)
+        ),
+    )
+    def test_synthesize_section_rejects_low_quality_report_like_output(self, _mock_call_model):
+        """Overlong, report-like section text should be rejected by quality gate."""
+        from workflows.deep_research.synthesizer import synthesize_section, OutlineSection
+        from engine.models import Finding
+
+        section = OutlineSection(title="Cost Drivers", bullets=["Explain pass-through"])
+        src = _make_source(
+            title="Grid Evidence",
+            snippet="Power prices rose after fuel costs increased.",
+            relevance=0.6,
+            url="https://example.com/grid-evidence",
+        )
+        finding = Finding(
+            claim="Fuel costs drove higher power prices in the period.",
+            sources=[src.source_id],
+            confidence="medium",
+            average_credibility=0.7,
+        )
+
+        result = synthesize_section(
+            section=section,
+            sources=[src],
+            findings=[finding],
+            state=MagicMock(),
+            is_comparison=False,
+            subjects=None,
+        )
+        self.assertIsNone(result)
+
+
+class TestSynthesisProvenanceAndSalvage(unittest.TestCase):
+    @patch(
+        "workflows.deep_research.synthesizer._call_research_synthesis_model",
+        return_value="Power prices rose as freight detours tightened LNG delivery windows across EU hubs.",
+    )
+    def test_synthesize_section_salvages_missing_inline_citation(self, _mock_call_model):
+        """Section expansion should salvage missing inline citations from routed evidence."""
+        from engine.models import Finding
+        from workflows.deep_research.synthesizer import synthesize_section, OutlineSection
+
+        section = OutlineSection(title="Price Impact", bullets=["Quantify pass-through to power prices"])
+        src = _make_source(
+            title="EU Power Price Monitor",
+            snippet="Day-ahead prices increased as shipping delays tightened gas supply.",
+            relevance=0.7,
+            url="https://example.com/power-monitor",
+        )
+        fnd = Finding(
+            claim="Power prices rose as freight disruptions tightened LNG balances.",
+            sources=[src.source_id],
+            confidence="high",
+            average_credibility=0.8,
+        )
+
+        paragraph = synthesize_section(
+            section=section,
+            sources=[src],
+            findings=[fnd],
+            state=MagicMock(),
+            is_comparison=False,
+            subjects=None,
+        )
+
+        self.assertIsNotNone(paragraph)
+        self.assertIn("[EU Power Price Monitor]", paragraph)
+
+    @patch("workflows.deep_research.synthesizer.synthesize_outline")
+    @patch("workflows.deep_research.synthesizer.synthesize_section")
+    @patch("workflows.deep_research.synthesizer._deterministic_section_paragraph")
+    def test_synthesize_marks_mixed_when_some_sections_fallback(
+        self,
+        mock_det_section,
+        mock_synth_section,
+        mock_outline,
+    ):
+        """Synthesis provenance must reflect mixed model+deterministic section output."""
+        from engine.models import ResearchState, Finding
+        from workflows.deep_research.synthesizer import synthesize, OutlineResult, OutlineSection
+
+        src = _make_source("Grid Update", relevance=0.6, url="https://example.com/grid")
+        state = ResearchState(original_query="power market impacts")
+        state.sources_checked = [src]
+        state.total_sources = 1
+        state.findings = [
+            Finding(
+                claim="Power prices rose due to tighter gas supply.",
+                sources=[src.source_id],
+                confidence="medium",
+                average_credibility=0.7,
+            )
+        ]
+
+        mock_outline.return_value = OutlineResult(
+            executive_summary="Summary",
+            sections=[
+                OutlineSection(title="Drivers", bullets=["fuel and logistics"]),
+                OutlineSection(title="Regulatory", bullets=["policy effects"]),
+            ],
+            is_comparison=False,
+            subjects=None,
+        )
+        mock_synth_section.side_effect = [
+            "Freight detours increased fuel costs [Grid Update].",
+            None,
+        ]
+        mock_det_section.return_value = "Fallback sentence [Grid Update]."
+
+        _ = synthesize(state)
+        self.assertEqual(state.synthesis_model, "mixed")
+
+    @patch("workflows.deep_research.synthesizer.synthesize_outline")
+    @patch("workflows.deep_research.synthesizer.synthesize_section", return_value=None)
+    @patch("workflows.deep_research.synthesizer._deterministic_section_paragraph", return_value="Fallback sentence")
+    def test_synthesize_marks_deterministic_when_all_sections_fallback(
+        self,
+        _mock_det_section,
+        _mock_synth_section,
+        mock_outline,
+    ):
+        """If every section expansion fails, model provenance must be deterministic."""
+        from engine.models import ResearchState, Finding
+        from workflows.deep_research.synthesizer import synthesize, OutlineResult, OutlineSection
+
+        src = _make_source("Policy Note", relevance=0.5, url="https://example.com/policy")
+        state = ResearchState(original_query="policy impact")
+        state.sources_checked = [src]
+        state.total_sources = 1
+        state.findings = [
+            Finding(
+                claim="Policy adjustments altered dispatch economics.",
+                sources=[src.source_id],
+                confidence="low",
+                average_credibility=0.6,
+            )
+        ]
+
+        mock_outline.return_value = OutlineResult(
+            executive_summary="Summary",
+            sections=[OutlineSection(title="Policy", bullets=["rule changes"])],
+            is_comparison=False,
+            subjects=None,
+        )
+
+        _ = synthesize(state)
+        self.assertEqual(state.synthesis_model, "deterministic")
+
+    @patch("workflows.deep_research.synthesizer.synthesize_outline")
+    @patch("workflows.deep_research.synthesizer.synthesize_section")
+    def test_rewrites_low_quality_executive_summary(
+        self,
+        mock_synth_section,
+        mock_outline,
+    ):
+        """Low-quality model executive summaries should be replaced with evidence-grounded summary."""
+        from engine.models import ResearchState, Finding
+        from workflows.deep_research.synthesizer import synthesize, OutlineResult, OutlineSection
+
+        src = _make_source(
+            title="EU Power Price Monitor",
+            snippet="Day-ahead prices increased as gas shipping delays tightened supply.",
+            relevance=0.7,
+            url="https://example.com/eu-power",
+        )
+        state = ResearchState(original_query="power market effects")
+        state.sources_checked = [src]
+        state.total_sources = 1
+        state.findings = [
+            Finding(
+                claim="Power prices increased as gas shipping delays tightened supply.",
+                sources=[src.source_id],
+                confidence="high",
+                average_credibility=0.8,
+            )
+        ]
+
+        mock_outline.return_value = OutlineResult(
+            executive_summary=(
+                "The following are key insights from the documents: "
+                "1. costs rose 2. trade shifted 3. policy changed."
+            ),
+            sections=[OutlineSection(title="Drivers", bullets=["shipping and policy"])],
+            is_comparison=False,
+            subjects=None,
+        )
+        mock_synth_section.return_value = "Shipping delays pushed gas-linked power costs higher [EU Power Price Monitor]."
+
+        synthesis = synthesize(state)
+
+        self.assertNotIn("The following are key insights", synthesis)
+        self.assertIn("[EU Power Price Monitor]", synthesis)
+
 
 class TestResearchStateCompatibility(unittest.TestCase):
     def test_init_research_state_supports_legacy_constructor(self):
@@ -965,8 +1164,9 @@ class TestResearchStateCompatibility(unittest.TestCase):
 class TestSynthesizeSectionHeaderStripping(unittest.TestCase):
     """SEP-028: synthesize_section must strip ALL markdown header levels."""
 
-    @patch("tools.registry.TOOL_FUNCTIONS", {
-        "use_reasoning_model": lambda prompt: (
+    @patch(
+        "workflows.deep_research.synthesizer._call_research_synthesis_model",
+        return_value=(
             "#### Sub-heading leaked\n"
             "Some body text with a citation [Test Source].\n"
             "##### Another leaked header\n"
@@ -976,16 +1176,29 @@ class TestSynthesizeSectionHeaderStripping(unittest.TestCase):
             "### Mid-level header\n"
             "Final paragraph [Test Source]."
         ),
-    })
-    def test_all_header_levels_stripped(self):
+    )
+    def test_all_header_levels_stripped(self, _mock_call_model):
         """Headers # through ###### must be stripped from section output."""
         from workflows.deep_research.synthesizer import synthesize_section, OutlineSection
+        from engine.models import Finding
 
         section = OutlineSection(title="Test Section", bullets=["Q?"])
+        src = _make_source(
+            title="Test Source",
+            snippet="Final paragraph references test source evidence for market section.",
+            relevance=0.6,
+            url="https://example.com/test-source",
+        )
+        finding = Finding(
+            claim="Final paragraph references test source evidence.",
+            sources=[src.source_id],
+            confidence="medium",
+            average_credibility=0.6,
+        )
         result = synthesize_section(
             section=section,
-            sources=[],
-            findings=[],
+            sources=[src],
+            findings=[finding],
             state=MagicMock(),
             is_comparison=False,
             subjects=None,
@@ -996,6 +1209,35 @@ class TestSynthesizeSectionHeaderStripping(unittest.TestCase):
                 line.strip().startswith("#"),
                 f"Header leaked into output: {line!r}",
             )
+
+
+class TestResearchSynthesisModelCaller(unittest.TestCase):
+    @patch("tools.specialist.client.create_specialist_client")
+    def test_prefers_specialist_client_with_analyst_system_prompt(self, mock_create_client):
+        """Deep research synthesis caller should use specialist client with analyst persona."""
+        from workflows.deep_research.synthesizer import _call_research_synthesis_model
+
+        fake_client = MagicMock()
+        fake_client.chat_complete.return_value = {"choices": [{"message": {"content": "Analyst synthesis"}}]}
+        fake_client.extract_content.return_value = "Analyst synthesis"
+        mock_create_client.return_value = fake_client
+
+        result = _call_research_synthesis_model("Explain price impacts.")
+
+        self.assertEqual(result, "Analyst synthesis")
+        fake_client.chat_complete.assert_called_once()
+        messages = fake_client.chat_complete.call_args[0][0]
+        self.assertEqual(messages[0]["role"], "system")
+        self.assertIn("energy and electricity market research analyst", messages[0]["content"])
+
+    @patch("tools.specialist.client.create_specialist_client", side_effect=RuntimeError("boom"))
+    @patch("tools.registry.TOOL_FUNCTIONS", {"use_reasoning_model": lambda prompt: "Fallback synthesis"})
+    def test_falls_back_to_tool_function_when_client_fails(self, _mock_create_client):
+        """Caller should fallback to use_reasoning_model for compatibility when client path fails."""
+        from workflows.deep_research.synthesizer import _call_research_synthesis_model
+
+        result = _call_research_synthesis_model("Explain policy drivers.")
+        self.assertEqual(result, "Fallback synthesis")
 
 
 if __name__ == "__main__":

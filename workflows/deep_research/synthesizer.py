@@ -53,6 +53,26 @@ _LOW_VALUE_SENTENCE_PATTERNS = [
     re.compile(r"\bthis is a snapshot in time\b", re.IGNORECASE),
 ]
 
+_LOW_QUALITY_SECTION_PATTERNS = [
+    re.compile(r"\bhere are (?:my )?conclusions\b", re.IGNORECASE),
+    re.compile(r"\bthe following (?:is|are)\b", re.IGNORECASE),
+    re.compile(r"\bfirstly\b|\bsecondly\b|\bthirdly\b", re.IGNORECASE),
+    re.compile(r"\baccording to the source\b", re.IGNORECASE),
+]
+_LOW_QUALITY_SUMMARY_PATTERNS = [
+    re.compile(r"\bthe following are key insights\b", re.IGNORECASE),
+    re.compile(r"\bhere are the key findings\b", re.IGNORECASE),
+    re.compile(r"\bto address the question\b", re.IGNORECASE),
+]
+
+_RESEARCH_ANALYST_SYSTEM_PROMPT = (
+    "You are a senior energy and electricity market research analyst. "
+    "Write concise, evidence-grounded synthesis from supplied records only. "
+    "Lead with conclusions, explain causal links, note conflicts, and cite inline "
+    "using the provided source titles in square brackets. "
+    "Do not produce planning steps, meta commentary, or procedural narration."
+)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -61,6 +81,44 @@ _LOW_VALUE_SENTENCE_PATTERNS = [
 def _emit_progress(callback, phase: str, message: str):
     if callback:
         callback("running", phase, message)
+
+
+def _call_research_synthesis_model(prompt: str) -> Optional[str]:
+    """Call the reasoning endpoint with a synthesis-specific analyst persona."""
+    if not prompt or not prompt.strip():
+        return None
+
+    try:
+        from tools.specialist.client import create_specialist_client
+
+        model_config = config.SPECIALIZED_MODELS["reasoning"]
+        client = create_specialist_client("reasoning", model_config)
+
+        messages = [
+            {"role": "system", "content": _RESEARCH_ANALYST_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ]
+        response = client.chat_complete(messages, tools=None)
+        content = client.extract_content(response)
+        if content and str(content).strip():
+            return str(content).strip()
+        logger.warning("Research synthesis client returned empty content")
+    except Exception as exc:
+        logger.warning("Research synthesis client failed, trying tool fallback: %s", exc)
+
+    # Compatibility fallback for existing tool-path tests and older runtime wiring.
+    try:
+        from tools.registry import TOOL_FUNCTIONS
+
+        fallback_reasoning = TOOL_FUNCTIONS.get("use_reasoning_model")
+        if fallback_reasoning:
+            raw = fallback_reasoning(prompt)
+            if raw and not raw.startswith("Error:"):
+                return raw.strip()
+    except Exception as exc:
+        logger.warning("Research synthesis tool fallback failed: %s", exc)
+
+    return None
 
 
 def _extract_words(text: str) -> set:
@@ -121,6 +179,69 @@ def _format_claims_for_prompt(
     return "\n".join(lines) if lines else "- No high-signal claim routed; rely on source excerpts below."
 
 
+def _extract_source_fact(source: Source, max_chars: int = 220) -> str:
+    """Extract one compact, evidence-like sentence from a source."""
+    text = source.content_full or source.content_snippet or source.title or ""
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        return ""
+
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+    chosen = ""
+
+    # Prefer concrete statements with numbers.
+    for sentence in sentences:
+        if len(sentence) >= 30 and re.search(r"\d", sentence):
+            chosen = sentence
+            break
+
+    # Otherwise use the first substantive sentence.
+    if not chosen:
+        for sentence in sentences:
+            if len(sentence) >= 20:
+                chosen = sentence
+                break
+
+    if not chosen:
+        chosen = text
+
+    return _normalize_sentence(chosen, max_chars=max_chars)
+
+
+def _format_evidence_records(
+    routed_sources: List[Source],
+    routed_findings: List[Finding],
+    source_lookup: dict,
+    max_records: int = 6,
+) -> str:
+    """Build compact evidence records for synthesis prompts."""
+    lines: List[str] = []
+
+    for finding in routed_findings:
+        claim = _normalize_sentence(finding.claim, max_chars=240)
+        if not claim:
+            continue
+        citations = _format_finding_citations(finding, source_lookup=source_lookup, max_sources=2)
+        lines.append(f"- {claim} {citations}")
+        if len(lines) >= max_records:
+            break
+
+    if len(lines) < max_records:
+        for source in routed_sources:
+            title = (source.title or "").strip() or "Untitled Source"
+            fact = _extract_source_fact(source, max_chars=220)
+            if not fact:
+                continue
+            line = f"- {fact} [{title}]"
+            if line in lines:
+                continue
+            lines.append(line)
+            if len(lines) >= max_records:
+                break
+
+    return "\n".join(lines) if lines else "- No evidence records available."
+
+
 def _strip_low_value_sentences(text: str) -> str:
     """Drop boilerplate hedging/disclaimer sentences from model output."""
     chunks = re.split(r"(?<=[.!?])\s+", (text or "").strip())
@@ -139,6 +260,201 @@ def _has_inline_citation(text: str) -> bool:
     return bool(re.search(r"\[[^\]]+\]", text or ""))
 
 
+def _build_citation_pool(
+    routed_findings: List[Finding],
+    routed_sources: List[Source],
+    source_lookup: dict,
+    max_citations: int = 2,
+) -> List[str]:
+    """Build a small citation pool from routed evidence in priority order."""
+    labels: List[str] = []
+    seen = set()
+
+    for finding in routed_findings:
+        for source_id in finding.sources:
+            title = source_lookup.get(source_id)
+            if title and title not in seen:
+                seen.add(title)
+                labels.append(f"[{title}]")
+                if len(labels) >= max_citations:
+                    return labels
+
+    for source in routed_sources:
+        title = (source.title or "").strip() or "Untitled Source"
+        if title not in seen:
+            seen.add(title)
+            labels.append(f"[{title}]")
+            if len(labels) >= max_citations:
+                return labels
+
+    return labels
+
+
+def _salvage_inline_citations(
+    paragraph: str,
+    routed_findings: List[Finding],
+    routed_sources: List[Source],
+    source_lookup: dict,
+) -> str:
+    """Inject minimal inline citations when section text is otherwise usable."""
+    text = (paragraph or "").strip()
+    if not text or _has_inline_citation(text):
+        return text
+
+    citations = _build_citation_pool(
+        routed_findings=routed_findings,
+        routed_sources=routed_sources,
+        source_lookup=source_lookup,
+    )
+    if not citations:
+        return text
+
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+    if not sentences:
+        return f"{text} {''.join(citations)}".strip()
+
+    for idx in range(min(len(sentences), len(citations))):
+        if not _has_inline_citation(sentences[idx]):
+            sentences[idx] = f"{sentences[idx]} {citations[idx]}"
+
+    rebuilt = " ".join(sentences).strip()
+    if not _has_inline_citation(rebuilt):
+        rebuilt = f"{rebuilt} {''.join(citations)}".strip()
+    return rebuilt
+
+
+def _is_evidence_grounded(
+    paragraph: str,
+    routed_findings: List[Finding],
+    routed_sources: List[Source],
+    min_overlap_terms: int = 2,
+) -> bool:
+    """Check that generated text overlaps with routed evidence terms."""
+    paragraph_terms = _extract_words(paragraph or "")
+    if not paragraph_terms:
+        return False
+
+    evidence_terms = set()
+    for finding in routed_findings:
+        evidence_terms.update(_extract_words(finding.claim))
+
+    for source in routed_sources:
+        title = source.title or ""
+        fact = _extract_source_fact(source, max_chars=220)
+        evidence_terms.update(_extract_words(f"{title} {fact}"))
+
+    if not evidence_terms:
+        return False
+
+    overlap = paragraph_terms & evidence_terms
+    return len(overlap) >= min_overlap_terms
+
+
+def _passes_section_quality_gate(paragraph: str, min_words: int = 10, max_words: int = 220) -> bool:
+    """Reject low-signal section text that looks like report scaffolding."""
+    text = (paragraph or "").strip()
+    if not text:
+        return False
+
+    # Normalize to one paragraph for stable quality checks.
+    if "\n" in text:
+        text = re.sub(r"\s*\n+\s*", " ", text).strip()
+
+    words = re.findall(r"[A-Za-z0-9%$-]+", text)
+    if len(words) < min_words or len(words) > max_words:
+        return False
+
+    if any(pattern.search(text) for pattern in _LOW_QUALITY_SECTION_PATTERNS):
+        return False
+
+    # Require at least one citation and at most three to avoid dump-like text.
+    citation_count = len(re.findall(r"\[[^\]]+\]", text))
+    if citation_count < 1 or citation_count > 3:
+        return False
+
+    return True
+
+
+def _truncate_to_words(text: str, max_words: int) -> str:
+    words = re.findall(r"\S+", text or "")
+    if len(words) <= max_words:
+        return (text or "").strip()
+    return " ".join(words[:max_words]).strip().rstrip(",;:") + "..."
+
+
+def _normalize_section_output(paragraph: str, max_sentences: int = 4, max_words: int = 170) -> str:
+    """Coerce model output into a compact single analytical paragraph."""
+    text = re.sub(r"\s+", " ", (paragraph or "").strip())
+    if not text:
+        return ""
+
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+    kept: List[str] = []
+    for sentence in sentences:
+        sentence = re.sub(r"^\d+\.\s*", "", sentence).strip()
+        sentence = re.sub(r"^\*\*[^*]+\*\*:\s*", "", sentence).strip()
+        if not sentence:
+            continue
+        if any(pattern.search(sentence) for pattern in _LOW_VALUE_SENTENCE_PATTERNS):
+            continue
+        kept.append(sentence)
+        if len(kept) >= max_sentences:
+            break
+
+    normalized = " ".join(kept).strip() if kept else text
+    return _truncate_to_words(normalized, max_words=max_words)
+
+
+def _summary_needs_rewrite(summary: str, max_words: int = 110) -> bool:
+    text = re.sub(r"\s+", " ", (summary or "").strip())
+    if not text:
+        return True
+    if any(pattern.search(text) for pattern in _LOW_QUALITY_SUMMARY_PATTERNS):
+        return True
+    if "**" in text or re.search(r"\b1\.\s", text):
+        return True
+    words = re.findall(r"[A-Za-z0-9%$-]+", text)
+    return len(words) > max_words
+
+
+def _deterministic_executive_summary(state: ResearchState, max_points: int = 2) -> str:
+    """Build a concise summary from top findings/sources when model summary is poor."""
+    source_by_id = {s.source_id: s for s in state.sources_checked}
+    points: List[str] = []
+
+    for finding in state.findings[:8]:
+        source = None
+        for sid in finding.sources:
+            if sid in source_by_id:
+                source = source_by_id[sid]
+                break
+        if not source:
+            continue
+        fact = _extract_source_fact(source, max_chars=180)
+        title = source.title or "Untitled Source"
+        if fact:
+            points.append(f"{fact} [{title}]")
+        if len(points) >= max_points:
+            break
+
+    if not points:
+        top_sources = sorted(
+            state.sources_checked,
+            key=lambda s: ((s.relevance_score or 0.0), (s.credibility_score or 0.0)),
+            reverse=True,
+        )[:max_points]
+        for source in top_sources:
+            fact = _extract_source_fact(source, max_chars=180)
+            title = source.title or "Untitled Source"
+            if fact:
+                points.append(f"{fact} [{title}]")
+
+    if not points:
+        return "Retrieved evidence is limited; conclusions remain preliminary."
+
+    return _truncate_to_words(" ".join(points), max_words=85)
+
+
 def _deterministic_section_paragraph(
     section: OutlineSection,
     routed_sources: List[Source],
@@ -149,17 +465,16 @@ def _deterministic_section_paragraph(
     sentences: List[str] = []
 
     for finding in routed_findings[:2]:
-        claim = _normalize_sentence(finding.claim, max_chars=280)
+        claim = _normalize_sentence(finding.claim, max_chars=220)
         if claim:
-            sentences.append(f"{claim} {_format_finding_citations(finding, source_lookup)}")
+            sentences.append(f"Evidence indicates {claim} {_format_finding_citations(finding, source_lookup)}")
 
     if not sentences:
         for source in routed_sources[:2]:
-            snippet = source.content_full or source.content_snippet or source.title or ""
-            snippet = _normalize_sentence(snippet, max_chars=220)
+            snippet = _extract_source_fact(source, max_chars=220)
             title = source.title or "Untitled Source"
             if snippet:
-                sentences.append(f"{snippet} [{title}]")
+                sentences.append(f"Source reporting suggests {snippet} [{title}]")
 
     if not sentences:
         return f"Evidence for {section.title.lower()} is limited in the retrieved corpus."
@@ -197,17 +512,30 @@ def _deterministic_evidence_synthesis(state: ResearchState, reason: str) -> str:
     lines.append("")
     lines.append("## Evidence Highlights")
     added = 0
+    source_by_id = {s.source_id: s for s in state.sources_checked}
 
     for finding in state.findings[:8]:
-        claim = _normalize_sentence(finding.claim, max_chars=280)
+        source = None
+        for sid in finding.sources:
+            if sid in source_by_id:
+                source = source_by_id[sid]
+                break
+        if source:
+            fact = _extract_source_fact(source, max_chars=220)
+            title = source.title or "Untitled Source"
+            if fact:
+                lines.append(f"- {fact} [{title}]")
+                added += 1
+                continue
+
+        claim = _normalize_sentence(finding.claim, max_chars=220)
         if claim:
             lines.append(f"- {claim} {_format_finding_citations(finding, source_lookup)}")
             added += 1
 
     if added == 0:
         for source in top_sources:
-            text = source.content_full or source.content_snippet or source.title or ""
-            text = _normalize_sentence(text, max_chars=220)
+            text = _extract_source_fact(source, max_chars=220)
             title = source.title or "Untitled Source"
             lines.append(f"- {text} [{title}]")
             added += 1
@@ -545,14 +873,8 @@ def synthesize_outline(state: ResearchState) -> Optional[OutlineResult]:
             prompt = _build_outline_prompt(search_topic, claims_text, today)
 
     try:
-        from tools.registry import TOOL_FUNCTIONS
-        use_reasoning_model = TOOL_FUNCTIONS.get("use_reasoning_model")
-        if not use_reasoning_model:
-            logger.warning("use_reasoning_model not available for outline")
-            return None
-
-        raw = use_reasoning_model(prompt)
-        if not raw or raw.startswith("Error:"):
+        raw = _call_research_synthesis_model(prompt)
+        if not raw:
             logger.warning("Outline model returned empty/error")
             return None
 
@@ -654,23 +976,24 @@ def _build_section_prompt(
     market_context: str = "",
 ) -> str:
     """Build a standard section expansion prompt."""
-    max_chars = config.MODEL_BUDGETS.get("synthesis_section", {}).get("max_input_chars", 5250)
-
     claims = _format_claims_for_prompt(
         routed_findings,
         source_lookup=source_lookup or _build_source_lookup(routed_sources),
     )
 
-    # Format source excerpts with per-source budget
-    overhead = 600  # prompt template + section title + bullets + claims
-    source_budget = max(200, (max_chars - overhead) // max(len(routed_sources), 1))
-    source_blocks = []
-    for i, src in enumerate(routed_sources, 1):
-        content = src.content_full or src.content_snippet or ""
-        excerpt = content[:source_budget]
-        title = src.title or "Untitled"
-        source_blocks.append(f"[{i}] {title}\n{excerpt}")
-    sources_text = "\n\n".join(source_blocks)
+    evidence_records = _format_evidence_records(
+        routed_sources=routed_sources,
+        routed_findings=routed_findings,
+        source_lookup=source_lookup or _build_source_lookup(routed_sources),
+    )
+
+    source_notes = []
+    for src in routed_sources:
+        title = (src.title or "").strip() or "Untitled Source"
+        fact = _extract_source_fact(src, max_chars=220)
+        if fact:
+            source_notes.append(f"- [{title}] {fact}")
+    sources_text = "\n".join(source_notes) if source_notes else "- No source notes available."
 
     bullets_text = "\n".join(f"- {b}" for b in section.bullets)
 
@@ -687,7 +1010,10 @@ def _build_section_prompt(
 **Relevant claims:**
 {claims}
 
-**Source excerpts:**
+**Evidence records (prioritized facts):**
+{evidence_records}
+
+**Source notes:**
 {sources_text}
 {market_block}
 **Rules:**
@@ -698,6 +1024,7 @@ def _build_section_prompt(
 5. No boilerplate caveats ("I cannot guarantee...", "consult more sources", etc.).
 6. One paragraph only. No sub-headings.
 7. Only cite facts from the provided sources — do not invent data.
+8. Do not paste long source snippets or copy headlines verbatim.
 
 Begin:
 """
@@ -713,22 +1040,24 @@ def _build_comparison_section_prompt(
     market_context: str = "",
 ) -> str:
     """Build a comparison section expansion prompt."""
-    max_chars = config.MODEL_BUDGETS.get("synthesis_section", {}).get("max_input_chars", 5250)
-
     claims = _format_claims_for_prompt(
         routed_findings,
         source_lookup=source_lookup or _build_source_lookup(routed_sources),
     )
 
-    overhead = 600
-    source_budget = max(200, (max_chars - overhead) // max(len(routed_sources), 1))
-    source_blocks = []
-    for i, src in enumerate(routed_sources, 1):
-        content = src.content_full or src.content_snippet or ""
-        excerpt = content[:source_budget]
-        title = src.title or "Untitled"
-        source_blocks.append(f"[{i}] {title}\n{excerpt}")
-    sources_text = "\n\n".join(source_blocks)
+    evidence_records = _format_evidence_records(
+        routed_sources=routed_sources,
+        routed_findings=routed_findings,
+        source_lookup=source_lookup or _build_source_lookup(routed_sources),
+    )
+
+    source_notes = []
+    for src in routed_sources:
+        title = (src.title or "").strip() or "Untitled Source"
+        fact = _extract_source_fact(src, max_chars=220)
+        if fact:
+            source_notes.append(f"- [{title}] {fact}")
+    sources_text = "\n".join(source_notes) if source_notes else "- No source notes available."
 
     bullets_text = "\n".join(f"- {b}" for b in section.bullets)
 
@@ -745,7 +1074,10 @@ def _build_comparison_section_prompt(
 **Relevant claims:**
 {claims}
 
-**Source excerpts:**
+**Evidence records (prioritized facts):**
+{evidence_records}
+
+**Source notes:**
 {sources_text}
 {market_block}
 **Rules:**
@@ -757,6 +1089,7 @@ def _build_comparison_section_prompt(
 6. No boilerplate caveats ("I cannot guarantee...", "consult more sources", etc.).
 7. One paragraph only. No sub-headings.
 8. Only cite facts from the provided sources — do not invent data.
+9. Do not paste long source snippets or copy headlines verbatim.
 
 Begin:
 """
@@ -796,13 +1129,8 @@ def synthesize_section(
         )
 
     try:
-        from tools.registry import TOOL_FUNCTIONS
-        use_reasoning_model = TOOL_FUNCTIONS.get("use_reasoning_model")
-        if not use_reasoning_model:
-            return None
-
-        raw = use_reasoning_model(prompt)
-        if not raw or raw.startswith("Error:"):
+        raw = _call_research_synthesis_model(prompt)
+        if not raw:
             return None
 
         # Strip accidental markdown headers from output
@@ -817,9 +1145,27 @@ def synthesize_section(
         if not paragraph:
             return None
 
+        if not _is_evidence_grounded(paragraph, findings, sources):
+            logger.warning("Section expansion dropped due to weak evidence grounding: %s", section.title)
+            return None
+
+        # Citation salvage: if the paragraph is usable but uncited, inject
+        # minimal citations from routed evidence before enforcing the gate.
+        paragraph = _salvage_inline_citations(
+            paragraph=paragraph,
+            routed_findings=findings,
+            routed_sources=sources,
+            source_lookup=source_lookup or _build_source_lookup(sources),
+        )
+        paragraph = _normalize_section_output(paragraph)
+
         # Reliability gate: section text must carry explicit citations.
         if not _has_inline_citation(paragraph):
             logger.warning("Section expansion dropped due to missing inline citations: %s", section.title)
+            return None
+
+        if not _passes_section_quality_gate(paragraph):
+            logger.warning("Section expansion dropped due to low section quality: %s", section.title)
             return None
 
         return paragraph
@@ -897,6 +1243,8 @@ def synthesize(state: ResearchState, progress_callback=None) -> str:
     if outline is None:
         logger.warning("Outline generation failed, using deterministic evidence synthesis")
         return _deterministic_evidence_synthesis(state, reason="outline_unavailable")
+    if _summary_needs_rewrite(outline.executive_summary):
+        outline.executive_summary = _deterministic_executive_summary(state)
 
     _emit_progress(
         progress_callback, "synthesis",
@@ -905,7 +1253,8 @@ def synthesize(state: ResearchState, progress_callback=None) -> str:
 
     # Stage 2: Per-section expansion
     expanded_sections: List[Optional[str]] = []
-    success_count = 0
+    model_section_count = 0
+    deterministic_section_count = 0
     source_lookup = _build_source_lookup(state.sources_checked)
 
     for i, section in enumerate(outline.sections):
@@ -923,15 +1272,16 @@ def synthesize(state: ResearchState, progress_callback=None) -> str:
             source_lookup=source_lookup,
             market_context=market_context,
         )
-        if not paragraph:
+        if paragraph:
+            model_section_count += 1
+        else:
             paragraph = _deterministic_section_paragraph(section, routed_src, routed_fnd, source_lookup)
+            deterministic_section_count += 1
 
         expanded_sections.append(paragraph)
-        if paragraph:
-            success_count += 1
 
-    if success_count == 0:
-        logger.warning("Section expansion unavailable, using deterministic evidence synthesis")
+    if model_section_count == 0:
+        logger.warning("All section expansions unavailable, using deterministic evidence synthesis")
         return _deterministic_evidence_synthesis(state, reason="section_expansion_unavailable")
 
     # Stage 3: Assembly
@@ -939,8 +1289,13 @@ def synthesize(state: ResearchState, progress_callback=None) -> str:
     synthesis = assemble_synthesis(outline, expanded_sections)
 
     state.synthesis = synthesis
-    state.synthesis_model = "reasoning"
-    logger.info("Synthesis complete (%d/%d sections expanded)", success_count, len(outline.sections))
+    state.synthesis_model = "mixed" if deterministic_section_count > 0 else "reasoning"
+    logger.info(
+        "Synthesis complete (%d model sections, %d deterministic fallback sections, total=%d)",
+        model_section_count,
+        deterministic_section_count,
+        len(outline.sections),
+    )
     return synthesis
 
 
