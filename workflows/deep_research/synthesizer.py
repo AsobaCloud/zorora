@@ -2,6 +2,7 @@
 
 import logging
 import re
+import time
 from collections import Counter
 from dataclasses import dataclass
 from datetime import date
@@ -92,6 +93,11 @@ def _call_research_synthesis_model(prompt: str) -> Optional[str]:
     if not prompt or not prompt.strip():
         return None
 
+    def _is_service_unavailable(exc: Exception) -> bool:
+        text = str(exc or "")
+        upper = text.upper()
+        return "503" in upper or "SERVICE_UNAVAILABLE" in upper
+
     try:
         from tools.specialist.client import create_specialist_client
 
@@ -102,11 +108,28 @@ def _call_research_synthesis_model(prompt: str) -> Optional[str]:
             {"role": "system", "content": _RESEARCH_ANALYST_SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ]
-        response = client.chat_complete(messages, tools=None)
-        content = client.extract_content(response)
-        if content and str(content).strip():
-            return str(content).strip()
-        logger.warning("Research synthesis client returned empty content")
+        # Cold-start-aware retries for hosted inference endpoints.
+        delays = [0, 65, 8]
+        for attempt, delay in enumerate(delays, start=1):
+            if delay:
+                time.sleep(delay)
+            try:
+                response = client.chat_complete(messages, tools=None)
+                content = client.extract_content(response)
+                if content and str(content).strip():
+                    return str(content).strip()
+                logger.warning("Research synthesis client returned empty content")
+                break
+            except Exception as exc:
+                if _is_service_unavailable(exc) and attempt < len(delays):
+                    logger.warning(
+                        "Research synthesis endpoint unavailable (attempt %d/%d); retrying after %ss",
+                        attempt,
+                        len(delays),
+                        delays[attempt],
+                    )
+                    continue
+                raise
     except Exception as exc:
         logger.warning("Research synthesis client failed, trying tool fallback: %s", exc)
 
@@ -423,9 +446,11 @@ def _passes_section_quality_gate(paragraph: str, min_words: int = 10, max_words:
     if any(pattern.search(text) for pattern in _LOW_QUALITY_SECTION_PATTERNS):
         return False
 
-    # Require at least one citation and at most three to avoid dump-like text.
+    # Require at least one citation; reject only obvious citation spam.
     citation_count = len(re.findall(r"\[[^\]]+\]", text))
-    if citation_count < 1 or citation_count > 3:
+    if citation_count < 1:
+        return False
+    if citation_count > 8 and citation_count > max(4, len(words) // 10):
         return False
 
     return True

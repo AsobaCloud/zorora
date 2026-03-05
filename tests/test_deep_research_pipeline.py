@@ -1100,6 +1100,43 @@ class TestSynthesisQualityGuards(unittest.TestCase):
         self.assertIsNotNone(paragraph)
         self.assertIn("[Grid Source]", paragraph)
 
+    @patch(
+        "workflows.deep_research.synthesizer._call_research_synthesis_model",
+        return_value=(
+            "Power prices moved higher [S1] while balancing costs stayed elevated [S2] and "
+            "regulatory caps moderated spikes [S3] with pass-through still present [S4]."
+        ),
+    )
+    def test_synthesize_section_allows_valid_multiple_citations(self, _mock_call_model):
+        """Sections with >3 legitimate citations should pass quality gate."""
+        from workflows.deep_research.synthesizer import synthesize_section, OutlineSection
+        from engine.models import Finding
+
+        section = OutlineSection(title="Price Dynamics", bullets=["Assess pass-through"])
+        src = _make_source(
+            title="S1",
+            snippet="Power prices moved higher while balancing costs stayed elevated.",
+            relevance=0.65,
+            url="https://example.com/s1",
+        )
+        finding = Finding(
+            claim="Power prices moved higher as balancing costs remained elevated.",
+            sources=[src.source_id],
+            confidence="medium",
+            average_credibility=0.7,
+        )
+
+        paragraph = synthesize_section(
+            section=section,
+            sources=[src],
+            findings=[finding],
+            state=MagicMock(),
+            is_comparison=False,
+            subjects=None,
+        )
+        self.assertIsNotNone(paragraph)
+        self.assertIn("[S4]", paragraph)
+
 
 class TestSynthesisProvenanceAndSalvage(unittest.TestCase):
     @patch(
@@ -1562,6 +1599,26 @@ class TestResearchSynthesisModelCaller(unittest.TestCase):
 
         result = _call_research_synthesis_model("Explain policy drivers.")
         self.assertEqual(result, "Fallback synthesis")
+
+    @patch("workflows.deep_research.synthesizer.time.sleep", return_value=None)
+    @patch("tools.specialist.client.create_specialist_client")
+    def test_retries_service_unavailable_before_succeeding(self, mock_create_client, mock_sleep):
+        """503 errors should trigger cold-start-aware retries before fallback."""
+        from workflows.deep_research.synthesizer import _call_research_synthesis_model
+
+        fake_client = MagicMock()
+        fake_client.chat_complete.side_effect = [
+            RuntimeError("503 SERVICE_UNAVAILABLE"),
+            {"choices": [{"message": {"content": "Recovered synthesis"}}]},
+        ]
+        fake_client.extract_content.return_value = "Recovered synthesis"
+        mock_create_client.return_value = fake_client
+
+        result = _call_research_synthesis_model("Explain gas pass-through.")
+
+        self.assertEqual(result, "Recovered synthesis")
+        self.assertEqual(fake_client.chat_complete.call_count, 2)
+        mock_sleep.assert_called_once_with(65)
 
 
 if __name__ == "__main__":
