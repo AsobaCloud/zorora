@@ -580,7 +580,33 @@
         .research-synthesis {
             color: var(--text-dark);
             line-height: 1.65;
-            white-space: pre-wrap;
+        }
+
+        .research-synthesis h2,
+        .research-synthesis h3 {
+            margin: 14px 0 8px;
+            color: var(--primary-black);
+            line-height: 1.35;
+        }
+
+        .research-synthesis h2 {
+            font-size: 1.15rem;
+        }
+
+        .research-synthesis h3 {
+            font-size: 1.02rem;
+        }
+
+        .research-synthesis p {
+            margin: 8px 0;
+        }
+
+        .research-synthesis ul {
+            margin: 6px 0 10px 18px;
+        }
+
+        .research-synthesis li {
+            margin: 3px 0;
         }
 
         @media (max-width: 768px) {
@@ -614,6 +640,63 @@
             display: flex;
             flex-direction: column;
             gap: 20px;
+        }
+
+        .refine-wizard {
+            margin-top: 8px;
+            padding: 14px;
+            border: 1px solid var(--border-grey);
+            border-radius: 12px;
+            background: var(--neutral-grey);
+        }
+
+        .refine-wizard h4 {
+            margin: 0 0 10px;
+            font-size: 0.95rem;
+            color: var(--text-dark);
+        }
+
+        .refine-gap {
+            margin-bottom: 12px;
+        }
+
+        .refine-gap:last-child {
+            margin-bottom: 0;
+        }
+
+        .refine-gap-label {
+            font-size: 0.86rem;
+            color: var(--text-light);
+            margin-bottom: 6px;
+        }
+
+        .refine-options {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .refine-pill {
+            border: 1px solid var(--border-grey);
+            background: var(--white);
+            color: var(--text-dark);
+            border-radius: 999px;
+            padding: 7px 12px;
+            font-size: 0.82rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .refine-pill:hover {
+            border-color: var(--primary-purple);
+            color: var(--primary-purple);
+        }
+
+        .refine-pill.selected {
+            border-color: var(--primary-purple);
+            background: var(--light-purple);
+            color: var(--accent-purple);
+            font-weight: 600;
         }
 
         .search-input-wrapper {
@@ -1219,6 +1302,217 @@
         let sessionActive = false;
         let currentSession = null;
         let chatMessages = [];
+        let refinementModalState = {
+            resolve: null,
+            reject: null,
+            query: '',
+            result: null,
+            selections: {},
+        };
+
+        function markdownToHtml(markdown) {
+            const lines = String(markdown || '').split('\n');
+            const htmlParts = [];
+            let inList = false;
+
+            function closeList() {
+                if (inList) {
+                    htmlParts.push('</ul>');
+                    inList = false;
+                }
+            }
+
+            for (const rawLine of lines) {
+                const trimmed = rawLine.trim();
+                if (!trimmed) {
+                    closeList();
+                    continue;
+                }
+
+                let match = null;
+                if ((match = trimmed.match(/^###\s+(.+)/))) {
+                    closeList();
+                    htmlParts.push(`<h3>${match[1]}</h3>`);
+                    continue;
+                }
+                if ((match = trimmed.match(/^##\s+(.+)/))) {
+                    closeList();
+                    htmlParts.push(`<h2>${match[1]}</h2>`);
+                    continue;
+                }
+                if ((match = trimmed.match(/^#\s+(.+)/))) {
+                    closeList();
+                    htmlParts.push(`<h2>${match[1]}</h2>`);
+                    continue;
+                }
+                if ((match = trimmed.match(/^[-*]\s+(.+)/))) {
+                    if (!inList) {
+                        htmlParts.push('<ul>');
+                        inList = true;
+                    }
+                    htmlParts.push(`<li>${match[1]}</li>`);
+                    continue;
+                }
+
+                closeList();
+                htmlParts.push(`<p>${trimmed}</p>`);
+            }
+
+            closeList();
+            let html = htmlParts.join('');
+            html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+            html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+            return html;
+        }
+
+        function formatResearchSynthesisHtml(content, sources) {
+            const safeMarkdown = escapeHtml(content || '');
+            const html = markdownToHtml(safeMarkdown);
+            return makeCitationsClickable(html, sources || []);
+        }
+
+        function buildRefinedQueryFromSelections(baseQuery, selections) {
+            const components = [baseQuery];
+            const orderedDimensions = [
+                ['time_period', 'time period'],
+                ['geographic_focus', 'geography'],
+                ['analysis_type', 'analysis type'],
+                ['scope', 'scope'],
+            ];
+
+            for (const [key, label] of orderedDimensions) {
+                if (selections[key]) {
+                    components.push(`${label}: ${selections[key]}`);
+                }
+            }
+            return components.join(' | ');
+        }
+
+        function closeRefinementModal(cancelled = true) {
+            const modal = document.getElementById('refinementModal');
+            const startBtn = document.getElementById('refineStartButton');
+            const container = document.getElementById('refineWizardContainer');
+
+            if (modal) modal.style.display = 'none';
+            if (startBtn) {
+                startBtn.disabled = true;
+                startBtn.onclick = null;
+            }
+            if (container) {
+                container.innerHTML = '';
+            }
+
+            if (cancelled && refinementModalState.reject) {
+                refinementModalState.reject(new Error('Refinement canceled by user'));
+            }
+
+            refinementModalState = {
+                resolve: null,
+                reject: null,
+                query: '',
+                result: null,
+                selections: {},
+            };
+        }
+
+        function openRefinementModal(refineResult, originalQuery) {
+            return new Promise((resolve, reject) => {
+                const modal = document.getElementById('refinementModal');
+                const container = document.getElementById('refineWizardContainer');
+                const startBtn = document.getElementById('refineStartButton');
+
+                const gaps = Array.isArray(refineResult.gaps) ? refineResult.gaps : [];
+                if (!modal || !container || !startBtn || gaps.length === 0) {
+                    resolve((refineResult.refined_query || originalQuery || '').trim());
+                    return;
+                }
+
+                refinementModalState = {
+                    resolve,
+                    reject,
+                    query: originalQuery,
+                    result: refineResult,
+                    selections: {},
+                };
+
+                const markup = ['<div class="refine-wizard"><h4>Missing Dimensions</h4>'];
+                for (const gap of gaps) {
+                    const dimension = String(gap.dimension || '').trim();
+                    const question = String(gap.question || dimension || 'Select an option');
+                    const options = Array.isArray(gap.options) ? gap.options : [];
+                    if (!dimension || options.length === 0) continue;
+
+                    markup.push(`<div class="refine-gap" data-dimension="${escapeAttr(dimension)}">`);
+                    markup.push(`<div class="refine-gap-label">${escapeHtml(question)}</div>`);
+                    markup.push('<div class="refine-options">');
+                    for (const option of options) {
+                        const optionLabel = String(option || '').trim();
+                        if (!optionLabel) continue;
+                        markup.push(
+                            `<button type="button" class="refine-pill" data-dimension="${escapeAttr(dimension)}" data-option="${escapeAttr(optionLabel)}">${escapeHtml(optionLabel)}</button>`
+                        );
+                    }
+                    markup.push('</div></div>');
+                }
+                markup.push('</div>');
+                container.innerHTML = markup.join('');
+
+                function updateStartButtonState() {
+                    const allSelected = gaps.every(g => refinementModalState.selections[g.dimension]);
+                    startBtn.disabled = !allSelected;
+                }
+
+                container.querySelectorAll('.refine-pill').forEach((pill) => {
+                    pill.addEventListener('click', function() {
+                        const dim = this.dataset.dimension;
+                        const option = this.dataset.option;
+                        if (!dim || !option) return;
+
+                        refinementModalState.selections[dim] = option;
+                        container.querySelectorAll('.refine-pill').forEach(el => {
+                            if (el.dataset.dimension === dim) {
+                                el.classList.remove('selected');
+                            }
+                        });
+                        this.classList.add('selected');
+                        updateStartButtonState();
+                    });
+                });
+
+                startBtn.onclick = function() {
+                    if (startBtn.disabled) return;
+                    const refinedQuery = buildRefinedQueryFromSelections(originalQuery, refinementModalState.selections);
+                    if (refinementModalState.resolve) {
+                        refinementModalState.resolve(refinedQuery);
+                    }
+                    closeRefinementModal(false);
+                };
+
+                startBtn.disabled = true;
+                modal.style.display = 'flex';
+            });
+        }
+
+        async function requestRefinedQuery(query) {
+            const response = await fetch('/api/research/refine', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query }),
+            });
+
+            if (!response.ok) {
+                const err = await response.json().catch(() => ({}));
+                throw new Error(err.error || 'Query refinement failed');
+            }
+
+            const refineResult = await response.json();
+            const gaps = Array.isArray(refineResult.gaps) ? refineResult.gaps : [];
+            if (refineResult.skip_refinement || gaps.length === 0) {
+                return (refineResult.refined_query || query || '').trim();
+            }
+
+            return await openRefinementModal(refineResult, query);
+        }
         function setSessionActive(active) {
             sessionActive = active;
             document.body.classList.toggle('session-active', active);
@@ -1294,7 +1588,7 @@
                                 <span><strong>Sources:</strong> ${item.sourceCount || 0}</span>
                                 ${item.findingsCount ? `<span><strong>Findings:</strong> ${item.findingsCount}</span>` : ''}
                             </div>
-                            <div class="research-synthesis">${makeCitationsClickable(escapeHtml(item.content), currentSession?.sources || [])}</div>
+                            <div class="research-synthesis">${formatResearchSynthesisHtml(item.content, currentSession?.sources || [])}</div>
                         </div>`;
                 }
                 if (item.role === 'user') {
@@ -1446,18 +1740,19 @@
             
             // Disable button and show loading
             searchButton.disabled = true;
-            searchButton.textContent = 'Researching...';
-            
-            // Show progress area
-            showProgressArea();
+            searchButton.textContent = 'Refining...';
             
             try {
+                const refinedQuery = await requestRefinedQuery(query);
+                searchButton.textContent = 'Researching...';
+                showProgressArea();
+
                 const response = await fetch('/api/research', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ query, depth })
+                    body: JSON.stringify({ query, depth, refined_query: refinedQuery })
                 });
                 
                 if (!response.ok) {
@@ -1472,6 +1767,11 @@
                 connectToProgressStream(researchId, query);
                 
             } catch (error) {
+                if (error && error.message && error.message.includes('Refinement canceled')) {
+                    searchButton.disabled = false;
+                    searchButton.textContent = 'Start Research';
+                    return;
+                }
                 hideProgressArea();
                 alert('Error: ' + error.message);
                 console.error('Research error:', error);
@@ -1985,6 +2285,29 @@
 
         loadResearchHistory();
     </script>
+
+    <!-- Query Refinement Modal -->
+    <div id="refinementModal" class="modal" style="display: none;">
+        <div class="modal-backdrop" onclick="closeRefinementModal()"></div>
+        <div class="modal-content modal-small">
+            <div class="modal-header">
+                <h2 class="modal-title">Refine Research Intent</h2>
+                <button class="modal-close" onclick="closeRefinementModal()" aria-label="Close">
+                    ×
+                </button>
+            </div>
+            <div class="modal-body">
+                <p style="color: var(--text-light); margin-bottom: 14px;">
+                    Select options to make the research scope explicit before running deep search.
+                </p>
+                <div id="refineWizardContainer"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-secondary" onclick="closeRefinementModal()">Cancel</button>
+                <button type="button" class="btn-primary" id="refineStartButton" disabled>Run Deep Research</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Settings Modal -->
     <div id="settingsModal" class="modal" style="display: none;">

@@ -304,7 +304,7 @@ class TestPerIntentPipeline(unittest.TestCase):
                                                 mock_cluster, mock_synth):
         """Compound query: score_relevance called once per intent with intent query."""
         from engine.deep_research_service import run_deep_research
-        from engine.query_decomposer import SearchIntent
+        from engine.query_refiner import SearchIntent
 
         mock_decompose.return_value = [
             SearchIntent(intent_query="lithium price trends", parent_query="compound", is_primary=True),
@@ -342,7 +342,7 @@ class TestPerIntentPipeline(unittest.TestCase):
                                                mock_cluster, mock_synth):
         """Single intent: existing variant generation path used, score_relevance called once."""
         from engine.deep_research_service import run_deep_research
-        from engine.query_decomposer import SearchIntent
+        from engine.query_refiner import SearchIntent
 
         mock_decompose.return_value = [
             SearchIntent(intent_query="lithium price trends", parent_query="lithium price trends", is_primary=True),
@@ -379,7 +379,7 @@ class TestResearchTypePassthrough(unittest.TestCase):
                                                mock_cluster, mock_synth):
         """research_type='trend_analysis' must be stored in ResearchState."""
         from engine.deep_research_service import run_deep_research
-        from engine.query_decomposer import SearchIntent
+        from engine.query_refiner import SearchIntent
 
         mock_decompose.return_value = [
             SearchIntent(intent_query="test query", parent_query="test query", is_primary=True),
@@ -409,7 +409,7 @@ class TestResearchTypePassthrough(unittest.TestCase):
                                           mock_cluster, mock_synth):
         """Calling without research_type must default to None (backward compat)."""
         from engine.deep_research_service import run_deep_research
-        from engine.query_decomposer import SearchIntent
+        from engine.query_refiner import SearchIntent
 
         mock_decompose.return_value = [
             SearchIntent(intent_query="test query", parent_query="test query", is_primary=True),
@@ -440,7 +440,7 @@ class TestResearchTypePassthrough(unittest.TestCase):
                                              mock_cluster, mock_synth):
         """research_type='comparative' with subjects must store both."""
         from engine.deep_research_service import run_deep_research
-        from engine.query_decomposer import SearchIntent
+        from engine.query_refiner import SearchIntent
 
         mock_decompose.return_value = [
             SearchIntent(intent_query="test query", parent_query="test query", is_primary=True),
@@ -503,6 +503,25 @@ Lithium prices have fluctuated significantly due to supply and demand dynamics.
         from workflows.deep_research.synthesizer import _normalize_outline_headers
         raw = "### Executive Summary\nSome text"
         self.assertEqual(_normalize_outline_headers(raw), "## Executive Summary\nSome text")
+
+    def test_parse_outline_accepts_partial_two_section_outline(self):
+        """Outline with valid executive summary + 2 sections should still parse."""
+        from workflows.deep_research.synthesizer import _parse_outline
+
+        raw = """## Executive Summary
+Regional markets saw short-term price dislocation after shipping disruptions.
+
+## Price Transmission
+- LNG shipping delays increased short-run basis volatility
+- Rerouting raised freight-linked cost components
+
+## Regulatory Response
+- Emergency balancing measures were expanded
+- Procurement guidance was updated for import reliability
+"""
+        result = _parse_outline(raw, is_comparison=False, subjects=None)
+        self.assertIsNotNone(result)
+        self.assertEqual(len(result.sections), 2)
 
 
 class TestOutlineBoldHeaderStripping(unittest.TestCase):
@@ -621,7 +640,7 @@ class TestNoCompletedStatusFromPipeline(unittest.TestCase):
         the SSE client sees it without results and displayResults() never fires.
         """
         from engine.deep_research_service import run_deep_research
-        from engine.query_decomposer import SearchIntent
+        from engine.query_refiner import SearchIntent
 
         mock_decompose.return_value = [
             SearchIntent(intent_query="test query", parent_query="test query", is_primary=True),
@@ -649,6 +668,100 @@ class TestNoCompletedStatusFromPipeline(unittest.TestCase):
             f"Pipeline emitted {len(completed_events)} 'completed' event(s), "
             f"but only the caller should signal completion. Events: {completed_events}"
         )
+
+
+class TestTopicalGateInService(unittest.TestCase):
+    @patch("engine.deep_research_service.synthesize")
+    @patch("engine.deep_research_service._cluster_findings")
+    @patch("engine.deep_research_service.filter_relevant")
+    @patch("engine.deep_research_service.score_relevance")
+    @patch("engine.deep_research_service.score_source_credibility")
+    @patch("engine.deep_research_service._count_cross_references", return_value=1)
+    @patch("engine.deep_research_service.aggregate_sources")
+    @patch("engine.deep_research_service.decompose_query")
+    def test_zero_relevance_sources_are_dropped_even_if_filter_fallback_keeps_them(
+        self,
+        mock_decompose,
+        mock_agg,
+        mock_xref,
+        mock_cred,
+        mock_score,
+        mock_filter,
+        mock_cluster,
+        mock_synth,
+    ):
+        """Service-level topical gate must drop 0.0 relevance fallback sources."""
+        from engine.deep_research_service import run_deep_research
+        from engine.query_refiner import SearchIntent
+
+        mock_decompose.return_value = [
+            SearchIntent(intent_query="test query", parent_query="test query", is_primary=True),
+        ]
+        src = _make_source("Irrelevant Source", relevance=0.0, url="https://ex.com/irrelevant")
+        mock_agg.return_value = [src]
+        mock_score.return_value = [src]
+        mock_filter.return_value = [src]  # Simulate reranker fallback behavior
+        mock_cluster.return_value = []
+        mock_synth.return_value = "Test synthesis"
+
+        state = run_deep_research("test query", depth=1)
+
+        self.assertEqual(state.total_sources, 0)
+        mock_cred.assert_not_called()
+
+
+class TestDeterministicSynthesisFallback(unittest.TestCase):
+    @patch("workflows.deep_research.synthesizer.synthesize_outline", return_value=None)
+    def test_outline_failure_still_returns_structured_synthesis(self, _mock_outline):
+        """If outline generation fails, synthesizer should still produce structured output."""
+        from engine.models import ResearchState, Finding
+        from workflows.deep_research.synthesizer import synthesize
+
+        src = _make_source("Market Signal Source", relevance=0.6, url="https://ex.com/signal")
+        state = ResearchState(original_query="test market query")
+        state.sources_checked = [src]
+        state.total_sources = 1
+        state.findings = [
+            Finding(
+                claim="Power prices increased due to tighter LNG supply",
+                sources=[src.source_id],
+                confidence="medium",
+                average_credibility=0.7,
+            )
+        ]
+
+        result = synthesize(state)
+
+        self.assertIn("## Executive Summary", result)
+        self.assertIn("## Evidence Highlights", result)
+        self.assertIn("[Market Signal Source]", result)
+        self.assertNotIn("# Research Synthesis:", result)
+
+
+class TestResearchStateCompatibility(unittest.TestCase):
+    def test_init_research_state_supports_legacy_constructor(self):
+        """Shared service must work with legacy ResearchState signatures."""
+        from engine.deep_research_service import _init_research_state
+
+        class LegacyResearchState:
+            def __init__(self, original_query, max_depth=3, max_iterations=5):
+                self.original_query = original_query
+                self.max_depth = max_depth
+                self.max_iterations = max_iterations
+
+        state = _init_research_state(
+            original_query="test query",
+            depth=2,
+            refined_query="refined query",
+            research_type="trend_analysis",
+            compare_subjects=["a", "b"],
+            state_cls=LegacyResearchState,
+        )
+
+        self.assertEqual(state.original_query, "test query")
+        self.assertEqual(state.max_depth, 2)
+        self.assertEqual(state.max_iterations, 1)
+        self.assertFalse(hasattr(state, "refined_query"))
 
 
 class TestSynthesizeSectionHeaderStripping(unittest.TestCase):

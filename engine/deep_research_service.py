@@ -6,11 +6,13 @@ import logging
 import re
 import threading
 import time
+import inspect
 from datetime import date, datetime
 from typing import Callable, List, Optional
 
 import config
 from engine.models import ResearchState, Source, Finding
+from engine.query_refiner import SearchIntent, decompose_query
 from workflows.deep_research.aggregator import aggregate_sources
 from workflows.deep_research.credibility import score_source_credibility
 from workflows.deep_research.reranker import score_relevance, filter_relevant, _count_cross_references
@@ -347,7 +349,16 @@ def _cluster_findings(query: str, sources: List[Source]) -> List[Finding]:
 def _parse_clustered_findings(text: str, sources: List[Source]) -> List[Finding]:
     """Parse FINDING/SOURCES/CONFIDENCE blocks from reasoning model output."""
     findings = []
-    blocks = re.split(r"(?=FINDING:)", text)
+
+    # Normalize common model formatting variants:
+    # - **FINDING:** -> FINDING:
+    # - Finding:/Sources:/Confidence: -> uppercase labels
+    normalized = re.sub(r"\*\*\s*(FINDING|SOURCES|CONFIDENCE)\s*:\s*\*\*", r"\1:", text, flags=re.IGNORECASE)
+    normalized = re.sub(r"(?im)^\s*finding\s*:", "FINDING:", normalized)
+    normalized = re.sub(r"(?im)^\s*sources\s*:", "SOURCES:", normalized)
+    normalized = re.sub(r"(?im)^\s*confidence\s*:", "CONFIDENCE:", normalized)
+
+    blocks = re.split(r"(?=FINDING:)", normalized)
 
     for block in blocks:
         block = block.strip()
@@ -435,12 +446,104 @@ def _deduplicate_sources(sources: List[Source]) -> List[Source]:
     return unique
 
 
+def _extract_extra_keywords(base_query: str, variants: List[str]) -> List[str]:
+    """Collect supplemental keywords from generated variants."""
+    base_terms = set(re.findall(r"[a-z0-9]{2,}", base_query.lower()))
+    extra_terms = set()
+    for variant in variants[1:]:
+        for term in re.findall(r"[a-z0-9]{2,}", (variant or "").lower()):
+            if term not in base_terms:
+                extra_terms.add(term)
+    return list(extra_terms)
+
+
+def _init_research_state(
+    original_query: str,
+    depth: int,
+    refined_query: Optional[str],
+    research_type: Optional[str],
+    compare_subjects: Optional[List[str]],
+    state_cls=ResearchState,
+):
+    """Build ResearchState with signature-compatible kwargs.
+
+    This keeps the shared deep-research path resilient if a running process
+    still has a legacy ResearchState constructor (e.g., no refined_query arg).
+    """
+    kwargs = {
+        "original_query": original_query,
+        "refined_query": refined_query,
+        "research_type": research_type,
+        "compare_subjects": list(compare_subjects or []),
+        "max_depth": depth,
+        "max_iterations": 1,
+    }
+
+    try:
+        accepted = set(inspect.signature(state_cls).parameters.keys())
+    except (TypeError, ValueError):
+        accepted = set(kwargs.keys())
+
+    filtered = {k: v for k, v in kwargs.items() if k in accepted}
+
+    try:
+        return state_cls(**filtered)
+    except TypeError as exc:
+        legacy = {k: kwargs[k] for k in ("original_query", "max_depth", "max_iterations")}
+        logger.warning(
+            "ResearchState signature mismatch (%s); falling back to legacy kwargs",
+            exc,
+        )
+        return state_cls(**legacy)
+
+
+def _score_and_filter_intent_sources(
+    intent_query: str,
+    sources: List[Source],
+    variants: List[str],
+    max_sources: int,
+    relevance_min: float,
+) -> List[Source]:
+    """Run relevance scoring/filtering for one intent, then enforce topical gate."""
+    extra_keywords = _extract_extra_keywords(intent_query, variants)
+    scored_sources = score_relevance(intent_query, sources, extra_keywords=extra_keywords)
+    filtered_sources = filter_relevant(scored_sources, min_score=relevance_min, max_sources=max_sources)
+
+    # Service-level topical gate: never pass zero-relevance items to synthesis.
+    if not filtered_sources:
+        return []
+
+    topical = [
+        source
+        for source in filtered_sources
+        if (source.relevance_score or 0.0) > 0.0
+    ]
+    if not topical:
+        logger.info(
+            "Topical gate dropped %d zero-relevance sources for intent '%s'",
+            len(filtered_sources),
+            intent_query[:80],
+        )
+        return []
+
+    topical.sort(
+        key=lambda s: (
+            s.relevance_score or 0.0,
+            s.credibility_score or 0.0,
+        ),
+        reverse=True,
+    )
+    return topical[:max_sources]
+
+
 def run_deep_research(
     query: str,
     depth: int = 1,
     max_results_per_source: int = 10,
     progress_callback: Optional[ProgressCallback] = None,
     refined_query: Optional[str] = None,
+    research_type: Optional[str] = None,
+    compare_subjects: Optional[List[str]] = None,
 ) -> ResearchState:
     """Execute the shared deep-research pipeline and return populated state."""
     # Use refined query for search/analysis when available
@@ -452,29 +555,99 @@ def run_deep_research(
     include_brave_news = profile["include_brave_news"]
     num_variants = profile["query_variants"]
 
-    # Generate query variants
-    variants = _generate_query_variants(search_query, num_variants)
-    logger.info(f"Deep research depth={depth}: {len(variants)} query variant(s)")
+    state = _init_research_state(
+        original_query=query,
+        depth=depth,
+        refined_query=refined_query,
+        research_type=research_type,
+        compare_subjects=compare_subjects,
+    )
 
-    _emit(progress_callback, "aggregation", f"Searching with {len(variants)} query variant(s) (depth {depth})...")
+    intents = decompose_query(search_query)
+    if not intents:
+        intents = [SearchIntent(intent_query=search_query, parent_query=search_query, is_primary=True)]
 
-    # Aggregate sources for each variant
-    all_sources: List[Source] = []
-    for i, variant in enumerate(variants):
-        _emit(progress_callback, "aggregation", f"Query {i + 1}/{len(variants)}: {variant[:60]}...")
-        sources = aggregate_sources(
-            variant,
-            max_results_per_source=effective_max_per_source,
-            include_brave_news=include_brave_news,
+    logger.info("Deep research depth=%d: %d intent(s) detected", depth, len(intents))
+
+    max_sources = profile.get("max_sources", 25)
+    relevance_min = config.SYNTHESIS.get("relevance_min_score", 0.15)
+    merged_relevant_sources: List[Source] = []
+
+    for intent_idx, intent in enumerate(intents, 1):
+        intent_query = intent.intent_query.strip() or search_query
+        variants = _generate_query_variants(intent_query, num_variants)
+        logger.info(
+            "Intent %d/%d query variants: %d (%s)",
+            intent_idx,
+            len(intents),
+            len(variants),
+            intent_query[:80],
         )
-        all_sources.extend(sources)
 
-    # Deduplicate combined results
-    unique_sources = _deduplicate_sources(all_sources)
+        _emit(
+            progress_callback,
+            "aggregation",
+            f"Intent {intent_idx}/{len(intents)}: searching with {len(variants)} query variant(s)...",
+        )
 
-    _emit(progress_callback, "credibility", f"Found {len(unique_sources)} sources. Scoring credibility...")
+        intent_raw_sources: List[Source] = []
+        for variant_idx, variant in enumerate(variants, 1):
+            _emit(
+                progress_callback,
+                "aggregation",
+                f"Intent {intent_idx}/{len(intents)} query {variant_idx}/{len(variants)}: {variant[:60]}...",
+            )
+            variant_sources = aggregate_sources(
+                variant,
+                max_results_per_source=effective_max_per_source,
+                include_brave_news=include_brave_news,
+            )
+            intent_raw_sources.extend(variant_sources)
 
-    state = ResearchState(original_query=query, refined_query=refined_query, max_depth=depth, max_iterations=1)
+        deduped_intent_sources = _deduplicate_sources(intent_raw_sources)
+        logger.info(
+            "Funnel: intent[%d] aggregation %d -> %d (dedup)",
+            intent_idx,
+            len(intent_raw_sources),
+            len(deduped_intent_sources),
+        )
+
+        _emit(progress_callback, "relevance", f"Scoring relevance for intent {intent_idx}/{len(intents)}...")
+        intent_relevant_sources = _score_and_filter_intent_sources(
+            intent_query=intent_query,
+            sources=deduped_intent_sources,
+            variants=variants,
+            max_sources=max_sources,
+            relevance_min=relevance_min,
+        )
+        logger.info(
+            "Funnel: intent[%d] relevance %d -> %d (min=%.2f)",
+            intent_idx,
+            len(deduped_intent_sources),
+            len(intent_relevant_sources),
+            relevance_min,
+        )
+
+        merged_relevant_sources.extend(intent_relevant_sources)
+
+    # Deduplicate across intents and apply final source budget.
+    unique_sources = _deduplicate_sources(merged_relevant_sources)
+    unique_sources.sort(
+        key=lambda s: (
+            s.relevance_score or 0.0,
+            s.credibility_score or 0.0,
+        ),
+        reverse=True,
+    )
+    unique_sources = unique_sources[:max_sources]
+    logger.info(
+        "Funnel: merged intents %d -> %d (dedup + budget=%d)",
+        len(merged_relevant_sources),
+        len(unique_sources),
+        max_sources,
+    )
+
+    _emit(progress_callback, "credibility", f"Found {len(unique_sources)} relevant sources. Scoring credibility...")
 
     for i, source in enumerate(unique_sources):
         cross_ref_count = _count_cross_references(source, unique_sources)
@@ -514,21 +687,15 @@ def run_deep_research(
     except Exception as e:
         logger.warning(f"Content fetch phase failed (non-fatal): {e}")
 
-    # Rerank by relevance to original query
-    _emit(progress_callback, "relevance", "Scoring source relevance...")
-    scored_sources = score_relevance(search_query, list(state.sources_checked))
-
-    # Enforce source budget from depth profile
-    max_sources = profile.get("max_sources", 25)
-    relevance_min = config.SYNTHESIS.get("relevance_min_score", 0.15)
-    relevant_sources = filter_relevant(scored_sources, min_score=relevance_min, max_sources=max_sources)
-
-    _emit(progress_callback, "relevance",
-          f"Filtered to {len(relevant_sources)}/{len(state.sources_checked)} relevant sources.")
-
-    # Replace state sources with relevance-filtered set
-    state.sources_checked = relevant_sources
-    state.total_sources = len(relevant_sources)
+    # Final deterministic ordering: relevance first, credibility second.
+    state.sources_checked.sort(
+        key=lambda s: (
+            s.relevance_score or 0.0,
+            s.credibility_score or 0.0,
+        ),
+        reverse=True,
+    )
+    state.total_sources = len(state.sources_checked)
 
     _emit(progress_callback, "cross_reference", "Clustering findings by theme across sources...")
 
@@ -577,7 +744,7 @@ def run_deep_research(
         synthesis_done.set()
         heartbeat_thread.join(timeout=1)
 
-    _emit(progress_callback, "complete", f"Research complete! Found {state.total_sources} sources.", status="completed")
+    _emit(progress_callback, "complete", f"Research complete! Found {state.total_sources} sources.")
     return state
 
 
@@ -587,6 +754,8 @@ def build_results_payload(state: ResearchState, query: str, research_id: Optiona
         "research_id": research_id,
         "query": query,
         "refined_query": state.refined_query,
+        "research_type": state.research_type,
+        "compare_subjects": state.compare_subjects,
         "synthesis": state.synthesis,
         "total_sources": state.total_sources,
         "findings_count": len(state.findings),

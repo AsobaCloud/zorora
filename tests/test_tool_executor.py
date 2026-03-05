@@ -401,5 +401,39 @@ class TestTurnProcessorSpecialistDispatch(unittest.TestCase):
         executor.execute.assert_not_called()
 
 
+class TestReasoningToolStreamFallback(unittest.TestCase):
+    """Reasoning tool must fallback to non-stream completion on empty stream."""
+
+    @patch("tools.specialist.reasoning.create_specialist_client")
+    def test_fallback_to_non_stream_when_stream_empty(self, mock_create_client):
+        from tools.specialist.reasoning import use_reasoning_model
+
+        mock_client = Mock()
+        mock_client.chat_complete_stream.return_value = iter([])
+        mock_client.chat_complete.return_value = {"choices": [{"message": {"content": "fallback answer"}}]}
+        mock_client.extract_content.return_value = "fallback answer"
+        mock_create_client.return_value = mock_client
+
+        result = use_reasoning_model("test task")
+
+        self.assertEqual(result, "fallback answer")
+        mock_client.chat_complete.assert_called_once()
+        mock_client.extract_content.assert_called_once()
+
+    @patch("tools.specialist.reasoning.create_specialist_client")
+    def test_error_when_stream_and_non_stream_empty(self, mock_create_client):
+        from tools.specialist.reasoning import use_reasoning_model
+
+        mock_client = Mock()
+        mock_client.chat_complete_stream.return_value = iter([])
+        mock_client.chat_complete.return_value = {"choices": [{"message": {"content": ""}}]}
+        mock_client.extract_content.return_value = ""
+        mock_create_client.return_value = mock_client
+
+        result = use_reasoning_model("test task")
+
+        self.assertEqual(result, "Error: Reasoning model returned empty response")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -55,7 +55,12 @@ def use_reasoning_model(task: str) -> str:
 
         content = ''.join(full_response)
         if not content or not content.strip():
-            return "Error: Reasoning model returned empty response"
+            logger.warning("Reasoning stream returned empty output; retrying non-stream completion")
+            response = client.chat_complete(messages, tools=None)
+            content = client.extract_content(response)
+            if not content or not str(content).strip():
+                return "Error: Reasoning model returned empty response"
+            return str(content).strip()
 
         return content.strip()
 

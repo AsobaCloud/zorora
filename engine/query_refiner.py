@@ -7,8 +7,21 @@ structured refinement suggestions with option pills for the UI.
 
 import logging
 import re
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Set, Tuple
+
+import config
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class SearchIntent:
+    """A decomposed search intent derived from a parent query."""
+
+    intent_query: str
+    parent_query: str
+    is_primary: bool = False
 
 # ---------------------------------------------------------------------------
 # Keyword / regex definitions for each dimension
@@ -155,7 +168,7 @@ _GAP_DEFINITIONS = {
 # ---------------------------------------------------------------------------
 
 
-def _detect_time_period(query_lower: str) -> tuple[bool, str | None]:
+def _detect_time_period(query_lower: str) -> Tuple[bool, Optional[str]]:
     """Detect time period references via regex."""
     match = _TIME_PERIOD_PATTERN.search(query_lower)
     if match:
@@ -163,7 +176,7 @@ def _detect_time_period(query_lower: str) -> tuple[bool, str | None]:
     return False, None
 
 
-def _detect_keyword_set(query_lower: str, keywords: set[str]) -> tuple[bool, str | None]:
+def _detect_keyword_set(query_lower: str, keywords: Set[str]) -> Tuple[bool, Optional[str]]:
     """Check whether any keyword from the set appears in the query.
 
     Tries longest keywords first so multi-word phrases are matched
@@ -201,7 +214,7 @@ def refine_query(raw_query: str) -> dict:
     query_lower = raw_query.lower().strip()
 
     # Topic is always detected if query is non-empty
-    dimensions: dict[str, dict] = {
+    dimensions: Dict[str, dict] = {
         "topic": {"detected": True, "value": raw_query.strip()},
     }
 
@@ -229,11 +242,10 @@ def refine_query(raw_query: str) -> dict:
                 "options": defn["options"],
             })
 
-    # Status: needs_refinement if 3+ dimensions missing (i.e. <=1 detected
-    # out of the 4 non-topic dimensions), well_specified otherwise
     missing_count = len(gaps)
-    status = "needs_refinement" if missing_count >= 3 else "well_specified"
-    skip = status == "well_specified" or len(gaps) == 0
+    # Force refinement when any dimension is missing.
+    status = "needs_refinement" if missing_count > 0 else "well_specified"
+    skip = missing_count == 0
 
     result = {
         "status": status,
@@ -249,6 +261,124 @@ def refine_query(raw_query: str) -> dict:
         status, len(gaps), skip,
     )
     return result
+
+
+_REFINEMENT_SEGMENT_PATTERNS = [
+    re.compile(r"\bfocus timeframe:\s*([^.|]+)", re.IGNORECASE),
+    re.compile(r"\bgeography:\s*([^.|]+)", re.IGNORECASE),
+    re.compile(r"\banalysis:\s*([^.|]+)", re.IGNORECASE),
+    re.compile(r"\bscope:\s*([^.|]+)", re.IGNORECASE),
+    re.compile(r"\btime period:\s*([^|.]+)", re.IGNORECASE),
+    re.compile(r"\bgeographic focus:\s*([^|.]+)", re.IGNORECASE),
+    re.compile(r"\banalysis type:\s*([^|.]+)", re.IGNORECASE),
+]
+
+_FOCUS_FACETS = [
+    (
+        "price",
+        re.compile(r"\b(price|prices|pricing|cost|volatility|spread)\b", re.IGNORECASE),
+        "price movement and market dynamics",
+    ),
+    (
+        "geopolitical",
+        re.compile(r"\b(geopolitic|sanction|war|conflict|security|supply shock|event)\b", re.IGNORECASE),
+        "geopolitical drivers and event causality",
+    ),
+    (
+        "regulatory",
+        re.compile(r"\b(regulat|policy|tariff|rule|market reform|compliance)\b", re.IGNORECASE),
+        "regulatory and policy shifts",
+    ),
+]
+
+
+def _normalize_clause(text: str) -> str:
+    cleaned = re.sub(r"\s+", " ", (text or "").strip())
+    return cleaned.strip(" ,;:.")
+
+
+def _extract_refinement_segments(query: str) -> List[str]:
+    """Extract wizard-added segments from refined query text."""
+    segments: List[str] = []
+    for pattern in _REFINEMENT_SEGMENT_PATTERNS:
+        match = pattern.search(query)
+        if match:
+            value = _normalize_clause(match.group(1))
+            if value:
+                segments.append(value)
+    return segments
+
+
+def decompose_query(query: str) -> List[SearchIntent]:
+    """Decompose query into targeted intents while preserving full context."""
+    normalized_query = _normalize_clause(query)
+    if not normalized_query:
+        return []
+
+    # Strip explicit wizard labels from the base query text.
+    core_query = normalized_query
+    for pattern in _REFINEMENT_SEGMENT_PATTERNS:
+        core_query = pattern.sub("", core_query)
+    core_query = _normalize_clause(core_query) or normalized_query
+
+    intents: List[SearchIntent] = [
+        SearchIntent(intent_query=core_query, parent_query=normalized_query, is_primary=True)
+    ]
+
+    # Add refinement-segment intents (time/geography/analysis/scope),
+    # but always retain the full query context.
+    for segment in _extract_refinement_segments(normalized_query):
+        intent_query = _normalize_clause(f"{core_query} {segment}")
+        if intent_query:
+            intents.append(
+                SearchIntent(
+                    intent_query=intent_query,
+                    parent_query=normalized_query,
+                    is_primary=False,
+                )
+            )
+
+    # Add explicit facet intents derived from the question itself.
+    for _, pattern, focus_text in _FOCUS_FACETS:
+        if pattern.search(core_query):
+            intent_query = _normalize_clause(f"{core_query} focus on {focus_text}")
+            if intent_query:
+                intents.append(
+                    SearchIntent(
+                        intent_query=intent_query,
+                        parent_query=normalized_query,
+                        is_primary=False,
+                    )
+                )
+
+    # Legacy separator support: split on "|" if present, but preserve context.
+    if "|" in normalized_query:
+        for part in normalized_query.split("|"):
+            clause = _normalize_clause(part)
+            if clause:
+                intent_query = _normalize_clause(f"{core_query} {clause}")
+                intents.append(
+                    SearchIntent(
+                        intent_query=intent_query,
+                        parent_query=normalized_query,
+                        is_primary=False,
+                    )
+                )
+
+    # Deduplicate by normalized intent_query and cap count.
+    decomposition_cfg = getattr(config, "QUERY_DECOMPOSITION", {})
+    max_intents = int(decomposition_cfg.get("max_intents", 4))
+    deduped: List[SearchIntent] = []
+    seen = set()
+    for intent in intents:
+        key = _normalize_clause(intent.intent_query).lower()
+        if key and key not in seen:
+            seen.add(key)
+            deduped.append(intent)
+        if len(deduped) >= max_intents:
+            break
+
+    return deduped
 
 
 # ---------------------------------------------------------------------------
@@ -293,6 +423,84 @@ def detect_comparison(query: str) -> dict:
                 return {"is_comparative": True, "subjects": [subject_a, subject_b]}
 
     return {"is_comparative": False, "subjects": []}
+
+
+_GENERIC_SUBJECT_PATTERNS = [
+    re.compile(r"^\s*other\s+.+", re.IGNORECASE),
+    re.compile(r"^\s*alternatives?\s*(?:to|for)?\s*.+", re.IGNORECASE),
+    re.compile(r"^\s*.+\s+alternatives?\s*$", re.IGNORECASE),
+    re.compile(r"^\s*.+\s+technolog(?:y|ies)\s*$", re.IGNORECASE),
+    re.compile(r"^\s*.+\s+types?\s*$", re.IGNORECASE),
+    re.compile(r"^\s*.+\s+options?\s*$", re.IGNORECASE),
+]
+
+_GENERIC_SUBJECT_TERMS = {
+    "others",
+    "other technologies",
+    "other tech",
+    "alternatives",
+    "alternative technologies",
+    "options",
+    "types",
+    "systems",
+    "methods",
+}
+
+
+def _is_generic_subject(subject: str) -> bool:
+    """Return True when a comparison subject is category-level, not specific."""
+    if not subject or not subject.strip():
+        return True
+
+    normalized = _clean_subject(subject).lower()
+    if normalized in _GENERIC_SUBJECT_TERMS:
+        return True
+
+    if len(normalized.split()) <= 2 and normalized in {"other", "others", "alternatives"}:
+        return True
+
+    return any(pattern.match(normalized) for pattern in _GENERIC_SUBJECT_PATTERNS)
+
+
+_MARKET_INTENT_KEYWORDS = {
+    "energy",
+    "electricity",
+    "power market",
+    "grid",
+    "commodity",
+    "commodities",
+    "price",
+    "pricing",
+    "tariff",
+    "tariffs",
+    "regulation",
+    "regulatory",
+    "policy",
+    "market",
+    "demand",
+    "supply",
+    "volatility",
+    "natural gas",
+    "crude",
+    "oil",
+    "lng",
+    "coal",
+    "lithium",
+    "copper",
+    "uranium",
+    "carbon",
+    "emissions trading",
+    "capacity market",
+}
+
+
+def detect_market_intent(query: str) -> bool:
+    """Detect whether a query likely needs market/regulatory context."""
+    if not query or not query.strip():
+        return False
+
+    lowered = query.lower()
+    return any(re.search(r"\b" + re.escape(term) + r"\b", lowered) for term in _MARKET_INTENT_KEYWORDS)
 
 
 def _passthrough(raw_query: str) -> dict:

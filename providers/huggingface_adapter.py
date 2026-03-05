@@ -268,11 +268,35 @@ class HuggingFaceAdapter(BaseAdapter):
 
                 try:
                     chunk = json.loads(line)
-                    # HF streaming format: {"token": {"text": "..."}}
-                    token = chunk.get("token", {})
-                    text = token.get("text", "")
-                    if text:
-                        yield text
+                    # HF streaming format is usually {"token": {"text": "..."}},
+                    # but some endpoints send list-wrapped chunks.
+                    if isinstance(chunk, list):
+                        for item in chunk:
+                            if isinstance(item, dict):
+                                generated_text = item.get("generated_text", "")
+                                if isinstance(generated_text, str) and generated_text:
+                                    yield generated_text
+                                    continue
+
+                                token = item.get("token", {})
+                                if isinstance(token, dict):
+                                    text = token.get("text", "")
+                                    if text:
+                                        yield text
+                            elif isinstance(item, str) and item:
+                                yield item
+                        continue
+
+                    if isinstance(chunk, dict):
+                        generated_text = chunk.get("generated_text", "")
+                        if isinstance(generated_text, str) and generated_text:
+                            yield generated_text
+                            continue
+
+                        token = chunk.get("token", {})
+                        text = token.get("text", "") if isinstance(token, dict) else ""
+                        if text:
+                            yield text
                 except json.JSONDecodeError:
                     continue
 

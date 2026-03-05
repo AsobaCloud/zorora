@@ -4,9 +4,9 @@ import logging
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 
-from engine.models import ResearchState, Source, Finding
+from engine.models import ResearchState
 from engine.storage import LocalStorage
-from workflows.deep_research.workflow import DeepResearchWorkflow
+from engine.deep_research_service import run_deep_research
 
 logger = logging.getLogger(__name__)
 
@@ -65,11 +65,8 @@ class ResearchEngine:
         """
         logger.info(f"Executing deep research: {query[:60]}... (depth={depth})")
         
-        # Create workflow
-        workflow = DeepResearchWorkflow(max_depth=depth)
-        
-        # Execute workflow
-        state = workflow.execute(query)
+        # Execute shared deep-research service used by REPL/Web paths.
+        state = run_deep_research(query=query, depth=depth)
         
         # Save to storage
         research_id = self.save_research(state)

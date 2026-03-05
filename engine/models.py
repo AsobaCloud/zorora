@@ -44,6 +44,9 @@ class ResearchState:
     """Complete research workflow state"""
     # Input
     original_query: str
+    refined_query: Optional[str] = None
+    research_type: Optional[str] = None
+    compare_subjects: List[str] = field(default_factory=list)
     started_at: datetime = field(default_factory=datetime.now)
 
     # Configuration
@@ -96,6 +99,9 @@ class ResearchState:
         """Serialize to dictionary for storage"""
         return {
             "original_query": self.original_query,
+            "refined_query": self.refined_query,
+            "research_type": self.research_type,
+            "compare_subjects": self.compare_subjects,
             "started_at": self.started_at.isoformat(),
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "config": {

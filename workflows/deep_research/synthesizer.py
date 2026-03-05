@@ -62,6 +62,130 @@ def _extract_words(text: str) -> set:
     }
 
 
+def _normalize_sentence(text: str, max_chars: int = 240) -> str:
+    cleaned = re.sub(r"\s+", " ", (text or "").strip())
+    if len(cleaned) > max_chars:
+        cleaned = cleaned[: max_chars - 3].rstrip() + "..."
+    return cleaned
+
+
+def _build_source_lookup(sources: List[Source]) -> dict:
+    lookup = {}
+    for source in sources:
+        title = (source.title or "").strip() or "Untitled Source"
+        lookup[source.source_id] = title
+    return lookup
+
+
+def _format_finding_citations(finding: Finding, source_lookup: dict, max_sources: int = 3) -> str:
+    labels = []
+    for source_id in finding.sources[:max_sources]:
+        title = source_lookup.get(source_id)
+        if title and title not in labels:
+            labels.append(title)
+    if not labels:
+        return "[Unattributed Source]"
+    return "".join(f"[{label}]" for label in labels)
+
+
+def _deterministic_section_paragraph(
+    section: OutlineSection,
+    routed_sources: List[Source],
+    routed_findings: List[Finding],
+    source_lookup: dict,
+) -> str:
+    """Build an evidence-grounded section paragraph without relying on model output."""
+    sentences: List[str] = []
+
+    for finding in routed_findings[:2]:
+        claim = _normalize_sentence(finding.claim, max_chars=280)
+        if claim:
+            sentences.append(f"{claim} {_format_finding_citations(finding, source_lookup)}")
+
+    if not sentences:
+        for source in routed_sources[:2]:
+            snippet = source.content_full or source.content_snippet or source.title or ""
+            snippet = _normalize_sentence(snippet, max_chars=220)
+            title = source.title or "Untitled Source"
+            if snippet:
+                sentences.append(f"{snippet} [{title}]")
+
+    if not sentences:
+        return f"Evidence for {section.title.lower()} is limited in the retrieved corpus."
+
+    return " ".join(sentences)
+
+
+def _deterministic_evidence_synthesis(state: ResearchState, reason: str) -> str:
+    """Evidence-only synthesis path used when LLM outline/section expansion fails."""
+    source_lookup = _build_source_lookup(state.sources_checked)
+    top_sources = sorted(
+        state.sources_checked,
+        key=lambda s: ((s.relevance_score or 0.0), (s.credibility_score or 0.0)),
+        reverse=True,
+    )[:5]
+
+    lines = ["## Executive Summary"]
+    if state.findings:
+        lines.append(
+            _normalize_sentence(
+                f"Based on {len(state.findings)} findings from {len(state.sources_checked)} sources, "
+                "the available evidence indicates the market picture below."
+            )
+        )
+    elif state.sources_checked:
+        lines.append(
+            _normalize_sentence(
+                f"The synthesis model was unavailable ({reason}), so this summary is built directly from "
+                f"{len(state.sources_checked)} ranked sources."
+            )
+        )
+    else:
+        lines.append("No usable evidence was retrieved for this query.")
+
+    lines.append("")
+    lines.append("## Evidence Highlights")
+    added = 0
+
+    for finding in state.findings[:8]:
+        claim = _normalize_sentence(finding.claim, max_chars=280)
+        if claim:
+            lines.append(f"- {claim} {_format_finding_citations(finding, source_lookup)}")
+            added += 1
+
+    if added == 0:
+        for source in top_sources:
+            text = source.content_full or source.content_snippet or source.title or ""
+            text = _normalize_sentence(text, max_chars=220)
+            title = source.title or "Untitled Source"
+            lines.append(f"- {text} [{title}]")
+            added += 1
+            if added >= 5:
+                break
+
+    if added == 0:
+        lines.append("- No evidence excerpts available.")
+
+    lines.append("")
+    lines.append("## Source Coverage")
+    if top_sources:
+        for source in top_sources:
+            title = source.title or "Untitled Source"
+            rel = source.relevance_score or 0.0
+            cred = source.credibility_score or 0.0
+            lines.append(f"- {title} (relevance={rel:.2f}, credibility={cred:.2f})")
+    else:
+        lines.append("- No sources available.")
+
+    lines.append("")
+    lines.append("**Gaps:** Further investigation is needed where the evidence is thin or conflicting.")
+
+    synthesis = "\n".join(lines)
+    state.synthesis = synthesis
+    state.synthesis_model = "deterministic"
+    return synthesis
+
+
 def _resolve_generic_subject(
     generic_subject: str,
     specific_subject: str,
@@ -311,8 +435,17 @@ def _parse_outline(raw: str, is_comparison: bool, subjects: Optional[List[str]])
         logger.warning("Outline parse failed: empty executive summary")
         return None
     if len(sections) < min_sections:
-        logger.warning("Outline parse failed: %d sections < min %d", len(sections), min_sections)
-        return None
+        # Reliability guard: keep usable partial outlines (>=2 sections)
+        # instead of dropping to deterministic fallback.
+        if len(sections) >= 2:
+            logger.warning(
+                "Outline parse below target: %d sections < min %d (accepting partial outline)",
+                len(sections),
+                min_sections,
+            )
+        else:
+            logger.warning("Outline parse failed: %d sections < min %d", len(sections), min_sections)
+            return None
 
     # Cap at max
     sections = sections[:max_sections]
@@ -389,7 +522,7 @@ def route_sources(
     sources: List[Source],
     max_sources: int = None,
 ) -> List[Source]:
-    """Select sources most relevant to this section via keyword overlap scoring."""
+    """Select sources by section overlap, then source relevance, then credibility."""
     if max_sources is None:
         max_sources = config.SYNTHESIS.get("max_sources_per_section", 4)
 
@@ -397,23 +530,34 @@ def route_sources(
     section_text = section.title + " " + " ".join(section.bullets)
     section_words = _extract_words(section_text)
     if not section_words:
-        # Fallback: top sources by credibility
-        return sorted(sources, key=lambda s: s.credibility_score or 0.0, reverse=True)[:max_sources]
+        return sorted(
+            sources,
+            key=lambda s: ((s.relevance_score or 0.0), (s.credibility_score or 0.0)),
+            reverse=True,
+        )[:max_sources]
 
-    scored: List[Tuple[float, Source]] = []
+    scored: List[Tuple[Tuple[float, float, float], Source]] = []
     for source in sources:
         source_text = f"{source.title or ''} {source.content_snippet or ''} {source.content_full or ''}"
         source_words = _extract_words(source_text)
-        overlap = len(section_words & source_words)
-        # Credibility tiebreaker
-        score = overlap + (source.credibility_score or 0.0) * 0.1
+        overlap_count = len(section_words & source_words)
+        overlap_ratio = overlap_count / max(len(section_words), 1)
+        score = (
+            overlap_ratio,
+            source.relevance_score or 0.0,
+            source.credibility_score or 0.0,
+        )
         scored.append((score, source))
 
     scored.sort(key=lambda t: t[0], reverse=True)
 
-    # If no keyword overlap at all, fall back to credibility
-    if scored and scored[0][0] < 0.2:
-        return sorted(sources, key=lambda s: s.credibility_score or 0.0, reverse=True)[:max_sources]
+    # If section overlap is weak everywhere, fall back to global relevance ordering.
+    if scored and scored[0][0][0] == 0.0:
+        return sorted(
+            sources,
+            key=lambda s: ((s.relevance_score or 0.0), (s.credibility_score or 0.0)),
+            reverse=True,
+        )[:max_sources]
 
     return [s for _, s in scored[:max_sources]]
 
@@ -657,8 +801,8 @@ def synthesize(state: ResearchState, progress_callback=None) -> str:
     _emit_progress(progress_callback, "synthesis", "Generating outline from findings...")
     outline = synthesize_outline(state)
     if outline is None:
-        logger.warning("Outline generation failed, using fallback synthesis")
-        return _fallback_synthesis(state)
+        logger.warning("Outline generation failed, using deterministic evidence synthesis")
+        return _deterministic_evidence_synthesis(state, reason="outline_unavailable")
 
     _emit_progress(
         progress_callback, "synthesis",
@@ -668,6 +812,7 @@ def synthesize(state: ResearchState, progress_callback=None) -> str:
     # Stage 2: Per-section expansion
     expanded_sections: List[Optional[str]] = []
     success_count = 0
+    source_lookup = _build_source_lookup(state.sources_checked)
 
     for i, section in enumerate(outline.sections):
         _emit_progress(
@@ -683,13 +828,16 @@ def synthesize(state: ResearchState, progress_callback=None) -> str:
             outline.is_comparison, outline.subjects,
             market_context=market_context,
         )
+        if not paragraph:
+            paragraph = _deterministic_section_paragraph(section, routed_src, routed_fnd, source_lookup)
+
         expanded_sections.append(paragraph)
         if paragraph:
             success_count += 1
 
     if success_count == 0:
-        logger.warning("All section expansions failed, using fallback synthesis")
-        return _fallback_synthesis(state)
+        logger.warning("Section expansion unavailable, using deterministic evidence synthesis")
+        return _deterministic_evidence_synthesis(state, reason="section_expansion_unavailable")
 
     # Stage 3: Assembly
     _emit_progress(progress_callback, "synthesis", "Assembling final synthesis...")
@@ -702,23 +850,17 @@ def synthesize(state: ResearchState, progress_callback=None) -> str:
 
 
 def _fallback_synthesis(state: ResearchState) -> str:
-    """Fallback synthesis if LLM unavailable"""
-    lines = [f"# Research Synthesis: {state.original_query}\n"]
-    lines.append(f"\n**Total Sources:** {state.total_sources}\n")
-
-    if state.findings:
-        lines.append("## Key Findings:\n")
-        for i, finding in enumerate(state.findings[:10], 1):
-            lines.append(f"{i}. {finding.claim[:150]}...")
-            lines.append(f"   Confidence: {finding.confidence} | Avg Credibility: {finding.average_credibility:.2f}\n")
-
-    if state.sources_checked:
-        lines.append("## Top Sources:\n")
-        authoritative = state.get_authoritative_sources(top_n=10)
-        for source in authoritative:
-            lines.append(f"- {source.title}")
-            lines.append(f"  {source.url}")
-            lines.append(f"  Credibility: {source.credibility_score:.2f}\n")
+    """Final minimal fallback only when no useful evidence is available."""
+    lines = ["## Executive Summary"]
+    lines.append("Insufficient evidence was retrieved to produce a grounded synthesis.")
+    lines.append("")
+    lines.append("## Evidence Highlights")
+    lines.append("- No reliable findings could be extracted from the current source set.")
+    lines.append("")
+    lines.append("## Source Coverage")
+    lines.append(f"- Retrieved sources: {state.total_sources}")
+    lines.append("")
+    lines.append("**Gaps:** Broaden or refine the query and retry to collect a stronger evidence base.")
 
     synthesis = "\n".join(lines)
     state.synthesis = synthesis

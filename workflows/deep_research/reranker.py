@@ -9,6 +9,7 @@ import logging
 import re
 from typing import List
 
+import config
 from engine.models import Source
 
 logger = logging.getLogger(__name__)
@@ -90,21 +91,28 @@ def extract_keywords(query: str) -> List[str]:
     return [_stem(w) for w in query.lower().split() if w not in STOP_WORDS and len(w) > 1]
 
 
-def score_relevance(query: str, sources: List[Source]) -> List[Source]:
+def score_relevance(query: str, sources: List[Source],
+                    extra_keywords: List[str] = None) -> List[Source]:
     """Score and sort sources by relevance to query.
 
     Primary: keyword overlap between query and source title + snippet.
     Upgrade: cross-encoder scoring if sentence-transformers installed.
     """
     keywords = extract_keywords(query)
+    if extra_keywords:
+        keywords = list(set(keywords) | {_stem(k) for k in extra_keywords})
     if not keywords:
         return sources
 
-    # Try cross-encoder first (if available)
-    try:
-        return _cross_encoder_score(query, sources)
-    except ImportError:
-        pass
+    use_cross_encoder = bool(
+        getattr(config, "WEB_SEARCH", {}).get("relevance_cross_encoder_enabled", False)
+    )
+    # Keep keyword-union scoring deterministic unless semantic reranking is explicitly enabled.
+    if use_cross_encoder and not extra_keywords:
+        try:
+            return _cross_encoder_score(query, sources)
+        except ImportError:
+            pass
 
     # Fallback: keyword overlap scoring (with stemming)
     for source in sources:
