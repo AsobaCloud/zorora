@@ -12,8 +12,31 @@ from engine.models import Source
 from tools.research.academic_search import academic_search_sources
 from tools.research.web_search import web_search_sources
 from tools.research.newsroom import fetch_newsroom_api, _extract_keywords
+from tools.research.worldbank_search import worldbank_search_sources
+from tools.research.policy_search import policy_search_sources
+from tools.research.sec_search import sec_search_sources
 
 logger = logging.getLogger(__name__)
+
+POLICY_KEYWORDS = {
+    'policy', 'regulation', 'regulatory', 'legislation', 'bill',
+    'congress', 'federal', 'government', 'governance', 'law', 'mandate',
+    'executive order', 'statute', 'compliance', 'rulemaking', 'subsidy',
+    'tariff', 'sanction',
+}
+
+SEC_KEYWORDS = {
+    'sec', 'filing', '10-k', '10-q', '8-k', 'annual report',
+    'corporate', 'earnings', 'financial statement', 'balance sheet',
+    'revenue', 'stock', 'equity', 'securities', 'ipo', 'merger',
+    'acquisition', 'shareholder', 'company', 'investor',
+}
+
+
+def _query_matches_keywords(query: str, keywords: set) -> bool:
+    """Check if query contains any of the given keywords (case-insensitive)."""
+    query_lower = query.lower()
+    return any(kw in query_lower for kw in keywords)
 
 
 def parse_newsroom_results(articles: List[Dict[str, Any]], query: str) -> List[Source]:
@@ -161,16 +184,46 @@ def aggregate_sources(query: str, max_results_per_source: int = 10, include_brav
             logger.warning(f"Brave News fetch failed: {e}")
             return []
 
+    def fetch_worldbank():
+        try:
+            return worldbank_search_sources(query, max_results=max_results_per_source)
+        except Exception as e:
+            logger.warning(f"World Bank search failed: {e}")
+            return []
+
+    def fetch_policy():
+        try:
+            return policy_search_sources(query, max_results=max_results_per_source)
+        except Exception as e:
+            logger.warning(f"Policy search failed: {e}")
+            return []
+
+    def fetch_sec():
+        try:
+            return sec_search_sources(query, max_results=max_results_per_source)
+        except Exception as e:
+            logger.warning(f"SEC EDGAR search failed: {e}")
+            return []
+
+    # Determine which conditional channels to include
+    include_policy = _query_matches_keywords(query, POLICY_KEYWORDS)
+    include_sec = _query_matches_keywords(query, SEC_KEYWORDS)
+
     # Fetch in parallel
-    max_workers = 4 if include_brave_news else 3
+    max_workers = 4 + (1 if include_brave_news else 0) + 1 + (1 if include_policy else 0) + (1 if include_sec else 0)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(fetch_academic): "academic",
             executor.submit(fetch_web): "web",
             executor.submit(fetch_newsroom): "newsroom",
+            executor.submit(fetch_worldbank): "world_bank",
         }
         if include_brave_news:
             futures[executor.submit(fetch_brave_news)] = "brave_news"
+        if include_policy:
+            futures[executor.submit(fetch_policy)] = "policy"
+        if include_sec:
+            futures[executor.submit(fetch_sec)] = "sec_edgar"
 
         for future in as_completed(futures):
             source_type = futures[future]

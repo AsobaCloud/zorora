@@ -298,6 +298,183 @@ def _pmc_search_raw(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
     return []
 
 
+def _reconstruct_abstract(inverted_index: dict) -> str:
+    """Reconstruct abstract from OpenAlex abstract_inverted_index format.
+
+    The inverted index maps each word to a list of positions where it appears.
+    We invert this to get (position, word) pairs and join them in order.
+    """
+    if not inverted_index:
+        return ""
+    pairs = []
+    for word, positions in inverted_index.items():
+        for pos in positions:
+            pairs.append((pos, word))
+    pairs.sort(key=lambda x: x[0])
+    return " ".join(word for _, word in pairs)
+
+
+def _openalex_search_raw(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
+    """Search OpenAlex for academic works.
+
+    Uses the polite pool (mailto parameter) for higher rate limits.
+    """
+    openalex_config = getattr(config, 'OPENALEX', {})
+    if not openalex_config.get("enabled", True):
+        return []
+
+    endpoint = openalex_config.get("endpoint", "https://api.openalex.org/works")
+    timeout = openalex_config.get("timeout", 15)
+    email = openalex_config.get("polite_email", "")
+
+    params = {
+        "search": query,
+        "per_page": min(max_results, 25),
+    }
+    if email:
+        params["mailto"] = email
+
+    try:
+        response = requests.get(endpoint, params=params, timeout=timeout)
+        response.raise_for_status()
+        data = response.json()
+
+        results = []
+        for work in data.get("results", []):
+            # Reconstruct abstract from inverted index
+            abstract = _reconstruct_abstract(work.get("abstract_inverted_index"))
+
+            # Extract authors
+            authors = []
+            for authorship in work.get("authorships", []):
+                author = authorship.get("author", {})
+                name = author.get("display_name", "")
+                if name:
+                    authors.append(name)
+
+            authors_str = ", ".join(authors[:3])
+            if len(authors) > 3:
+                authors_str += " et al."
+
+            # Build description
+            desc_parts = ["[OpenAlex]"]
+            if authors_str:
+                desc_parts.append(authors_str)
+            year = work.get("publication_date", "")[:4] if work.get("publication_date") else ""
+            if year:
+                desc_parts.append(f"({year})")
+            cite_count = work.get("cited_by_count", 0)
+            if cite_count:
+                desc_parts.append(f"Citations: {cite_count}")
+            description = " ".join(desc_parts)
+            if abstract:
+                description += f" - {abstract[:200]}"
+
+            # DOI handling
+            doi_raw = work.get("doi", "")
+            doi = doi_raw.replace("https://doi.org/", "") if doi_raw else ""
+            url = doi_raw or ""
+
+            results.append({
+                "title": work.get("title", "No title"),
+                "url": url,
+                "description": description,
+                "doi": doi,
+                "year": int(year) if year else None,
+                "citation_count": cite_count,
+                "source": "OpenAlex",
+            })
+
+        logger.info(f"OpenAlex returned {len(results)} results for: {query[:60]}...")
+        return results
+
+    except Exception as e:
+        logger.warning(f"OpenAlex search failed: {e}")
+        return []
+
+
+def _semantic_scholar_search_raw(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
+    """Search Semantic Scholar for academic papers.
+
+    Includes exponential backoff on 429 rate limit responses.
+    """
+    ss_config = getattr(config, 'SEMANTIC_SCHOLAR', {})
+    if not ss_config.get("enabled", True):
+        return []
+
+    endpoint = ss_config.get("endpoint", "https://api.semanticscholar.org/graph/v1/paper/search")
+    timeout = ss_config.get("timeout", 15)
+    api_key = ss_config.get("api_key", "")
+
+    params = {
+        "query": query,
+        "limit": min(max_results, 20),
+        "fields": "title,url,year,citationCount,abstract,authors,externalIds",
+    }
+    headers = {}
+    if api_key:
+        headers["x-api-key"] = api_key
+
+    # Exponential backoff for rate limiting
+    for attempt in range(3):
+        try:
+            if attempt > 0:
+                time.sleep(2 ** attempt)
+
+            response = requests.get(endpoint, params=params, headers=headers, timeout=timeout)
+            response.raise_for_status()
+            data = response.json()
+
+            results = []
+            for paper in data.get("data", []):
+                authors = [a.get("name", "") for a in paper.get("authors", [])]
+                authors_str = ", ".join(authors[:3])
+                if len(authors) > 3:
+                    authors_str += " et al."
+
+                desc_parts = ["[SemanticScholar]"]
+                if authors_str:
+                    desc_parts.append(authors_str)
+                year = paper.get("year")
+                if year:
+                    desc_parts.append(f"({year})")
+                cite_count = paper.get("citationCount", 0) or 0
+                if cite_count:
+                    desc_parts.append(f"Citations: {cite_count}")
+                description = " ".join(desc_parts)
+                abstract = paper.get("abstract", "") or ""
+                if abstract:
+                    description += f" - {abstract[:200]}"
+
+                external_ids = paper.get("externalIds", {}) or {}
+                doi = external_ids.get("DOI", "")
+                url = paper.get("url", "")
+                if doi and not url:
+                    url = f"https://doi.org/{doi}"
+
+                results.append({
+                    "title": paper.get("title", "No title"),
+                    "url": url,
+                    "description": description,
+                    "doi": doi,
+                    "year": year,
+                    "citation_count": cite_count,
+                    "source": "SemanticScholar",
+                })
+
+            logger.info(f"Semantic Scholar returned {len(results)} results for: {query[:60]}...")
+            return results
+
+        except Exception as e:
+            if "429" in str(e) and attempt < 2:
+                logger.warning(f"Semantic Scholar rate limited (attempt {attempt + 1}), backing off...")
+                continue
+            logger.warning(f"Semantic Scholar search failed: {e}")
+            return []
+
+    return []
+
+
 def _check_scihub_availability(doi: Optional[str] = None, title: Optional[str] = None) -> Optional[str]:
     """
     Check if a paper is available on Sci-Hub and return PDF URL.
@@ -404,7 +581,7 @@ def academic_search_sources(query: str, max_results: int = 10) -> List[Source]:
     all_results = []
 
     try:
-        with ThreadPoolExecutor(max_workers=7) as executor:
+        with ThreadPoolExecutor(max_workers=9) as executor:
             futures = {
                 executor.submit(_scholar_search_raw, query, max_results // 2): "Scholar",
                 executor.submit(_pubmed_search_raw, query, max_results // 2): "PubMed",
@@ -412,7 +589,9 @@ def academic_search_sources(query: str, max_results: int = 10) -> List[Source]:
                 executor.submit(_arxiv_search_raw, query, max_results // 4): "arXiv",
                 executor.submit(_biorxiv_search_raw, query, max_results // 6): "bioRxiv",
                 executor.submit(_medrxiv_search_raw, query, max_results // 6): "medRxiv",
-                executor.submit(_pmc_search_raw, query, max_results // 4): "PMC"
+                executor.submit(_pmc_search_raw, query, max_results // 4): "PMC",
+                executor.submit(_openalex_search_raw, query, max_results // 2): "OpenAlex",
+                executor.submit(_semantic_scholar_search_raw, query, max_results // 2): "SemanticScholar",
             }
 
             for future in as_completed(futures):
@@ -484,7 +663,7 @@ def academic_search_sources(query: str, max_results: int = 10) -> List[Source]:
 
     # Convert to Source objects
     sources = []
-    tag_pattern = re.compile(r'^\[(Scholar|CORE|PubMed|arXiv|bioRxiv|medRxiv|PMC)\]\s*')
+    tag_pattern = re.compile(r'^\[(Scholar|CORE|PubMed|arXiv|bioRxiv|medRxiv|PMC|OpenAlex|SemanticScholar)\]\s*')
 
     for result in unique_results:
         url = result.get("url", "")

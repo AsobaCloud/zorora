@@ -40,6 +40,23 @@ BASE_CREDIBILITY = {
     "medium.com": {"score": 0.40, "reason": "Blog platform"},
     "substack.com": {"score": 0.40, "reason": "Newsletter platform"},
     "reddit.com": {"score": 0.25, "reason": "User-generated content"},
+
+    # Tier 7: Academic indices (0.70)
+    "openalex.org": {"score": 0.70, "reason": "OpenAlex academic index"},
+    "api.semanticscholar.org": {"score": 0.70, "reason": "Semantic Scholar (AI2)"},
+
+    # Tier 8: Development / international (0.80)
+    "worldbank.org": {"score": 0.80, "reason": "World Bank Open Data"},
+    "search.worldbank.org": {"score": 0.80, "reason": "World Bank documents"},
+
+    # Tier 9: Policy / regulatory (0.70-0.85)
+    "api.congress.gov": {"score": 0.85, "reason": "Congress.gov (official)"},
+    "govtrack.us": {"score": 0.70, "reason": "GovTrack.us (bill tracker)"},
+    "federalregister.gov": {"score": 0.80, "reason": "Federal Register (official)"},
+
+    # Tier 10: Financial filings (0.80)
+    "sec.gov": {"score": 0.80, "reason": "SEC EDGAR (official filings)"},
+    "efts.sec.gov": {"score": 0.80, "reason": "SEC EDGAR full-text search"},
 }
 
 # Predatory publishers (override to 0.2)
