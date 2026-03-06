@@ -63,11 +63,32 @@ _LOW_QUALITY_SECTION_PATTERNS = [
     re.compile(r"\bfirstly\b|\bsecondly\b|\bthirdly\b", re.IGNORECASE),
     re.compile(r"\baccording to the source\b", re.IGNORECASE),
     re.compile(r"\baccording to (?:the )?(?:report|article|document)\b", re.IGNORECASE),
+    re.compile(r"^\s*this (?:section|analysis|paragraph)\s+(?:discusses|examines|provides|outlines)\b", re.IGNORECASE),
+    re.compile(r"\bat a high level\b", re.IGNORECASE),
+    re.compile(r"\bkey considerations for stakeholders\b", re.IGNORECASE),
+    re.compile(r"\bbased on the provided evidence\b", re.IGNORECASE),
+    re.compile(r"\bthe following conclusions can be drawn\b", re.IGNORECASE),
+    re.compile(r"^\s*the evidence (?:suggests|indicates) that\b", re.IGNORECASE),
+    re.compile(r"\bthe situation is complex\b", re.IGNORECASE),
+    re.compile(r"(?:^|\s)(?:first|second|third),\s", re.IGNORECASE),
 ]
 _LOW_QUALITY_SUMMARY_PATTERNS = [
     re.compile(r"\bthe following are key insights\b", re.IGNORECASE),
     re.compile(r"\bhere are the key findings\b", re.IGNORECASE),
     re.compile(r"\bto address the question\b", re.IGNORECASE),
+]
+_LOW_QUALITY_OUTLINE_SUMMARY_PATTERNS = [
+    re.compile(r"\bthis (?:report|brief|analysis) (?:provides|presents|offers)\b", re.IGNORECASE),
+    re.compile(r"\boverview of (?:key )?(?:themes|findings|considerations)\b", re.IGNORECASE),
+    re.compile(r"\bthis section\b", re.IGNORECASE),
+]
+_GENERIC_OUTLINE_TITLE_PATTERNS = [
+    re.compile(r"^thematic sections?$", re.IGNORECASE),
+    re.compile(r"^key findings(?: and insights)?$", re.IGNORECASE),
+    re.compile(r"^analysis$", re.IGNORECASE),
+    re.compile(r"^conclusion$", re.IGNORECASE),
+    re.compile(r"^(?:section|theme|topic|dimension)\s*\d+$", re.IGNORECASE),
+    re.compile(r"^(?:section|theme|topic|dimension)\s*\d+\s*[:\-]", re.IGNORECASE),
 ]
 
 _RESEARCH_TYPE_LENSES = {
@@ -758,6 +779,111 @@ def _deterministic_evidence_synthesis(state: ResearchState, reason: str) -> str:
     return synthesis
 
 
+def _build_evidence_outline_fallback(state: ResearchState) -> Optional[OutlineResult]:
+    """Build a deterministic, non-template outline so section synthesis can still run."""
+    if not state.findings and not state.sources_checked:
+        return None
+
+    executive_summary = _deterministic_executive_summary(state)
+    if not executive_summary:
+        executive_summary = (
+            "Available evidence is limited; sections below prioritize the strongest grounded signals."
+        )
+
+    if state.compare_subjects and len(state.compare_subjects) >= 2:
+        subject_a, subject_b = state.compare_subjects[0], state.compare_subjects[1]
+        sections = [
+            OutlineSection(
+                title="Relative Market Outcomes",
+                bullets=[
+                    f"Compare observed outcome direction and magnitude for {subject_a} versus {subject_b}.",
+                    "Cite strongest evidence for both convergence and divergence.",
+                ],
+            ),
+            OutlineSection(
+                title="Causal Driver Contrast",
+                bullets=[
+                    f"Trace the main drivers affecting {subject_a} and {subject_b}.",
+                    "Distinguish structural factors from short-term shocks.",
+                ],
+            ),
+            OutlineSection(
+                title="Policy and Risk Divergence",
+                bullets=[
+                    "Compare regulatory interventions and implementation timelines.",
+                    "Highlight forward risks, uncertainty, and key monitoring indicators.",
+                ],
+            ),
+        ]
+        return OutlineResult(
+            executive_summary=executive_summary,
+            sections=sections,
+            is_comparison=True,
+            subjects=[subject_a, subject_b],
+        )
+
+    # Single-topic fallback: derive section bullets from findings when possible.
+    finding_rows = [(finding, _extract_words(finding.claim)) for finding in state.findings[:12]]
+    section_specs = [
+        (
+            "Market Signals and Observed Changes",
+            {"price", "cost", "spread", "volatil", "tariff", "rate", "demand", "supply"},
+            [
+                "Establish the strongest observed market moves and timing.",
+                "Quantify direction and persistence where evidence supports it.",
+            ],
+        ),
+        (
+            "Driver and Transmission Pathways",
+            {"shipping", "fuel", "import", "export", "geopolit", "outage", "logistic", "pipeline"},
+            [
+                "Trace causal pathways from disruption to market outcomes.",
+                "Separate first-order shocks from secondary transmission effects.",
+            ],
+        ),
+        (
+            "Policy and Regulatory Response",
+            {"policy", "regulator", "regulatory", "commission", "cap", "intervention", "rule"},
+            [
+                "Identify interventions, implementation status, and enforcement timing.",
+                "Assess pass-through dampening or displacement effects.",
+            ],
+        ),
+        (
+            "Forward Risks and Monitoring Signals",
+            {"risk", "outlook", "forecast", "future", "storage", "uncertainty", "scenario"},
+            [
+                "Highlight near-term risk triggers and leading indicators.",
+                "Call out unresolved uncertainty and evidence conflicts.",
+            ],
+        ),
+    ]
+
+    sections: List[OutlineSection] = []
+    for title, keyword_set, defaults in section_specs:
+        bullets: List[str] = []
+        for finding, words in finding_rows:
+            if not (words & keyword_set):
+                continue
+            claim_bullet = _normalize_sentence(finding.claim, max_chars=118)
+            if claim_bullet and claim_bullet not in bullets:
+                bullets.append(claim_bullet)
+            if len(bullets) >= 2:
+                break
+        for default in defaults:
+            if len(bullets) >= 2:
+                break
+            bullets.append(default)
+        sections.append(OutlineSection(title=title, bullets=bullets[:3]))
+
+    return OutlineResult(
+        executive_summary=executive_summary,
+        sections=sections,
+        is_comparison=False,
+        subjects=None,
+    )
+
+
 def _resolve_generic_subject(
     generic_subject: str,
     specific_subject: str,
@@ -962,6 +1088,58 @@ Begin:
 """
 
 
+def _is_generic_outline_title(title: str) -> bool:
+    normalized = re.sub(r"\s+", " ", (title or "").strip())
+    if not normalized:
+        return True
+    return any(pattern.match(normalized) for pattern in _GENERIC_OUTLINE_TITLE_PATTERNS)
+
+
+def _is_source_like_outline_title(title: str) -> bool:
+    normalized = re.sub(r"\s+", " ", (title or "").strip())
+    if not normalized:
+        return True
+    lowered = normalized.lower()
+    words = re.findall(r"[a-z0-9%]+", lowered)
+
+    if "|" in normalized:
+        return True
+    if re.search(r"\bhttps?://|\bwww\.", lowered):
+        return True
+    if " - " in normalized and len(words) >= 10:
+        return True
+    if len(words) > 14:
+        return True
+    if re.search(r"\b(linkedin|intereconomics|ieefa|volume no|volumes?)\b", lowered):
+        return True
+
+    return False
+
+
+def _passes_outline_quality_gate(outline: OutlineResult) -> bool:
+    """Reject parsed outlines that are structurally valid but generic/template-like."""
+    summary = re.sub(r"\s+", " ", (outline.executive_summary or "").strip())
+    if not summary:
+        return False
+    if any(pattern.search(summary) for pattern in _LOW_QUALITY_OUTLINE_SUMMARY_PATTERNS):
+        return False
+
+    if not outline.sections:
+        return False
+
+    generic_titles = [section.title for section in outline.sections if _is_generic_outline_title(section.title)]
+    if generic_titles:
+        logger.warning("Outline quality failed due to generic section titles: %s", generic_titles)
+        return False
+
+    source_like_titles = [section.title for section in outline.sections if _is_source_like_outline_title(section.title)]
+    if source_like_titles:
+        logger.warning("Outline quality failed due to source-like section titles: %s", source_like_titles)
+        return False
+
+    return True
+
+
 def _parse_outline(raw: str, is_comparison: bool, subjects: Optional[List[str]]) -> Optional[OutlineResult]:
     """Parse outline markdown into OutlineResult. Returns None on failure."""
     min_sections = config.SYNTHESIS.get("outline_sections", [4, 6])[0]
@@ -1036,11 +1214,34 @@ def _parse_outline(raw: str, is_comparison: bool, subjects: Optional[List[str]])
     # Cap at max
     sections = sections[:max_sections]
 
-    return OutlineResult(
+    result = OutlineResult(
         executive_summary=executive_summary,
         sections=sections,
         is_comparison=is_comparison,
         subjects=subjects,
+    )
+    if not _passes_outline_quality_gate(result):
+        logger.warning("Outline parse failed quality gate")
+        return None
+
+    return result
+
+
+def _build_outline_retry_prompt(base_prompt: str, rejected_output: str, failure_reason: str) -> str:
+    """Build a constrained retry prompt for one failed outline generation."""
+    reason_label = failure_reason.replace("_", " ")
+    rejected = _normalize_sentence(rejected_output or "", max_chars=1400)
+    return (
+        f"{base_prompt}\n\n"
+        "REWRITE REQUIRED:\n"
+        f"- Previous outline failed due to: {reason_label}.\n"
+        "- Provide specific analytical section headers (no generic labels like "
+        "'Thematic Sections', 'Key Findings', 'Analysis', or 'Conclusion').\n"
+        "- Do not use source headlines, article titles, publisher tags, pipes, or links as section headers.\n"
+        "- Executive Summary must state a concrete evidence-backed conclusion, not report framing.\n"
+        "- Keep format strict: ## Executive Summary then ## Section Title with 2-3 bullets each.\n"
+        f"- Rejected outline snippet: {rejected}\n\n"
+        "Rewrite now:\n"
     )
 
 
@@ -1110,7 +1311,21 @@ def synthesize_outline(state: ResearchState) -> Optional[OutlineResult]:
             return None
 
         raw = _normalize_outline_headers(raw)
-        return _parse_outline(raw, is_comparison, subjects)
+        parsed = _parse_outline(raw, is_comparison, subjects)
+        if parsed:
+            return parsed
+
+        # Single constrained retry before deterministic fallback.
+        retry_prompt = _build_outline_retry_prompt(
+            base_prompt=prompt,
+            rejected_output=raw,
+            failure_reason="outline_quality_or_parse_failure",
+        )
+        retry_raw = _call_research_synthesis_model(retry_prompt)
+        if not retry_raw:
+            return None
+        retry_raw = _normalize_outline_headers(retry_raw)
+        return _parse_outline(retry_raw, is_comparison, subjects)
 
     except Exception as e:
         logger.error("Outline generation failed: %s", e)
@@ -1537,15 +1752,24 @@ def synthesize(state: ResearchState, progress_callback=None) -> str:
     _emit_progress(progress_callback, "synthesis", "Generating outline from findings...")
     outline = synthesize_outline(state)
     if outline is None:
-        logger.warning("Outline generation failed, using deterministic evidence synthesis")
-        return _deterministic_evidence_synthesis(state, reason="outline_unavailable")
+        logger.warning("Outline generation failed; using deterministic evidence outline fallback")
+        outline = _build_evidence_outline_fallback(state)
+        if outline is None:
+            logger.warning("Deterministic outline fallback unavailable; using deterministic evidence synthesis")
+            return _deterministic_evidence_synthesis(state, reason="outline_unavailable")
+        _emit_progress(
+            progress_callback,
+            "synthesis",
+            f"Outline fallback generated: {len(outline.sections)} sections. Expanding...",
+        )
     if _summary_needs_rewrite(outline.executive_summary):
         outline.executive_summary = _deterministic_executive_summary(state)
 
-    _emit_progress(
-        progress_callback, "synthesis",
-        f"Outline ready: {len(outline.sections)} sections. Expanding...",
-    )
+    if progress_callback:
+        _emit_progress(
+            progress_callback, "synthesis",
+            f"Outline ready: {len(outline.sections)} sections. Expanding...",
+        )
 
     # Stage 2: Per-section expansion
     expanded_sections: List[Optional[str]] = []

@@ -605,6 +605,76 @@ Regional markets saw short-term price dislocation after shipping disruptions.
         self.assertIsNotNone(result)
         self.assertEqual(len(result.sections), 2)
 
+    def test_parse_outline_rejects_generic_template_titles(self):
+        """Generic templated section titles should fail outline quality parsing."""
+        from workflows.deep_research.synthesizer import _parse_outline
+
+        raw = """## Executive Summary
+Power prices moved unevenly after fuel disruptions and emergency balancing actions.
+
+## Thematic Sections
+- discuss the main themes
+- summarize major points
+
+## Key Findings
+- list observed impacts
+- note market considerations
+
+## Analysis
+- describe implications
+- compare broad outcomes
+
+## Conclusion
+- recap themes
+- suggest next steps
+"""
+        result = _parse_outline(raw, is_comparison=False, subjects=None)
+        self.assertIsNone(result)
+
+    def test_parse_outline_rejects_source_headline_section_titles(self):
+        """Section headers that read like source headlines should fail outline quality."""
+        from workflows.deep_research.synthesizer import _parse_outline
+
+        raw = """## Executive Summary
+LNG disruptions and policy actions shifted EU hub spread behavior across the period.
+
+## Strait of Hormuz disruption would jeopardise 10% of Europe’s LNG imports | IEEFA
+- assess import exposure
+- map vulnerability by terminal dependency
+
+## Moderate Increase in Gas and Electricity Prices in 2025: Prospective Analysis by the European Commission - LinkedIn
+- evaluate short-run policy assumptions
+- compare projected versus realized outcomes
+
+## Pass-through Mechanics by Trading Hub
+- quantify cost transmission timing
+- compare balancing pressure
+
+## Forward Risk Signals
+- track storage and shipping constraints
+- identify near-term volatility indicators
+"""
+        result = _parse_outline(raw, is_comparison=False, subjects=None)
+        self.assertIsNone(result)
+
+    def test_parse_outline_rejects_numbered_theme_prefix_titles(self):
+        """Numbered Theme prefixes should be treated as generic templating."""
+        from workflows.deep_research.synthesizer import _parse_outline
+
+        raw = """## Executive Summary
+Prices and policy interventions shifted in tandem across key EU hubs.
+
+## Theme 1: LNG Shipping Disruptions and Price Effects
+- quantify pass-through timing
+- compare hub spread widening
+
+## Theme 2: Regulatory Responses and Market Stabilization
+- assess emergency cap effectiveness
+- identify deferred pass-through risk
+"""
+        result = _parse_outline(raw, is_comparison=False, subjects=None)
+        self.assertIsNone(result)
+
 
 class TestOutlineBoldHeaderStripping(unittest.TestCase):
     """SEP-028: Bold markers in headers must be stripped during normalization."""
@@ -902,9 +972,17 @@ class TestTopicalGateInService(unittest.TestCase):
 
 
 class TestDeterministicSynthesisFallback(unittest.TestCase):
+    @patch(
+        "workflows.deep_research.synthesizer.synthesize_section",
+        return_value="Modeled section synthesis [Market Signal Source].",
+    )
     @patch("workflows.deep_research.synthesizer.synthesize_outline", return_value=None)
-    def test_outline_failure_still_returns_structured_synthesis(self, _mock_outline):
-        """If outline generation fails, synthesizer should still produce structured output."""
+    def test_outline_failure_uses_evidence_outline_and_continues_section_synthesis(
+        self,
+        _mock_outline,
+        mock_synth_section,
+    ):
+        """When model outline fails, pipeline should use evidence outline fallback before section synthesis."""
         from engine.models import ResearchState, Finding
         from workflows.deep_research.synthesizer import synthesize
 
@@ -924,9 +1002,12 @@ class TestDeterministicSynthesisFallback(unittest.TestCase):
         result = synthesize(state)
 
         self.assertIn("## Executive Summary", result)
-        self.assertIn("## Evidence Highlights", result)
+        self.assertIn("## Market Signals and Observed Changes", result)
         self.assertIn("[Market Signal Source]", result)
+        self.assertNotIn("## Evidence Highlights", result)
         self.assertNotIn("# Research Synthesis:", result)
+        self.assertGreaterEqual(mock_synth_section.call_count, 1)
+        self.assertEqual(state.synthesis_model, "reasoning")
 
 
 class TestFindingFallbackQuality(unittest.TestCase):
@@ -1065,6 +1146,118 @@ class TestSynthesisQualityGuards(unittest.TestCase):
             section=section,
             sources=[src],
             findings=[],
+            state=MagicMock(),
+            is_comparison=False,
+            subjects=None,
+        )
+        self.assertIsNone(result)
+
+    @patch(
+        "workflows.deep_research.synthesizer._call_research_synthesis_model",
+        return_value=(
+            "This section discusses the topic at a high level and outlines key considerations "
+            "for stakeholders in electricity markets [Policy Source]."
+        ),
+    )
+    def test_synthesize_section_rejects_generic_discourse_even_with_citation(self, _mock_call_model):
+        """Generic section discourse should be rejected even when citation formatting is present."""
+        from workflows.deep_research.synthesizer import synthesize_section, OutlineSection
+        from engine.models import Finding
+
+        section = OutlineSection(title="Regulatory Response", bullets=["Assess policy pass-through impacts"])
+        src = _make_source(
+            title="Policy Source",
+            snippet=(
+                "Key stakeholder considerations include policy pass-through effects across electricity markets."
+            ),
+            relevance=0.66,
+            url="https://example.com/policy-source",
+        )
+        finding = Finding(
+            claim="Policy pass-through effects shaped stakeholder considerations in electricity markets.",
+            sources=[src.source_id],
+            confidence="medium",
+            average_credibility=0.72,
+        )
+
+        result = synthesize_section(
+            section=section,
+            sources=[src],
+            findings=[finding],
+            state=MagicMock(),
+            is_comparison=False,
+            subjects=None,
+        )
+        self.assertIsNone(result)
+
+    @patch(
+        "workflows.deep_research.synthesizer._call_research_synthesis_model",
+        return_value=(
+            "Based on the provided evidence, the following conclusions can be drawn about market impacts: "
+            "shipping constraints increased cost pressure in regional hubs [Grid Operations Update]."
+        ),
+    )
+    def test_synthesize_section_rejects_provided_evidence_report_framing(self, _mock_call_model):
+        """Report-style framing should be rejected even if it contains a citation."""
+        from workflows.deep_research.synthesizer import synthesize_section, OutlineSection
+        from engine.models import Finding
+
+        section = OutlineSection(title="Price Effects", bullets=["Assess shipping pass-through"])
+        src = _make_source(
+            title="Grid Operations Update",
+            snippet=(
+                "Shipping constraints increased cost pressure and widened spreads in regional electricity hubs."
+            ),
+            relevance=0.68,
+            url="https://example.com/grid-ops",
+        )
+        finding = Finding(
+            claim="Shipping constraints increased cost pressure in regional electricity hubs.",
+            sources=[src.source_id],
+            confidence="high",
+            average_credibility=0.8,
+        )
+
+        result = synthesize_section(
+            section=section,
+            sources=[src],
+            findings=[finding],
+            state=MagicMock(),
+            is_comparison=False,
+            subjects=None,
+        )
+        self.assertIsNone(result)
+
+    @patch(
+        "workflows.deep_research.synthesizer._call_research_synthesis_model",
+        return_value=(
+            "The evidence suggests that the situation is complex and involves several factors [Grid Operations Update]. "
+            "First, shipping constraints affected market balances and pricing pressure [Grid Operations Update]."
+        ),
+    )
+    def test_synthesize_section_rejects_evidence_suggests_generic_framing(self, _mock_call_model):
+        """Generic 'evidence suggests' framing should be rejected in section synthesis."""
+        from workflows.deep_research.synthesizer import synthesize_section, OutlineSection
+        from engine.models import Finding
+
+        section = OutlineSection(title="Price Dynamics", bullets=["Assess shipping-driven pricing effects"])
+        src = _make_source(
+            title="Grid Operations Update",
+            snippet="Shipping constraints affected market balances and increased pricing pressure in EU hubs.",
+            relevance=0.7,
+            url="https://example.com/grid-ops-2",
+        )
+        finding = Finding(
+            claim="Shipping constraints affected market balances and pricing pressure.",
+            sources=[src.source_id],
+            confidence="medium",
+            average_credibility=0.77,
+        )
+
+        result = synthesize_section(
+            section=section,
+            sources=[src],
+            findings=[finding],
             state=MagicMock(),
             is_comparison=False,
             subjects=None,
@@ -1686,6 +1879,54 @@ class TestResearchTypeSynthesisLens(unittest.TestCase):
         prompt = mock_call_model.call_args[0][0]
         self.assertIn("Research Lens", prompt)
         self.assertIn("regulatory mechanism", prompt.lower())
+
+    @patch("workflows.deep_research.synthesizer._call_research_synthesis_model")
+    def test_synthesize_outline_retries_once_when_outline_quality_is_generic(self, mock_call_model):
+        """Outline generation should retry once when first draft is generic/template-like."""
+        from engine.models import ResearchState, Finding
+        from workflows.deep_research.synthesizer import synthesize_outline
+
+        generic_outline = (
+            "## Executive Summary\n"
+            "This report provides an overview of key themes and considerations.\n\n"
+            "## Thematic Sections\n- discuss broad context\n- highlight themes\n\n"
+            "## Key Findings\n- summarize observed points\n- present major items\n\n"
+            "## Analysis\n- discuss implications\n- describe trends\n\n"
+            "## Conclusion\n- recap findings\n- provide takeaway\n"
+        )
+        specific_outline = (
+            "## Executive Summary\n"
+            "LNG freight disruption and emergency policy intervention widened then partially capped EU hub "
+            "power spreads in late 2025 [Grid Operations Update].\n\n"
+            "## Fuel and Freight Transmission\n"
+            "- quantify shipping-delay pass-through into gas-linked power costs\n"
+            "- identify timing of the largest basis widening windows\n\n"
+            "## Regulatory Market Effects\n"
+            "- measure how temporary caps changed spread persistence\n"
+            "- separate immediate suppression from deferred pass-through\n\n"
+            "## Demand and Dispatch Balance\n"
+            "- assess weather-load pressure on thermal dispatch and balancing markets\n"
+            "- compare stress conditions across major trading hubs\n\n"
+            "## Forward Risk Signals\n"
+            "- track storage adequacy and import risk into the next quarter\n"
+            "- identify leading indicators for renewed volatility\n"
+        )
+        mock_call_model.side_effect = [generic_outline, specific_outline]
+
+        state = ResearchState(original_query="EU power price pass-through", research_type="trend_analysis")
+        state.findings = [
+            Finding(
+                claim="Shipping disruption widened gas and power spreads before emergency caps softened spikes.",
+                sources=["s1"],
+                confidence="high",
+                average_credibility=0.8,
+            )
+        ]
+
+        result = synthesize_outline(state)
+        self.assertIsNotNone(result)
+        self.assertEqual(mock_call_model.call_count, 2)
+        self.assertEqual(result.sections[0].title, "Fuel and Freight Transmission")
 
 
 if __name__ == "__main__":
