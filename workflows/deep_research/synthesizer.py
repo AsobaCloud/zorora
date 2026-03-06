@@ -87,8 +87,39 @@ _GENERIC_OUTLINE_TITLE_PATTERNS = [
     re.compile(r"^key findings(?: and insights)?$", re.IGNORECASE),
     re.compile(r"^analysis$", re.IGNORECASE),
     re.compile(r"^conclusion$", re.IGNORECASE),
+    re.compile(r"^conclusion\s*[:\-]?\s*$", re.IGNORECASE),
     re.compile(r"^(?:section|theme|topic|dimension)\s*\d+$", re.IGNORECASE),
     re.compile(r"^(?:section|theme|topic|dimension)\s*\d+\s*[:\-]", re.IGNORECASE),
+    re.compile(r"^(?:[ivxlcdm]{1,6})\.\s+.+", re.IGNORECASE),
+    re.compile(r"^\d+\.\s+.+", re.IGNORECASE),
+    re.compile(r"^\d+\)\s+.+", re.IGNORECASE),
+]
+
+_GENERIC_SECTION_OPENING_PATTERNS = [
+    re.compile(r"^\s*(?:the\s+)?evidence\s+(?:suggests|indicates)\b", re.IGNORECASE),
+    re.compile(r"^\s*this\s+(?:section|analysis|paragraph)\b", re.IGNORECASE),
+    re.compile(r"^\s*based on\b", re.IGNORECASE),
+]
+_CAUSAL_SECTION_PATTERNS = [
+    re.compile(r"\bdue to\b", re.IGNORECASE),
+    re.compile(r"\bbecause\b", re.IGNORECASE),
+    re.compile(r"\bdriven by\b", re.IGNORECASE),
+    re.compile(r"\bled to\b", re.IGNORECASE),
+    re.compile(r"\bcaused\b", re.IGNORECASE),
+    re.compile(r"\bresult(?:ed|ing)\s+in\b", re.IGNORECASE),
+    re.compile(r"\bpass-?through\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:tighten(?:ed|ing)?|constrain(?:ed|ing)?|disrupt(?:ed|ing)?|surge(?:d|ing)?|"
+        r"spike(?:d|ing)?|declin(?:e|ed|ing)?|caps?|interventions?)\b.*\b"
+        r"(?:push(?:ed|ing)?|raise(?:d|s|ing)?|lift(?:ed|ing)?|increase(?:d|s|ing)?|"
+        r"reduce(?:d|s|ing)?|lower(?:ed|ing)?)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bas\b[^.]{0,90}\b(?:tighten(?:s|ed|ing)?|widen(?:s|ed|ing)?|raise(?:s|d|ing)?|"
+        r"lift(?:s|ed|ing)?|reduce(?:s|d|ing)?|lower(?:s|ed|ing)?|spike(?:s|d|ing)?)\b",
+        re.IGNORECASE,
+    ),
 ]
 
 _RESEARCH_TYPE_LENSES = {
@@ -488,6 +519,33 @@ def _is_evidence_grounded(
     return len(overlap) >= min_overlap_terms
 
 
+def _has_answer_first_opening(text: str) -> bool:
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text or "") if s.strip()]
+    if not sentences:
+        return False
+
+    first = sentences[0]
+    if any(pattern.search(first) for pattern in _GENERIC_SECTION_OPENING_PATTERNS):
+        return False
+
+    words = re.findall(r"[A-Za-z0-9%$-]+", first)
+    if len(words) < 8:
+        return False
+
+    topic_terms = _extract_words(
+        "price prices cost costs spread spreads volatility demand supply policy regulator "
+        "regulatory cap caps tariff market markets import export dispatch risk"
+    )
+    if len(_extract_words(first) & topic_terms) < 1:
+        return False
+
+    return True
+
+
+def _has_causal_link(text: str) -> bool:
+    return any(pattern.search(text or "") for pattern in _CAUSAL_SECTION_PATTERNS)
+
+
 def _passes_section_quality_gate(paragraph: str, min_words: int = 10, max_words: int = 220) -> bool:
     """Reject low-signal section text that looks like report scaffolding."""
     text = (paragraph or "").strip()
@@ -510,6 +568,12 @@ def _passes_section_quality_gate(paragraph: str, min_words: int = 10, max_words:
     if citation_count < 1:
         return False
     if citation_count > 8 and citation_count > max(4, len(words) // 10):
+        return False
+
+    if not _has_answer_first_opening(text):
+        return False
+
+    if not _has_causal_link(text):
         return False
 
     return True
@@ -661,6 +725,26 @@ def _select_deterministic_excerpts(
     return selected
 
 
+def _clean_section_title(title: str) -> str:
+    text = re.sub(r"\s+", " ", (title or "").strip())
+    if not text:
+        return "this section"
+    text = re.sub(r"^(?:[ivxlcdm]{1,6}\.)\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"^(?:section|theme|dimension)\s*\d+\s*[:\-]\s*", "", text, flags=re.IGNORECASE)
+    text = text.strip(" :-")
+    if not text:
+        return "this section"
+    return text
+
+
+def _sentence_with_citation(fact: str, source_title: str) -> str:
+    cleaned = _normalize_sentence(fact or "", max_chars=190).strip().rstrip(".")
+    title = (source_title or "").strip() or "Untitled Source"
+    if not cleaned:
+        return ""
+    return f"{cleaned} [{title}]."
+
+
 def _deterministic_section_paragraph(
     section: OutlineSection,
     routed_sources: List[Source],
@@ -670,28 +754,31 @@ def _deterministic_section_paragraph(
     """Build an evidence-grounded section paragraph without relying on model output."""
     excerpt_pairs = _select_deterministic_excerpts(section, routed_sources, max_excerpts=2)
     evidence_sentences: List[str] = []
+    section_label = _clean_section_title(section.title)
 
     for source, excerpt in excerpt_pairs:
         title = source.title or "Untitled Source"
-        evidence_sentences.append(f'"{excerpt}" [{title}]')
+        sentence = _sentence_with_citation(excerpt, title)
+        if sentence:
+            evidence_sentences.append(sentence)
 
     if not evidence_sentences:
         for finding in routed_findings[:2]:
             claim = _normalize_sentence(finding.claim, max_chars=220)
             if claim:
                 evidence_sentences.append(
-                    f"The strongest signal is {claim} {_format_finding_citations(finding, source_lookup)}"
+                    f"{claim} {_format_finding_citations(finding, source_lookup)}."
                 )
 
     if not evidence_sentences:
-        return f"Evidence for {section.title.lower()} is limited in the retrieved corpus."
+        return f"Evidence for {section_label.lower()} is limited in the retrieved corpus."
 
     lead = evidence_sentences[0]
     support = evidence_sentences[1] if len(evidence_sentences) > 1 else ""
     direction = _infer_signal_direction(" ".join(evidence_sentences))
     implication = (
-        f"Taken together, this indicates {section.title.lower()} remains {direction} "
-        "in the current evidence window."
+        f"Taken together, this indicates {section_label.lower()} remained {direction} "
+        "because observed disruptions passed through market and policy channels."
     )
     return " ".join(part for part in [lead, support, implication] if part)
 

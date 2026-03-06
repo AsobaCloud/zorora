@@ -671,6 +671,54 @@ Prices and policy interventions shifted in tandem across key EU hubs.
 ## Theme 2: Regulatory Responses and Market Stabilization
 - assess emergency cap effectiveness
 - identify deferred pass-through risk
+        """
+        result = _parse_outline(raw, is_comparison=False, subjects=None)
+        self.assertIsNone(result)
+
+    def test_parse_outline_rejects_roman_numeral_and_conclusion_scaffolding(self):
+        """Roman numeral/conclusion scaffold headers should fail outline quality."""
+        from workflows.deep_research.synthesizer import _parse_outline
+
+        raw = """## Executive Summary
+LNG shocks propagated into gas-linked power prices while regulatory actions limited peak spikes.
+
+## I. LNG Shipping Disruptions:
+- quantify pass-through timing
+- isolate freight-driven basis widening
+
+## II. Regulatory Responses:
+- assess emergency market intervention effects
+- compare direct and deferred pass-through
+
+## Conclusion:
+- summarize findings
+- discuss implications
+
+## Forward Risk Signals
+- track near-term storage adequacy
+- monitor shipping route disruption indicators
+        """
+        result = _parse_outline(raw, is_comparison=False, subjects=None)
+        self.assertIsNone(result)
+
+    def test_parse_outline_rejects_numeric_scaffold_titles(self):
+        """Numeric scaffold headers should fail outline quality."""
+        from workflows.deep_research.synthesizer import _parse_outline
+
+        raw = """## Executive Summary
+PJM rule changes influenced auction behavior and wholesale pricing patterns.
+
+## 1. PJM Capacity Auction Prices
+- track auction clearing trend shifts
+- identify timing of major price changes
+
+## 2. Regulatory Changes in PJM
+- map rule updates to market effects
+- compare intended versus observed outcomes
+
+## 3. Wholesale Electricity Market Designs
+- assess interaction with reliability rules
+- identify residual pricing risks
 """
         result = _parse_outline(raw, is_comparison=False, subjects=None)
         self.assertIsNone(result)
@@ -1267,6 +1315,79 @@ class TestSynthesisQualityGuards(unittest.TestCase):
     @patch(
         "workflows.deep_research.synthesizer._call_research_synthesis_model",
         return_value=(
+            "Power prices were higher in several hubs during the period [Grid Source]. "
+            "Regulators announced temporary interventions in the same window [Policy Source]."
+        ),
+    )
+    def test_synthesize_section_rejects_non_causal_paragraph_even_with_citations(self, _mock_call_model):
+        """Cited but non-causal section prose should fail quality gate."""
+        from workflows.deep_research.synthesizer import synthesize_section, OutlineSection
+        from engine.models import Finding
+
+        section = OutlineSection(title="Price Dynamics", bullets=["Explain drivers of price changes"])
+        src = _make_source(
+            title="Grid Source",
+            snippet="Power prices rose in major hubs as supply constraints tightened.",
+            relevance=0.7,
+            url="https://example.com/grid-source-causal",
+        )
+        finding = Finding(
+            claim="Power prices rose in major hubs as supply constraints tightened.",
+            sources=[src.source_id],
+            confidence="high",
+            average_credibility=0.82,
+        )
+
+        result = synthesize_section(
+            section=section,
+            sources=[src],
+            findings=[finding],
+            state=MagicMock(),
+            is_comparison=False,
+            subjects=None,
+        )
+        self.assertIsNone(result)
+
+    @patch(
+        "workflows.deep_research.synthesizer._call_research_synthesis_model",
+        return_value=(
+            "LNG shipping delays tightened gas balances and pushed EU hub electricity prices higher [Grid Source]. "
+            "Emergency caps reduced extreme intraday spikes but did not remove fuel-cost pass-through [Policy Source]."
+        ),
+    )
+    def test_synthesize_section_accepts_answer_first_with_causal_link(self, _mock_call_model):
+        """Answer-first sections with explicit causal linkage should pass quality gate."""
+        from workflows.deep_research.synthesizer import synthesize_section, OutlineSection
+        from engine.models import Finding
+
+        section = OutlineSection(title="Price Dynamics", bullets=["Explain drivers of price changes"])
+        src = _make_source(
+            title="Grid Source",
+            snippet="LNG delays tightened balances and raised EU hub power prices.",
+            relevance=0.72,
+            url="https://example.com/grid-source-answer-first",
+        )
+        fnd = Finding(
+            claim="LNG delays tightened balances and raised EU hub power prices.",
+            sources=[src.source_id],
+            confidence="high",
+            average_credibility=0.84,
+        )
+
+        paragraph = synthesize_section(
+            section=section,
+            sources=[src],
+            findings=[fnd],
+            state=MagicMock(),
+            is_comparison=False,
+            subjects=None,
+        )
+        self.assertIsNotNone(paragraph)
+        self.assertIn("[Grid Source]", paragraph)
+
+    @patch(
+        "workflows.deep_research.synthesizer._call_research_synthesis_model",
+        return_value=(
             "Price climb in market as outage widens spreads and volatility rises [Grid Source]."
         ),
     )
@@ -1408,7 +1529,9 @@ class TestSynthesisProvenanceAndSalvage(unittest.TestCase):
     @patch(
         "workflows.deep_research.synthesizer._call_research_synthesis_model",
         return_value=(
-            " ".join(["market"] * 190) + " [EU Power Price Monitor]."
+            "Shipping disruptions tightened gas balances and pushed power prices higher in EU hubs "
+            + " ".join(["market"] * 185)
+            + " [EU Power Price Monitor]."
         ),
     )
     def test_synthesize_section_readds_citation_after_truncation(self, _mock_call_model):
@@ -1516,7 +1639,7 @@ class TestSynthesisProvenanceAndSalvage(unittest.TestCase):
         self.assertEqual(state.synthesis_model, "deterministic")
 
     def test_deterministic_section_prefers_more_credible_excerpt(self):
-        """Deterministic section paragraphs should lead with highest-credibility relevant excerpt."""
+        """Deterministic section paragraphs should lead with highest-credibility cited evidence."""
         from workflows.deep_research.synthesizer import _deterministic_section_paragraph, OutlineSection
 
         section = OutlineSection(title="Regulatory Impact", bullets=["price cap mechanism"])
@@ -1544,7 +1667,7 @@ class TestSynthesisProvenanceAndSalvage(unittest.TestCase):
 
         self.assertIn("[Council Policy Brief]", paragraph)
         self.assertIn("[Market Blog]", paragraph)
-        self.assertIn('"', paragraph)
+        self.assertIn("Taken together, this indicates", paragraph)
         self.assertLess(
             paragraph.find("[Council Policy Brief]"),
             paragraph.find("[Market Blog]"),
@@ -1553,7 +1676,7 @@ class TestSynthesisProvenanceAndSalvage(unittest.TestCase):
     @patch("workflows.deep_research.synthesizer.synthesize_outline")
     @patch("workflows.deep_research.synthesizer.synthesize_section", return_value=None)
     def test_all_section_deterministic_uses_source_excerpts(self, _mock_synth_section, mock_outline):
-        """All-section deterministic mode should include quoted source excerpts with citations."""
+        """All-section deterministic mode should include cited evidence with analytical implication."""
         from engine.models import ResearchState, Finding
         from workflows.deep_research.synthesizer import synthesize, OutlineResult, OutlineSection
 
@@ -1595,7 +1718,7 @@ class TestSynthesisProvenanceAndSalvage(unittest.TestCase):
         self.assertEqual(state.synthesis_model, "deterministic")
         self.assertIn("## Market Effects", synthesis)
         self.assertIn("[Grid Operations Update]", synthesis)
-        self.assertIn('"', synthesis)
+        self.assertIn("Taken together, this indicates", synthesis)
 
     @patch("workflows.deep_research.synthesizer.synthesize_outline")
     @patch("workflows.deep_research.synthesizer.synthesize_section", return_value=None)
@@ -1760,13 +1883,13 @@ class TestSynthesizeSectionHeaderStripping(unittest.TestCase):
         "workflows.deep_research.synthesizer._call_research_synthesis_model",
         return_value=(
             "#### Sub-heading leaked\n"
-            "Some body text with a citation [Test Source].\n"
+            "Shipping disruptions tightened gas balances and raised electricity prices [Test Source].\n"
             "##### Another leaked header\n"
             "###### Deep header\n"
             "## Expected stripped\n"
             "# Also stripped\n"
             "### Mid-level header\n"
-            "Final paragraph [Test Source]."
+            "Regulatory caps reduced extreme spikes but pass-through remained elevated [Test Source]."
         ),
     )
     def test_all_header_levels_stripped(self, _mock_call_model):
