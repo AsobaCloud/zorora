@@ -59,6 +59,7 @@ _LOW_QUALITY_SECTION_PATTERNS = [
     re.compile(r"\bhere are (?:(?:some|the)\s+)?key findings(?: and insights)?\b", re.IGNORECASE),
     re.compile(r"\bkey findings and insights\b", re.IGNORECASE),
     re.compile(r"\bthe provided sources\b", re.IGNORECASE),
+    re.compile(r"\bthe provided documents\b", re.IGNORECASE),
     re.compile(r"\bthe following (?:is|are)\b", re.IGNORECASE),
     re.compile(r"\bfirstly\b|\bsecondly\b|\bthirdly\b", re.IGNORECASE),
     re.compile(r"\baccording to the source\b", re.IGNORECASE),
@@ -68,6 +69,7 @@ _LOW_QUALITY_SECTION_PATTERNS = [
     re.compile(r"\bkey considerations for stakeholders\b", re.IGNORECASE),
     re.compile(r"\bbased on the provided evidence\b", re.IGNORECASE),
     re.compile(r"\bthe following conclusions can be drawn\b", re.IGNORECASE),
+    re.compile(r"\bhere is a synthesized understanding\b", re.IGNORECASE),
     re.compile(r"^\s*the evidence (?:suggests|indicates) that\b", re.IGNORECASE),
     re.compile(r"\bthe situation is complex\b", re.IGNORECASE),
     re.compile(r"(?:^|\s)(?:first|second|third),\s", re.IGNORECASE),
@@ -76,6 +78,14 @@ _LOW_QUALITY_SUMMARY_PATTERNS = [
     re.compile(r"\bthe following are key insights\b", re.IGNORECASE),
     re.compile(r"\bhere are the key findings\b", re.IGNORECASE),
     re.compile(r"\bto address the question\b", re.IGNORECASE),
+]
+_LOW_VALUE_SOURCE_FACT_PATTERNS = [
+    re.compile(r"^last updated\b", re.IGNORECASE),
+    re.compile(r"^what you need to know\b", re.IGNORECASE),
+    re.compile(r"^find us\b", re.IGNORECASE),
+    re.compile(r"\bheadquarters\b", re.IGNORECASE),
+    re.compile(r"^\s*citations?\s*:\s*\d+\b", re.IGNORECASE),
+    re.compile(r"^copyright\b|^©", re.IGNORECASE),
 ]
 _LOW_QUALITY_OUTLINE_SUMMARY_PATTERNS = [
     re.compile(r"\bthis (?:report|brief|analysis) (?:provides|presents|offers)\b", re.IGNORECASE),
@@ -90,6 +100,8 @@ _GENERIC_OUTLINE_TITLE_PATTERNS = [
     re.compile(r"^conclusion\s*[:\-]?\s*$", re.IGNORECASE),
     re.compile(r"^(?:section|theme|topic|dimension)\s*\d+$", re.IGNORECASE),
     re.compile(r"^(?:section|theme|topic|dimension)\s*\d+\s*[:\-]", re.IGNORECASE),
+    re.compile(r"^(?:thematic\s+)?(?:section|theme|topic|dimension)\s*\d+$", re.IGNORECASE),
+    re.compile(r"^(?:thematic\s+)?(?:section|theme|topic|dimension)\s*\d+\s*[:\-]", re.IGNORECASE),
     re.compile(r"^(?:[ivxlcdm]{1,6})\.\s+.+", re.IGNORECASE),
     re.compile(r"^\d+\.\s+.+", re.IGNORECASE),
     re.compile(r"^\d+\)\s+.+", re.IGNORECASE),
@@ -313,9 +325,19 @@ def _extract_source_fact(source: Source, max_chars: int = 220) -> str:
     sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
     chosen = ""
 
+    def _is_low_value_sentence(sentence: str) -> bool:
+        normalized = re.sub(r"\s+", " ", (sentence or "").strip())
+        if not normalized:
+            return True
+        if any(pattern.search(normalized) for pattern in _LOW_VALUE_SOURCE_FACT_PATTERNS):
+            return True
+        return False
+
     # Prefer concrete statements with numbers.
     for sentence in sentences:
         normalized = re.sub(r"^(firstly|secondly|thirdly|however|in summary),?\s+", "", sentence, flags=re.IGNORECASE)
+        if _is_low_value_sentence(normalized):
+            continue
         if len(normalized) >= 30 and re.search(r"\d", normalized):
             chosen = normalized
             break
@@ -324,6 +346,8 @@ def _extract_source_fact(source: Source, max_chars: int = 220) -> str:
     if not chosen:
         for sentence in sentences:
             normalized = re.sub(r"^(firstly|secondly|thirdly|however|in summary),?\s+", "", sentence, flags=re.IGNORECASE)
+            if _is_low_value_sentence(normalized):
+                continue
             if len(normalized) >= 20:
                 chosen = normalized
                 break
@@ -784,7 +808,7 @@ def _deterministic_section_paragraph(
 
 
 def _deterministic_evidence_synthesis(state: ResearchState, reason: str) -> str:
-    """Evidence-only synthesis path used when LLM outline/section expansion fails."""
+    """Structured deterministic synthesis path with no raw evidence dump sections."""
     source_lookup = _build_source_lookup(state.sources_checked)
     top_sources = sorted(
         state.sources_checked,
@@ -792,75 +816,82 @@ def _deterministic_evidence_synthesis(state: ResearchState, reason: str) -> str:
         reverse=True,
     )[:5]
 
-    lines = ["## Executive Summary"]
-    if state.findings:
-        lines.append(
-            _normalize_sentence(
-                f"Based on {len(state.findings)} findings from {len(state.sources_checked)} sources, "
-                "the available evidence indicates the market picture below."
-            )
-        )
-    elif state.sources_checked:
-        lines.append(
-            _normalize_sentence(
-                f"The synthesis model was unavailable ({reason}), so this summary is built directly from "
-                f"{len(state.sources_checked)} ranked sources."
-            )
-        )
-    else:
-        lines.append("No usable evidence was retrieved for this query.")
+    def _insufficient(message: str) -> str:
+        lines = [
+            "## Executive Summary",
+            "Insufficient usable evidence to answer this query reliably.",
+            "",
+            "## Evidence Status",
+            _normalize_sentence(message, max_chars=240),
+            "",
+            "## Confidence and Gaps",
+            (
+                f"Retrieved sources: {len(state.sources_checked)}; extracted findings: {len(state.findings)}. "
+                "The available corpus did not provide enough grounded, on-topic evidence for a reliable answer."
+            ),
+        ]
+        synthesis_text = "\n".join(lines)
+        state.synthesis = synthesis_text
+        state.synthesis_model = "deterministic"
+        return synthesis_text
 
-    lines.append("")
-    lines.append("## Evidence Highlights")
-    added = 0
-    source_by_id = {s.source_id: s for s in state.sources_checked}
+    if not state.findings and not state.sources_checked:
+        return _insufficient(f"No usable evidence was retrieved ({reason}).")
+
+    evidence_sentences: List[str] = []
+    seen = set()
 
     for finding in state.findings[:8]:
-        source = None
-        for sid in finding.sources:
-            if sid in source_by_id:
-                source = source_by_id[sid]
-                break
-        if source:
-            fact = _extract_source_fact(source, max_chars=220)
+        claim = _normalize_sentence(finding.claim, max_chars=210).rstrip(".")
+        citations = _format_finding_citations(finding, source_lookup)
+        sentence = f"{claim} {citations}." if claim and citations else ""
+        if sentence and sentence not in seen:
+            seen.add(sentence)
+            evidence_sentences.append(sentence)
+        if len(evidence_sentences) >= 3:
+            break
+
+    if len(evidence_sentences) < 3:
+        for source in top_sources:
+            fact = _extract_source_fact(source, max_chars=210)
             title = source.title or "Untitled Source"
-            if fact:
-                lines.append(f"- {fact} [{title}]")
-                added += 1
+            if not fact:
                 continue
-
-        claim = _normalize_sentence(finding.claim, max_chars=220)
-        if claim:
-            lines.append(f"- {claim} {_format_finding_citations(finding, source_lookup)}")
-            added += 1
-
-    if added == 0:
-        for source in top_sources:
-            text = _extract_source_fact(source, max_chars=220)
-            title = source.title or "Untitled Source"
-            lines.append(f"- {text} [{title}]")
-            added += 1
-            if added >= 5:
+            sentence = f"{fact.rstrip('.')} [{title}]."
+            if sentence in seen:
+                continue
+            seen.add(sentence)
+            evidence_sentences.append(sentence)
+            if len(evidence_sentences) >= 3:
                 break
 
-    if added == 0:
-        lines.append("- No evidence excerpts available.")
+    if not evidence_sentences:
+        return _insufficient("Retrieved records lacked extractable, query-grounded claims with usable citations.")
 
-    lines.append("")
-    lines.append("## Source Coverage")
-    if top_sources:
-        for source in top_sources:
-            title = source.title or "Untitled Source"
-            rel = source.relevance_score or 0.0
-            cred = source.credibility_score or 0.0
-            lines.append(f"- {title} (relevance={rel:.2f}, credibility={cred:.2f})")
-    else:
-        lines.append("- No sources available.")
+    direction = _infer_signal_direction(" ".join(evidence_sentences))
+    executive_summary = (
+        f"Available evidence indicates {direction} market pressure in the current window; "
+        "the answer below is limited to retrieved, cited records."
+    )
+    answer_body = " ".join(evidence_sentences[:2]).strip()
+    if not _has_causal_link(answer_body):
+        answer_body += " This pattern suggests disruption and policy channels affected observed outcomes."
 
-    lines.append("")
-    lines.append("**Gaps:** Further investigation is needed where the evidence is thin or conflicting.")
+    confidence_text = (
+        f"Confidence is constrained by source quality dispersion across {len(state.sources_checked)} retrieved "
+        f"sources and {len(state.findings)} extracted findings; unresolved conflicts remain where records diverge."
+    )
 
-    synthesis = "\n".join(lines)
+    synthesis = "\n".join([
+        "## Executive Summary",
+        _normalize_sentence(executive_summary, max_chars=220),
+        "",
+        "## Answer",
+        _normalize_sentence(answer_body, max_chars=360),
+        "",
+        "## Confidence and Gaps",
+        _normalize_sentence(confidence_text, max_chars=260),
+    ])
     state.synthesis = synthesis
     state.synthesis_model = "deterministic"
     return synthesis
@@ -1914,16 +1945,19 @@ def synthesize(state: ResearchState, progress_callback=None) -> str:
 
 def _fallback_synthesis(state: ResearchState) -> str:
     """Final minimal fallback only when no useful evidence is available."""
-    lines = ["## Executive Summary"]
-    lines.append("Insufficient evidence was retrieved to produce a grounded synthesis.")
-    lines.append("")
-    lines.append("## Evidence Highlights")
-    lines.append("- No reliable findings could be extracted from the current source set.")
-    lines.append("")
-    lines.append("## Source Coverage")
-    lines.append(f"- Retrieved sources: {state.total_sources}")
-    lines.append("")
-    lines.append("**Gaps:** Broaden or refine the query and retry to collect a stronger evidence base.")
+    lines = [
+        "## Executive Summary",
+        "Insufficient usable evidence to answer this query reliably.",
+        "",
+        "## Evidence Status",
+        "No reliable, query-grounded findings could be extracted from the current source set.",
+        "",
+        "## Confidence and Gaps",
+        (
+            f"Retrieved sources: {state.total_sources}. "
+            "Broaden or refine the query and retry to collect stronger evidence."
+        ),
+    ]
 
     synthesis = "\n".join(lines)
     state.synthesis = synthesis

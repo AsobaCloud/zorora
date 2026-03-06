@@ -719,6 +719,24 @@ PJM rule changes influenced auction behavior and wholesale pricing patterns.
 ## 3. Wholesale Electricity Market Designs
 - assess interaction with reliability rules
 - identify residual pricing risks
+        """
+        result = _parse_outline(raw, is_comparison=False, subjects=None)
+        self.assertIsNone(result)
+
+    def test_parse_outline_rejects_thematic_section_numbered_titles(self):
+        """Thematic Section N headers should fail outline quality."""
+        from workflows.deep_research.synthesizer import _parse_outline
+
+        raw = """## Executive Summary
+Price and policy dynamics shifted together in the observed period.
+
+## Thematic Section 1: LNG Disruption Impact
+- estimate pass-through to power prices
+- identify timing of spread expansion
+
+## Thematic Section 2: Regulatory Response
+- evaluate cap/intervention effects
+- separate immediate vs delayed impacts
 """
         result = _parse_outline(raw, is_comparison=False, subjects=None)
         self.assertIsNone(result)
@@ -1057,6 +1075,48 @@ class TestDeterministicSynthesisFallback(unittest.TestCase):
         self.assertGreaterEqual(mock_synth_section.call_count, 1)
         self.assertEqual(state.synthesis_model, "reasoning")
 
+    def test_deterministic_evidence_synthesis_never_uses_raw_evidence_dump(self):
+        """Deterministic evidence synthesis should use structured prose, not Evidence Highlights dumps."""
+        from engine.models import ResearchState, Finding
+        from workflows.deep_research.synthesizer import _deterministic_evidence_synthesis
+
+        src = _make_source("Grid Operations Update", relevance=0.7, url="https://ex.com/grid-ops")
+        src.credibility_score = 0.85
+        src.content_snippet = "Shipping disruptions tightened gas balances and raised power prices."
+        state = ResearchState(original_query="eu power pass-through")
+        state.sources_checked = [src]
+        state.total_sources = 1
+        state.findings = [
+            Finding(
+                claim="Shipping disruptions tightened gas balances and raised power prices.",
+                sources=[src.source_id],
+                confidence="high",
+                average_credibility=0.85,
+            )
+        ]
+
+        synthesis = _deterministic_evidence_synthesis(state, reason="outline_unavailable")
+
+        self.assertIn("## Executive Summary", synthesis)
+        self.assertIn("## Answer", synthesis)
+        self.assertNotIn("## Evidence Highlights", synthesis)
+        self.assertIn("[Grid Operations Update]", synthesis)
+
+    def test_deterministic_evidence_synthesis_tells_truth_when_no_usable_evidence(self):
+        """No-evidence path must explicitly state insufficient usable evidence."""
+        from engine.models import ResearchState
+        from workflows.deep_research.synthesizer import _deterministic_evidence_synthesis
+
+        state = ResearchState(original_query="unknown market query")
+        state.sources_checked = []
+        state.findings = []
+        state.total_sources = 0
+
+        synthesis = _deterministic_evidence_synthesis(state, reason="no_usable_evidence")
+
+        self.assertIn("Insufficient usable evidence to answer this query reliably.", synthesis)
+        self.assertNotIn("## Evidence Highlights", synthesis)
+
 
 class TestFindingFallbackQuality(unittest.TestCase):
     def test_fallback_findings_skip_low_signal_marketing_noise(self):
@@ -1081,6 +1141,28 @@ class TestFindingFallbackQuality(unittest.TestCase):
 
         self.assertTrue(any("lithium carbonate price trend" in c for c in claims))
         self.assertFalse(any("welcome gift package" in c for c in claims))
+
+    def test_extract_source_fact_skips_page_chrome_noise(self):
+        """Source fact extraction should skip common page-chrome phrases and return substantive evidence."""
+        from workflows.deep_research.synthesizer import _extract_source_fact
+
+        src = _make_source(
+            title="Utility Price Update",
+            snippet=(
+                "Last updated March 6, 2026 at 4:05 PM UTC. "
+                "What You Need to Know. Find Us 5 Headquarters 4545 Fuller Dr. "
+                "PJM capacity auction prices rose and utility bills are expected to increase in 2026."
+            ),
+            relevance=0.7,
+            url="https://example.com/utility-price-update",
+        )
+        fact = _extract_source_fact(src, max_chars=220)
+
+        self.assertTrue(fact)
+        self.assertNotIn("Last updated", fact)
+        self.assertNotIn("What You Need to Know", fact)
+        self.assertNotIn("Find Us", fact)
+        self.assertIn("PJM capacity auction prices rose", fact)
 
 
 class TestSynthesisQualityGuards(unittest.TestCase):
@@ -1384,6 +1466,42 @@ class TestSynthesisQualityGuards(unittest.TestCase):
         )
         self.assertIsNotNone(paragraph)
         self.assertIn("[Grid Source]", paragraph)
+
+    @patch(
+        "workflows.deep_research.synthesizer._call_research_synthesis_model",
+        return_value=(
+            "The provided documents offer insights into market effects [Grid Source]. "
+            "Power prices increased due to supply constraints in the same period [Grid Source]."
+        ),
+    )
+    def test_synthesize_section_rejects_provided_documents_framing(self, _mock_call_model):
+        """Document-framing narration should fail section quality gate."""
+        from workflows.deep_research.synthesizer import synthesize_section, OutlineSection
+        from engine.models import Finding
+
+        section = OutlineSection(title="Market Effects", bullets=["Explain observed pricing behavior"])
+        src = _make_source(
+            title="Grid Source",
+            snippet="Pricing behavior shifted as supply constraints tightened.",
+            relevance=0.68,
+            url="https://example.com/grid-source-doc-framing",
+        )
+        finding = Finding(
+            claim="Pricing behavior shifted as supply constraints tightened.",
+            sources=[src.source_id],
+            confidence="medium",
+            average_credibility=0.78,
+        )
+
+        result = synthesize_section(
+            section=section,
+            sources=[src],
+            findings=[finding],
+            state=MagicMock(),
+            is_comparison=False,
+            subjects=None,
+        )
+        self.assertIsNone(result)
 
     @patch(
         "workflows.deep_research.synthesizer._call_research_synthesis_model",
