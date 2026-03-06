@@ -6,6 +6,8 @@ All notable changes to Zorora are documented here, organized by milestone in rev
 
 Deep research was upgraded to a contract-driven synthesis pipeline with stricter quality gates, expanded search surfaces, structured source integrations, and no raw evidence-dump fallback behavior.
 
+Licensing updated to dual-license terms: AGPLv3+ for open-source use and commercial licensing for non-AGPL commercialization.
+
 - `df39e22` Finalize synthesis #4 contract with no-dump fallback and stricter quality gates
 - `05c6ca4` SEP-032: Add structured data sources (CrossRef, arXiv, World Bank) with caching
 - `5cc220c` Enforce synthesis contracts and strengthen deterministic section synthesis

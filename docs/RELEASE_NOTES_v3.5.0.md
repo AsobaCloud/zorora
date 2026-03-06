@@ -8,6 +8,13 @@
 
 ## Major Features
 
+### Licensing Update
+
+Zorora moved from Apache 2.0 to a dual-license model:
+
+- **AGPLv3+** for open-source use
+- **Commercial licensing** via AsobaCloud for organizations that want to commercialize without AGPL reciprocity obligations
+
 ### Deep Research Reliability Upgrade
 
 Deep research was upgraded from a functional pipeline to a contract-driven synthesis system tuned for energy/electricity market research.

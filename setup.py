@@ -10,6 +10,7 @@ long_description = readme_file.read_text() if readme_file.exists() else ""
 setup(
     name="zorora",
     version="3.5.0",
+    license="AGPL-3.0-or-later",
     description="Multi-model orchestration REPL for local AI assistants",
     long_description=long_description,
     long_description_content_type="text/markdown",
@@ -87,6 +88,7 @@ setup(
     classifiers=[
         "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",
+        "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
         "Topic :: Software Development :: Libraries :: Python Modules",
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.8",

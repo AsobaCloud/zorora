@@ -1,6 +1,6 @@
 # Zorora
 
-![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)
+![License](https://img.shields.io/badge/License-AGPLv3%2B%20%7C%20Commercial-blue.svg)
 ![Tests](https://github.com/AsobaCloud/zorora/actions/workflows/test.yml/badge.svg)
 
 Zorora is a local-first deep research and analysis tool for policy, market, and technical intelligence. It runs against local LLM endpoints, supports both terminal and web interfaces, and handles everything from source discovery to structured data analysis.
@@ -59,4 +59,9 @@ File a [GitHub issue](https://github.com/AsobaCloud/zorora/issues) to report bug
 
 ## License
 
-Apache 2.0 — see [LICENSE.md](LICENSE.md).
+Dual-licensed:
+
+- AGPLv3+ for open-source use
+- Commercial license available from AsobaCloud for organizations that want to commercialize without AGPL reciprocity obligations
+
+See [LICENSE.md](LICENSE.md).
