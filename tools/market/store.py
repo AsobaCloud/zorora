@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -17,11 +18,17 @@ logger = logging.getLogger(__name__)
 class MarketDataStore:
     """Local SQLite store for market observations with staleness tracking."""
 
+    _SEED_DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "market_data.db"
+
     def __init__(self, db_path: Optional[str] = None):
         if db_path is None:
             db_path = str(Path.home() / ".zorora" / "market_data.db")
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        # Seed from committed DB if user DB doesn't exist yet
+        if not self.db_path.exists() and self._SEED_DB_PATH.exists():
+            shutil.copy2(str(self._SEED_DB_PATH), str(self.db_path))
+            logger.info("Seeded market_data.db from %s", self._SEED_DB_PATH)
         self._local = threading.local()
         self._init_schema()
         self._migrate_schema()
@@ -139,16 +146,15 @@ class MarketDataStore:
         last_date = max(d for d, _ in observations)
         now_utc = datetime.now(timezone.utc).isoformat()
         cur.execute(
-            "SELECT observation_count FROM fetch_metadata WHERE provider = ? AND series_id = ?",
+            "SELECT COUNT(*) FROM observations WHERE provider = ? AND series_id = ?",
             (provider, series_id),
         )
-        row = cur.fetchone()
-        existing = row["observation_count"] if row else 0
+        actual_count = cur.fetchone()[0]
         cur.execute(
             """INSERT OR REPLACE INTO fetch_metadata
                (provider, series_id, last_fetched_at, last_observation_date, observation_count)
                VALUES (?, ?, ?, ?, ?)""",
-            (provider, series_id, now_utc, last_date, existing + len(observations)),
+            (provider, series_id, now_utc, last_date, actual_count),
         )
         conn.commit()
         logger.debug("Upserted %d obs for %s/%s (last=%s)", len(observations), provider, series_id, last_date)

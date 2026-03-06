@@ -347,14 +347,163 @@ def _core_api_search(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
         return []
 
 
-def _arxiv_search_raw(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
-    """Search arXiv via DuckDuckGo."""
+def _crossref_search_raw(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
+    """Search CrossRef for academic works with DOIs, abstracts, and citation counts."""
+    crossref_config = getattr(config, 'CROSSREF', {})
+    if not crossref_config.get("enabled", True):
+        return []
+
+    endpoint = crossref_config.get("endpoint", "https://api.crossref.org/works")
+    timeout = crossref_config.get("timeout", 15)
+    email = crossref_config.get("polite_email", "")
+
     provider_query = _sanitize_provider_query(query, "default")
-    arxiv_query = f"site:arxiv.org {provider_query}"
-    results = _duckduckgo_search_raw(arxiv_query, max_results)
-    for result in results:
-        result["description"] = f"[arXiv] {result.get('description', 'Preprint')}"
-    logger.info(f"arXiv search returned {len(results)} results")
+    if not provider_query:
+        return []
+
+    params = {
+        "query": provider_query,
+        "rows": min(max_results, 20),
+    }
+    if email:
+        params["mailto"] = email
+
+    try:
+        response = requests.get(endpoint, params=params, timeout=timeout)
+        response.raise_for_status()
+        data = response.json()
+    except Exception as e:
+        logger.warning("CrossRef API search failed: %s", e)
+        return []
+
+    results = []
+    for item in data.get("message", {}).get("items", []):
+        title_list = item.get("title", [])
+        title = title_list[0] if title_list else "No title"
+
+        authors = []
+        for author in item.get("author", []):
+            given = author.get("given", "")
+            family = author.get("family", "")
+            name = f"{given} {family}".strip()
+            if name:
+                authors.append(name)
+        authors_str = ", ".join(authors[:3])
+        if len(authors) > 3:
+            authors_str += " et al."
+
+        doi = item.get("DOI", "")
+        cite_count = item.get("is-referenced-by-count", 0) or 0
+
+        # Extract year from published-print or published-online
+        year = None
+        for date_field in ("published-print", "published-online"):
+            date_parts = item.get(date_field, {}).get("date-parts", [[]])
+            if date_parts and date_parts[0]:
+                year = date_parts[0][0]
+                break
+
+        # Strip HTML tags from abstract
+        abstract = item.get("abstract", "") or ""
+        abstract = re.sub(r"<[^>]+>", "", abstract).strip()
+
+        desc_parts = ["[CrossRef]"]
+        if authors_str:
+            desc_parts.append(authors_str)
+        if year:
+            desc_parts.append(f"({year})")
+        if cite_count:
+            desc_parts.append(f"Citations: {cite_count}")
+        description = " ".join(desc_parts)
+        if abstract:
+            description += f" - {abstract[:200]}"
+
+        url = f"https://doi.org/{doi}" if doi else ""
+
+        results.append({
+            "title": title,
+            "url": url,
+            "description": description,
+            "doi": doi,
+            "year": year,
+            "citation_count": cite_count,
+            "source": "CrossRef",
+        })
+
+    logger.info("CrossRef returned %d results for: %s...", len(results), query[:60])
+    return results
+
+
+def _arxiv_search_raw(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
+    """Search arXiv using the native Atom XML API."""
+    import xml.etree.ElementTree as ET
+
+    arxiv_config = getattr(config, 'ARXIV', {})
+    if not arxiv_config.get("enabled", True):
+        return []
+
+    endpoint = arxiv_config.get("endpoint", "http://export.arxiv.org/api/query")
+    timeout = arxiv_config.get("timeout", 15)
+
+    provider_query = _sanitize_provider_query(query, "default")
+    if not provider_query:
+        return []
+
+    params = {
+        "search_query": f"all:{provider_query}",
+        "max_results": min(max_results, 20),
+        "sortBy": "relevance",
+    }
+
+    try:
+        response = requests.get(endpoint, params=params, timeout=timeout)
+        response.raise_for_status()
+        root = ET.fromstring(response.text)
+    except Exception as e:
+        logger.warning("arXiv API search failed: %s", e)
+        return []
+
+    ns = {"atom": "http://www.w3.org/2005/Atom"}
+    results = []
+    for entry in root.findall("atom:entry", ns):
+        title_el = entry.find("atom:title", ns)
+        summary_el = entry.find("atom:summary", ns)
+        published_el = entry.find("atom:published", ns)
+        id_el = entry.find("atom:id", ns)
+
+        title = title_el.text.strip() if title_el is not None and title_el.text else "No title"
+        abstract = summary_el.text.strip() if summary_el is not None and summary_el.text else ""
+        url = id_el.text.strip() if id_el is not None and id_el.text else ""
+        published = published_el.text.strip()[:4] if published_el is not None and published_el.text else ""
+
+        authors = []
+        for author_el in entry.findall("atom:author", ns):
+            name_el = author_el.find("atom:name", ns)
+            if name_el is not None and name_el.text:
+                authors.append(name_el.text.strip())
+
+        authors_str = ", ".join(authors[:3])
+        if len(authors) > 3:
+            authors_str += " et al."
+
+        desc_parts = ["[arXiv]"]
+        if authors_str:
+            desc_parts.append(authors_str)
+        if published:
+            desc_parts.append(f"({published})")
+        description = " ".join(desc_parts)
+        if abstract:
+            description += f" - {abstract[:200]}"
+
+        results.append({
+            "title": title,
+            "url": url,
+            "description": description,
+            "year": int(published) if published else None,
+            "source": "arXiv",
+        })
+
+    logger.info("arXiv API returned %d results for: %s...", len(results), query[:60])
     return results
 
 
@@ -765,7 +914,7 @@ def academic_search_sources(query: str, max_results: int = 10) -> List[Source]:
     all_results = []
 
     try:
-        with ThreadPoolExecutor(max_workers=9) as executor:
+        with ThreadPoolExecutor(max_workers=10) as executor:
             futures = {
                 executor.submit(_scholar_search_raw, query, max_results // 2): "Scholar",
                 executor.submit(_pubmed_search_raw, query, max_results // 2): "PubMed",
@@ -776,6 +925,7 @@ def academic_search_sources(query: str, max_results: int = 10) -> List[Source]:
                 executor.submit(_pmc_search_raw, query, max_results // 4): "PMC",
                 executor.submit(_openalex_search_raw, query, max_results // 2): "OpenAlex",
                 executor.submit(_semantic_scholar_search_raw, query, max_results // 2): "SemanticScholar",
+                executor.submit(_crossref_search_raw, query, max_results // 2): "CrossRef",
             }
 
             for future in as_completed(futures):
@@ -847,7 +997,7 @@ def academic_search_sources(query: str, max_results: int = 10) -> List[Source]:
 
     # Convert to Source objects
     sources = []
-    tag_pattern = re.compile(r'^\[(Scholar|CORE|PubMed|arXiv|bioRxiv|medRxiv|PMC|OpenAlex|SemanticScholar)\]\s*')
+    tag_pattern = re.compile(r'^\[(Scholar|CORE|PubMed|arXiv|bioRxiv|medRxiv|PMC|OpenAlex|SemanticScholar|CrossRef)\]\s*')
 
     for result in unique_results:
         url = result.get("url", "")

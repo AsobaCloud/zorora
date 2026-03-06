@@ -26,7 +26,6 @@ SERIES_CATALOG: Dict[str, MarketSeries] = {
     # Commodities
     "DCOILWTICO": MarketSeries("DCOILWTICO", "WTI Crude Oil", "USD/bbl", "daily", "commodities"),
     "DCOILBRENTEU": MarketSeries("DCOILBRENTEU", "Brent Crude Oil", "USD/bbl", "daily", "commodities"),
-    "GOLDAMGBD228NLBM": MarketSeries("GOLDAMGBD228NLBM", "Gold (London Fix)", "USD/oz", "daily", "commodities"),
     "DHHNGSP": MarketSeries("DHHNGSP", "Natural Gas (Henry Hub)", "USD/MMBtu", "daily", "commodities"),
     # US Treasuries
     "DGS2": MarketSeries("DGS2", "2-Year Treasury", "%", "daily", "treasuries"),
@@ -38,10 +37,12 @@ SERIES_CATALOG: Dict[str, MarketSeries] = {
     "DEXUSEU": MarketSeries("DEXUSEU", "USD/EUR", "USD per EUR", "daily", "fx"),
     "DEXUSUK": MarketSeries("DEXUSUK", "USD/GBP", "USD per GBP", "daily", "fx"),
     "DEXCHUS": MarketSeries("DEXCHUS", "USD/CNY", "CNY per USD", "daily", "fx"),
-    "DEXSFAR": MarketSeries("DEXSFAR", "USD/ZAR", "ZAR per USD", "daily", "fx"),
+    "DEXSFUS": MarketSeries("DEXSFUS", "USD/ZAR", "ZAR per USD", "daily", "fx"),
     # Policy Rates
     "DFF": MarketSeries("DFF", "Effective Fed Funds Rate", "%", "daily", "rates"),
     # --- yfinance series (provider="yfinance") ---
+    # Commodities
+    "GC=F": MarketSeries("GC=F", "Gold Futures", "USD/oz", "daily", "commodities", "yfinance"),
     # Metals (daily commodity futures)
     "HG=F": MarketSeries("HG=F", "Copper", "USD/lb", "daily", "metals", "yfinance"),
     "SI=F": MarketSeries("SI=F", "Silver", "USD/oz", "daily", "metals", "yfinance"),
@@ -54,6 +55,13 @@ SERIES_CATALOG: Dict[str, MarketSeries] = {
     "LIT": MarketSeries("LIT", "Lithium Miners ETF", "USD", "daily", "etf_proxies", "yfinance"),
     "URA": MarketSeries("URA", "Uranium Miners ETF", "USD", "daily", "etf_proxies", "yfinance"),
     "REMX": MarketSeries("REMX", "Rare Earth ETF", "USD", "daily", "etf_proxies", "yfinance"),
+    # --- World Bank Indicators (provider="worldbank", frequency="annual") ---
+    "NY.GDP.MKTP.CD": MarketSeries("NY.GDP.MKTP.CD", "World GDP (current USD)", "USD", "annual", "development", "worldbank"),
+    "NY.GDP.MKTP.KD.ZG": MarketSeries("NY.GDP.MKTP.KD.ZG", "World GDP Growth", "%", "annual", "development", "worldbank"),
+    "FP.CPI.TOTL.ZG": MarketSeries("FP.CPI.TOTL.ZG", "World Inflation (CPI)", "%", "annual", "development", "worldbank"),
+    "NE.TRD.GNFS.ZS": MarketSeries("NE.TRD.GNFS.ZS", "Trade (% of GDP)", "%", "annual", "development", "worldbank"),
+    "BX.KLT.DINV.WD.GD.ZS": MarketSeries("BX.KLT.DINV.WD.GD.ZS", "FDI Inflows (% GDP)", "%", "annual", "development", "worldbank"),
+    "SI.POV.DDAY": MarketSeries("SI.POV.DDAY", "Poverty ($2.15/day)", "%", "annual", "development", "worldbank"),
 }
 
 

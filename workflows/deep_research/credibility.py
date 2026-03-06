@@ -41,13 +41,15 @@ BASE_CREDIBILITY = {
     "substack.com": {"score": 0.40, "reason": "Newsletter platform"},
     "reddit.com": {"score": 0.25, "reason": "User-generated content"},
 
-    # Tier 7: Academic indices (0.70)
+    # Tier 7: Academic indices (0.70-0.75)
     "openalex.org": {"score": 0.70, "reason": "OpenAlex academic index"},
     "api.semanticscholar.org": {"score": 0.70, "reason": "Semantic Scholar (AI2)"},
+    "api.crossref.org": {"score": 0.75, "reason": "CrossRef metadata"},
 
     # Tier 8: Development / international (0.80)
     "worldbank.org": {"score": 0.80, "reason": "World Bank Open Data"},
     "search.worldbank.org": {"score": 0.80, "reason": "World Bank documents"},
+    "api.worldbank.org": {"score": 0.80, "reason": "World Bank Indicators"},
 
     # Tier 9: Policy / regulatory (0.70-0.85)
     "api.congress.gov": {"score": 0.85, "reason": "Congress.gov (official)"},

@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 
 import config
-from tools.market import fred_client, yfinance_client
+from tools.market import fred_client, yfinance_client, worldbank_client
 from tools.market.series import (
     GROUPS,
     SERIES_CATALOG,
@@ -67,6 +67,9 @@ class MarketWorkflow:
             return False
         if provider == "yfinance" and not config.YFINANCE.get("enabled", True):
             return False
+        wb_config = getattr(config, "WORLD_BANK_INDICATORS", {})
+        if provider == "worldbank" and not wb_config.get("enabled", True):
+            return False
 
         staleness = self.store.get_staleness(series_id, provider=provider)
         if not force and staleness is not None and staleness < self.stale_hours:
@@ -82,6 +85,9 @@ class MarketWorkflow:
         # Dispatch to correct client
         if provider == "yfinance":
             obs = yfinance_client.fetch_observations(series_id, start_date=start_date)
+        elif provider == "worldbank":
+            start_year = int(start_date[:4]) if start_date else None
+            obs = worldbank_client.fetch_observations(series_id, start_year=start_year)
         else:
             obs = fred_client.fetch_observations(series_id, observation_start=start_date)
 
