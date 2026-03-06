@@ -203,7 +203,7 @@ class REPL:
 
     def run(self):
         """Run the REPL loop."""
-        self.ui.display_welcome(model=config.MODEL, version="1.0.0")
+        self.ui.display_welcome(model=config.MODEL, version="3.5.0")
 
         try:
             turn_count = 0

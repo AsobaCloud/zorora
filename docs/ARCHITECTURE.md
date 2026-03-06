@@ -166,6 +166,13 @@ used by both:
 - Web UI async research endpoint (`ui/web/app.py`)
 - REPL `/deep` command path (`engine/repl_command_processor.py`)
 
+Current synthesis contract in this shared path:
+- Query refinement into explicit research intent
+- Intent decomposition into parallel targeted searches
+- Source ranking by relevance first, credibility second
+- Two-stage synthesis (`outline -> per-section expansion`) with quality gates
+- Deterministic structured fallback when model output is unusable (no raw evidence-dump output)
+
 ## Execution Flow
 
 ### Research Workflow
@@ -173,13 +180,17 @@ used by both:
 ```
 Query
   ↓
-[Step 1/3] Fetch newsroom articles
+[Step 1] Refine intent + decompose parallel queries
   ↓
-[Step 2/3] Web search (Brave/DuckDuckGo)
+[Step 2] Aggregate sources (newsroom + web + academic/structured)
   ↓
-[Step 3/3] Synthesize with citations
+[Step 3] Rank evidence (relevance first, credibility second)
   ↓
-Result (with [Newsroom] and [Web] tags)
+[Step 4] Synthesize with citations (outline → section expansion)
+  ↓
+[Fallback] Structured deterministic synthesis if model output fails quality gates
+  ↓
+Result (chat-ready structured output with inline citations)
 ```
 
 ### Code Workflow (`/code`)

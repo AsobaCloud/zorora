@@ -11,7 +11,7 @@ Zorora is a local-first deep research and analysis tool for policy, market, and 
 
 ## Features
 
-- **Deep research** — multi-source aggregation (academic, web, newsroom) with multi-stage synthesis (outline → per-section expansion), relevance scoring with stemming, cross-reference detection, and freshness signals
+- **Deep research** — intent refinement + query decomposition across newsroom/web/academic sources, relevance-first then credibility ranking, and contract-based synthesis (outline → section expansion) with inline citations and no raw dump fallback
 - **Comparative queries** — auto-detects "X vs Y" queries and generates dimension-based comparison tables
 - **Source quality** — credibility scoring, cross-reference detection, and full article content extraction for grounded analysis
 - **Data analysis** — sandboxed Python execution with pandas, numpy, and matplotlib for structured dataset workflows

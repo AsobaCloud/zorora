@@ -2,6 +2,26 @@
 
 All notable changes to Zorora are documented here, organized by milestone in reverse chronological order.
 
+## 2026-03-06 — v3.5.0: Deep Research Contracts and Retrieval Expansion
+
+Deep research was upgraded to a contract-driven synthesis pipeline with stricter quality gates, expanded search surfaces, structured source integrations, and no raw evidence-dump fallback behavior.
+
+- `df39e22` Finalize synthesis #4 contract with no-dump fallback and stricter quality gates
+- `05c6ca4` SEP-032: Add structured data sources (CrossRef, arXiv, World Bank) with caching
+- `5cc220c` Enforce synthesis contracts and strengthen deterministic section synthesis
+- `bdf5f93` Harden synthesis quality gates and reduce aggressive fallback
+- `88149f2` Improve synthesis resilience with market context integration and section retry
+- `188667e` Add cold-start retries and relax citation cap for synthesis quality
+- `e526033` Use credibility-ranked source excerpts for deterministic section synthesis
+- `bddea1c` Improve deep research evidence quality and synthesis fallback behavior
+- `25f294a` SEP-031: Add 6 new search surfaces to deep research pipeline
+- `2f029f1` Improve deep research synthesis path and quality gating
+- `4725d54` Harden deep research retrieval and synthesis quality gates
+- `047884d` Stabilize deep research flow and synthesis fallbacks
+- `4205830` SEP-028: Strip all markdown header levels in section expansion
+- `046c9a3` SEP-022: Fix deep research pipeline — 6 bugs causing irrelevant results
+- `0623891` SEP-021: Add yfinance provider for renewable metals and ETF proxies
+
 ## 2026-03-03 — Deep Research Architecture (SEP-019)
 
 Ground-truth architecture overhaul: structured data flow, two-stage synthesis, and quality signals.
@@ -46,6 +66,22 @@ HuggingFace adapter, depth profiles, and project hygiene.
 - `92670c7` SEP-002: Add streaming tests for HuggingFaceAdapter
 - `377714e` SEP-002: Add HuggingFaceAdapter for native HF Inference Toolkit endpoints
 - `071bb7f` SEP-001: Add direnv files to .gitignore
+
+## 2026-02-19 — Post-v3.0 CI, Tests, and Docs Hardening
+
+Stabilized CI and test collection after v3.0.0, plus README and project scaffolding updates.
+
+- `b66748d` Add community health files and README badges
+- `ec41e7d` Fix hardcoded local path in test_shared_research_paths.py
+- `04a5b1c` Fix CI: generate stub config.py (the real one is gitignored)
+- `e967c50` Add root conftest.py to fix bare module imports in CI
+- `1f96f84` Fix CI: use non-editable install to resolve import config
+- `9869e8a` Fix CI test collection: add PYTHONPATH and fix hardcoded path
+- `40e9ff5` Fix CI: install pytest in test workflow
+- `e99cdb6` Slim README to quick-start landing page
+- `c256561` Add non-LLM integration tests and CI workflow
+- `998700a` Implement SEP DA issues 001-007 for data analysis workflow
+- `9cb300e` Rewrite README as docs router
 
 ## 2026-02-15 — v3.0.0: Data Analysis Engine
 

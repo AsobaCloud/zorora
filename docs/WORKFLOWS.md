@@ -11,10 +11,12 @@ Zorora uses deterministic workflows with hardcoded pipelines. Each workflow exec
 **When triggered:** Queries that ask questions, mention sources, or request information
 
 **What happens:**
-1. Fetch newsroom headlines (if available)
-2. Search the web (always)
-3. Synthesize both sources with citations
-4. Return comprehensive answer
+1. Refine query into explicit research intent
+2. Decompose intent into targeted parallel searches
+3. Aggregate multi-source evidence (newsroom + web + academic/structured)
+4. Rank evidence by relevance first, credibility second
+5. Synthesize answer with inline citations (outline → section expansion)
+6. Return chat-ready structured output (deterministic structured fallback if model output fails quality gates)
 
 **Examples:**
 ```
@@ -27,13 +29,17 @@ Zorora uses deterministic workflows with hardcoded pipelines. Each workflow exec
 ```
 Query
   ↓
-[Step 1/3] Fetch newsroom articles
+[Step 1] Intent refinement + decomposition
   ↓
-[Step 2/3] Web search (Brave/DuckDuckGo)
+[Step 2] Parallel source aggregation
   ↓
-[Step 3/3] Synthesize with citations
+[Step 3] Evidence ranking (relevance → credibility)
   ↓
-Result (with [Newsroom] and [Web] tags)
+[Step 4] Synthesis with citations
+  ↓
+[Fallback] Structured deterministic synthesis (no raw evidence-dump section)
+  ↓
+Result (chat-ready structured response)
 ```
 
 **Force with:** `/search <query>`

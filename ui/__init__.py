@@ -91,7 +91,7 @@ class ZororaUI:
         except Exception:
             pass
 
-    def display_welcome(self, model: str, version: str = "1.0.0"):
+    def display_welcome(self, model: str, version: str = "3.5.0"):
         """Display welcome banner."""
         from rich.align import Align
         from rich.columns import Columns
