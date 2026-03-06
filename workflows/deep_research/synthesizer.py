@@ -70,6 +70,13 @@ _LOW_QUALITY_SUMMARY_PATTERNS = [
     re.compile(r"\bto address the question\b", re.IGNORECASE),
 ]
 
+_RESEARCH_TYPE_LENSES = {
+    "trend_analysis": "Emphasize trend direction, timing, and primary market drivers.",
+    "policy_review": "Emphasize regulatory mechanism, implementation status, and market pass-through effects.",
+    "comparative": "Emphasize explicit contrasts, trade-offs, and relative outcomes across subjects.",
+    "impact_assessment": "Emphasize causal chain from event/policy to prices, supply-demand balance, and risk.",
+}
+
 _RESEARCH_ANALYST_SYSTEM_PROMPT = (
     "You are a senior energy and electricity market research analyst. "
     "Write concise, evidence-grounded synthesis from supplied records only. "
@@ -148,12 +155,43 @@ def _call_research_synthesis_model(prompt: str) -> Optional[str]:
     return None
 
 
+def _normalize_word(word: str) -> str:
+    """Lightweight stemmer to reduce false grounding misses on morphology."""
+    w = (word or "").strip().lower()
+    if len(w) < 4:
+        return w
+    if w.endswith("ies") and len(w) > 5:
+        return w[:-3] + "y"
+    if w.endswith("ing") and len(w) > 6:
+        return w[:-3]
+    if w.endswith("ed") and len(w) > 5:
+        return w[:-2]
+    if w.endswith("es") and len(w) > 5:
+        return w[:-2]
+    if w.endswith("s") and len(w) > 4 and not w.endswith("ss"):
+        return w[:-1]
+    return w
+
+
+def _research_lens_text(research_type: Optional[str]) -> str:
+    if not isinstance(research_type, str):
+        return ""
+    lens = _RESEARCH_TYPE_LENSES.get(research_type.strip().lower())
+    if not lens:
+        return ""
+    return f"\n**Research Lens:** {lens}\n"
+
+
 def _extract_words(text: str) -> set:
     """Extract lowercase words ≥3 chars, minus stopwords."""
-    return {
-        w for w in re.findall(r"[a-z]{3,}", text.lower())
-        if w not in _ROUTE_STOPWORDS
-    }
+    normalized = set()
+    for w in re.findall(r"[a-z]{3,}", text.lower()):
+        if w in _ROUTE_STOPWORDS:
+            continue
+        stem = _normalize_word(w)
+        if stem and stem not in _ROUTE_STOPWORDS and len(stem) >= 3:
+            normalized.add(stem)
+    return normalized
 
 
 def _normalize_sentence(text: str, max_chars: int = 240) -> str:
@@ -838,12 +876,19 @@ def _normalize_outline_headers(raw: str) -> str:
 # Stage 1: Outline generation
 # ---------------------------------------------------------------------------
 
-def _build_outline_prompt(search_topic: str, claims_text: str, today: str) -> str:
+def _build_outline_prompt(
+    search_topic: str,
+    claims_text: str,
+    today: str,
+    research_type: Optional[str] = None,
+) -> str:
     """Build the standard thematic outline prompt."""
     min_sections, max_sections = config.SYNTHESIS.get("outline_sections", [4, 6])
+    lens_block = _research_lens_text(research_type)
     return f"""Today's date is {today}. You are a research analyst. Create an outline for a briefing on the topic below.
 
 **Topic:** {search_topic}
+{lens_block}
 
 **Key claims from research:**
 {claims_text}
@@ -874,14 +919,21 @@ Begin:
 
 
 def _build_comparison_outline_prompt(
-    search_topic: str, subject_a: str, subject_b: str, claims_text: str, today: str,
+    search_topic: str,
+    subject_a: str,
+    subject_b: str,
+    claims_text: str,
+    today: str,
+    research_type: Optional[str] = None,
 ) -> str:
     """Build comparison outline prompt naming both subjects."""
     min_sections, max_sections = config.SYNTHESIS.get("outline_sections", [4, 6])
+    lens_block = _research_lens_text(research_type)
     return f"""Today's date is {today}. You are a research analyst. Create an outline for a comparative briefing.
 
 **Topic:** {search_topic}
 **Comparing:** {subject_a} vs {subject_b}
+{lens_block}
 
 **Key claims from research:**
 {claims_text}
@@ -1012,9 +1064,21 @@ def synthesize_outline(state: ResearchState) -> Optional[OutlineResult]:
                 if resolved != subj:
                     logger.info("Resolved generic subject '%s' -> '%s'", subj, resolved)
                     subjects[i] = resolved
-        prompt = _build_comparison_outline_prompt(search_topic, subjects[0], subjects[1], claims_text, today)
+        prompt = _build_comparison_outline_prompt(
+            search_topic,
+            subjects[0],
+            subjects[1],
+            claims_text,
+            today,
+            research_type=state.research_type,
+        )
     else:
-        prompt = _build_outline_prompt(search_topic, claims_text, today)
+        prompt = _build_outline_prompt(
+            search_topic,
+            claims_text,
+            today,
+            research_type=state.research_type,
+        )
 
     # Enforce char budget
     max_chars = config.MODEL_BUDGETS.get("synthesis_outline", {}).get("max_input_chars", 5250)
@@ -1023,9 +1087,21 @@ def synthesize_outline(state: ResearchState) -> Optional[OutlineResult]:
         # Trim claims_text from the end
         claims_text = claims_text[:len(claims_text) - overshoot]
         if is_comparison:
-            prompt = _build_comparison_outline_prompt(search_topic, subjects[0], subjects[1], claims_text, today)
+            prompt = _build_comparison_outline_prompt(
+                search_topic,
+                subjects[0],
+                subjects[1],
+                claims_text,
+                today,
+                research_type=state.research_type,
+            )
         else:
-            prompt = _build_outline_prompt(search_topic, claims_text, today)
+            prompt = _build_outline_prompt(
+                search_topic,
+                claims_text,
+                today,
+                research_type=state.research_type,
+            )
 
     try:
         raw = _call_research_synthesis_model(prompt)
@@ -1129,6 +1205,7 @@ def _build_section_prompt(
     today: str,
     source_lookup: Optional[dict] = None,
     market_context: str = "",
+    research_type: Optional[str] = None,
 ) -> str:
     """Build a standard section expansion prompt."""
     claims = _format_claims_for_prompt(
@@ -1155,10 +1232,12 @@ def _build_section_prompt(
     market_block = ""
     if market_context:
         market_block = f"\n**Market Data (for context — do not cite as a 'source'):**\n{market_context}\n"
+    lens_block = _research_lens_text(research_type)
 
     return f"""Today's date is {today}. Write one analytical paragraph for the section below.
 
 **Section:** {section.title}
+{lens_block}
 **Directions:**
 {bullets_text}
 
@@ -1193,6 +1272,7 @@ def _build_comparison_section_prompt(
     today: str,
     source_lookup: Optional[dict] = None,
     market_context: str = "",
+    research_type: Optional[str] = None,
 ) -> str:
     """Build a comparison section expansion prompt."""
     claims = _format_claims_for_prompt(
@@ -1219,10 +1299,12 @@ def _build_comparison_section_prompt(
     market_block = ""
     if market_context:
         market_block = f"\n**Market Data (for context — do not cite as a 'source'):**\n{market_context}\n"
+    lens_block = _research_lens_text(research_type)
 
     return f"""Today's date is {today}. Write one analytical paragraph comparing {subjects[0]} and {subjects[1]} on this dimension.
 
 **Dimension:** {section.title}
+{lens_block}
 **Directions:**
 {bullets_text}
 
@@ -1250,6 +1332,73 @@ Begin:
 """
 
 
+def _build_section_retry_prompt(base_prompt: str, rejected_output: str, failure_reason: str) -> str:
+    """Build a constrained retry prompt for one failed section generation."""
+    reason_label = failure_reason.replace("_", " ")
+    rejected = _normalize_sentence(rejected_output or "", max_chars=800)
+    return (
+        f"{base_prompt}\n\n"
+        "REWRITE REQUIRED:\n"
+        f"- Previous draft failed quality checks due to: {reason_label}.\n"
+        "- Rewrite as exactly one analytical paragraph (no list framing, no numbered points).\n"
+        "- Keep every substantive claim tied to provided evidence and cited inline [Source Title].\n"
+        "- Keep output under 170 words and avoid boilerplate language.\n"
+        f"- Rejected draft snippet: {rejected}\n\n"
+        "Rewrite now:\n"
+    )
+
+
+def _evaluate_section_candidate(
+    raw_output: str,
+    section: OutlineSection,
+    findings: List[Finding],
+    sources: List[Source],
+    source_lookup: Optional[dict] = None,
+) -> Tuple[Optional[str], str]:
+    """Normalize and validate section output, returning (paragraph, failure_reason)."""
+    # Strip accidental markdown headers from output.
+    lines = (raw_output or "").strip().split("\n")
+    cleaned = []
+    for line in lines:
+        if re.match(r"^#{1,6}\s", line.strip()):
+            continue
+        cleaned.append(line)
+    paragraph = "\n".join(cleaned).strip()
+    paragraph = _strip_low_value_sentences(paragraph)
+    if not paragraph:
+        return None, "empty_output"
+
+    if not _is_evidence_grounded(paragraph, findings, sources):
+        logger.warning("Section expansion dropped due to weak evidence grounding: %s", section.title)
+        return None, "weak_evidence_grounding"
+
+    # Citation salvage before and after normalization.
+    paragraph = _salvage_inline_citations(
+        paragraph=paragraph,
+        routed_findings=findings,
+        routed_sources=sources,
+        source_lookup=source_lookup or _build_source_lookup(sources),
+    )
+    paragraph = _normalize_section_output(paragraph)
+    if not _has_inline_citation(paragraph):
+        paragraph = _salvage_inline_citations(
+            paragraph=paragraph,
+            routed_findings=findings,
+            routed_sources=sources,
+            source_lookup=source_lookup or _build_source_lookup(sources),
+        )
+
+    if not _has_inline_citation(paragraph):
+        logger.warning("Section expansion dropped due to missing inline citations: %s", section.title)
+        return None, "missing_inline_citations"
+
+    if not _passes_section_quality_gate(paragraph):
+        logger.warning("Section expansion dropped due to low section quality: %s", section.title)
+        return None, "low_section_quality"
+
+    return paragraph, ""
+
+
 def synthesize_section(
     section: OutlineSection,
     sources: List[Source],
@@ -1272,6 +1421,7 @@ def synthesize_section(
             today,
             source_lookup=source_lookup,
             market_context=market_context,
+            research_type=state.research_type,
         )
     else:
         prompt = _build_section_prompt(
@@ -1281,56 +1431,40 @@ def synthesize_section(
             today,
             source_lookup=source_lookup,
             market_context=market_context,
+            research_type=state.research_type,
         )
 
     try:
         raw = _call_research_synthesis_model(prompt)
         if not raw:
             return None
-
-        # Strip accidental markdown headers from output
-        lines = raw.strip().split("\n")
-        cleaned = []
-        for line in lines:
-            if re.match(r"^#{1,6}\s", line.strip()):
-                continue
-            cleaned.append(line)
-        paragraph = "\n".join(cleaned).strip()
-        paragraph = _strip_low_value_sentences(paragraph)
-        if not paragraph:
-            return None
-
-        if not _is_evidence_grounded(paragraph, findings, sources):
-            logger.warning("Section expansion dropped due to weak evidence grounding: %s", section.title)
-            return None
-
-        # Citation salvage: if the paragraph is usable but uncited, inject
-        # minimal citations from routed evidence before enforcing the gate.
-        paragraph = _salvage_inline_citations(
-            paragraph=paragraph,
-            routed_findings=findings,
-            routed_sources=sources,
-            source_lookup=source_lookup or _build_source_lookup(sources),
+        paragraph, reason = _evaluate_section_candidate(
+            raw_output=raw,
+            section=section,
+            findings=findings,
+            sources=sources,
+            source_lookup=source_lookup,
         )
-        paragraph = _normalize_section_output(paragraph)
-        if not _has_inline_citation(paragraph):
-            paragraph = _salvage_inline_citations(
-                paragraph=paragraph,
-                routed_findings=findings,
-                routed_sources=sources,
-                source_lookup=source_lookup or _build_source_lookup(sources),
-            )
+        if paragraph:
+            return paragraph
 
-        # Reliability gate: section text must carry explicit citations.
-        if not _has_inline_citation(paragraph):
-            logger.warning("Section expansion dropped due to missing inline citations: %s", section.title)
+        # Single constrained retry before deterministic fallback.
+        retry_prompt = _build_section_retry_prompt(
+            base_prompt=prompt,
+            rejected_output=raw,
+            failure_reason=reason or "quality_repair",
+        )
+        retry_raw = _call_research_synthesis_model(retry_prompt)
+        if not retry_raw:
             return None
-
-        if not _passes_section_quality_gate(paragraph):
-            logger.warning("Section expansion dropped due to low section quality: %s", section.title)
-            return None
-
-        return paragraph
+        retry_paragraph, _ = _evaluate_section_candidate(
+            raw_output=retry_raw,
+            section=section,
+            findings=findings,
+            sources=sources,
+            source_lookup=source_lookup,
+        )
+        return retry_paragraph
 
     except Exception as e:
         logger.error("Section expansion failed for '%s': %s", section.title, e)

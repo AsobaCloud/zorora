@@ -1137,6 +1137,44 @@ class TestSynthesisQualityGuards(unittest.TestCase):
         self.assertIsNotNone(paragraph)
         self.assertIn("[S4]", paragraph)
 
+    @patch("workflows.deep_research.synthesizer._call_research_synthesis_model")
+    def test_synthesize_section_retries_once_before_fallback(self, mock_call_model):
+        """A failed first section draft should trigger one constrained retry attempt."""
+        from workflows.deep_research.synthesizer import synthesize_section, OutlineSection
+        from engine.models import Finding
+
+        mock_call_model.side_effect = [
+            "Here are the key findings and insights [Policy Source]. 1. Generic framing.",
+            "Regulatory caps reduced extreme hub spikes while pass-through stayed elevated [Policy Source].",
+        ]
+
+        section = OutlineSection(title="Regulatory Response", bullets=["Assess intervention impact"])
+        src = _make_source(
+            title="Policy Source",
+            snippet="Regulatory caps reduced extreme hub spikes while pass-through stayed elevated.",
+            relevance=0.66,
+            url="https://example.com/policy-source",
+        )
+        finding = Finding(
+            claim="Regulatory caps reduced extreme hub spikes.",
+            sources=[src.source_id],
+            confidence="medium",
+            average_credibility=0.7,
+        )
+
+        paragraph = synthesize_section(
+            section=section,
+            sources=[src],
+            findings=[finding],
+            state=MagicMock(research_type="policy_review"),
+            is_comparison=False,
+            subjects=None,
+        )
+
+        self.assertIsNotNone(paragraph)
+        self.assertIn("[Policy Source]", paragraph)
+        self.assertEqual(mock_call_model.call_count, 2)
+
 
 class TestSynthesisProvenanceAndSalvage(unittest.TestCase):
     @patch(
@@ -1619,6 +1657,35 @@ class TestResearchSynthesisModelCaller(unittest.TestCase):
         self.assertEqual(result, "Recovered synthesis")
         self.assertEqual(fake_client.chat_complete.call_count, 2)
         mock_sleep.assert_called_once_with(65)
+
+
+class TestResearchTypeSynthesisLens(unittest.TestCase):
+    @patch("workflows.deep_research.synthesizer._call_research_synthesis_model")
+    def test_synthesize_outline_includes_research_type_lens(self, mock_call_model):
+        """research_type should influence outline prompt lens instructions."""
+        from engine.models import ResearchState, Finding
+        from workflows.deep_research.synthesizer import synthesize_outline
+
+        mock_call_model.return_value = (
+            "## Executive Summary\nPrices rose due to tighter LNG balances.\n\n"
+            "## Drivers\n- Fuel constraints\n- Shipping risk\n\n"
+            "## Policy\n- Price caps\n- Reform sequencing\n"
+        )
+
+        state = ResearchState(original_query="power market shifts", research_type="policy_review")
+        state.findings = [
+            Finding(
+                claim="Regulatory intervention affected gas-linked electricity pricing.",
+                sources=["s1"],
+                confidence="medium",
+                average_credibility=0.7,
+            )
+        ]
+
+        _ = synthesize_outline(state)
+        prompt = mock_call_model.call_args[0][0]
+        self.assertIn("Research Lens", prompt)
+        self.assertIn("regulatory mechanism", prompt.lower())
 
 
 if __name__ == "__main__":
