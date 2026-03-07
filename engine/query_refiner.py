@@ -291,6 +291,19 @@ _FOCUS_FACETS = [
     ),
 ]
 
+_ANALYSIS_TYPE_MAP = {
+    "trend analysis": "trend_analysis",
+    "trend_analysis": "trend_analysis",
+    "policy review": "policy_review",
+    "policy_review": "policy_review",
+    "impact assessment": "impact_assessment",
+    "impact_assessment": "impact_assessment",
+    "market overview": "trend_analysis",
+    "market_overview": "trend_analysis",
+    "comparative": "comparative",
+    "comparison": "comparative",
+}
+
 
 def _normalize_clause(text: str) -> str:
     cleaned = re.sub(r"\s+", " ", (text or "").strip())
@@ -321,6 +334,27 @@ def _extract_refinement_segments(query: str) -> List[str]:
             if value:
                 segments.append(value)
     return segments
+
+
+def infer_research_type(text: Optional[str]) -> Optional[str]:
+    """Infer canonical research_type from refinement text or free text query."""
+    normalized = _normalize_refined_query_text(text or "").lower()
+    if not normalized:
+        return None
+
+    # Prefer explicit analysis-type segment from refinement wizard.
+    explicit = re.search(r"\banalysis type:\s*([^|.]+)", normalized, flags=re.IGNORECASE)
+    if explicit:
+        candidate = _normalize_clause(explicit.group(1)).lower()
+        mapped = _ANALYSIS_TYPE_MAP.get(candidate)
+        if mapped:
+            return mapped
+
+    for label, mapped in _ANALYSIS_TYPE_MAP.items():
+        if re.search(r"\b" + re.escape(label) + r"\b", normalized):
+            return mapped
+
+    return None
 
 
 def decompose_query(query: str) -> List[SearchIntent]:

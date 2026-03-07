@@ -9,7 +9,7 @@ from flask import Flask, render_template, request, jsonify, Response, stream_wit
 
 from engine.research_engine import ResearchEngine
 from engine.deep_research_service import run_deep_research, build_results_payload
-from engine.query_refiner import refine_query
+from engine.query_refiner import refine_query, infer_research_type
 from ui.web.config_manager import ConfigManager, ModelFetcher
 from tools.research.newsroom import fetch_newsroom_api
 from tools.specialist.client import create_specialist_client
@@ -256,7 +256,13 @@ def index():
     return render_template('index.html')
 
 
-def _run_research_with_progress(research_id: str, query: str, depth: int, refined_query: str = None):
+def _run_research_with_progress(
+    research_id: str,
+    query: str,
+    depth: int,
+    refined_query: str = None,
+    research_type: str = None,
+):
     """Run research workflow in background thread and emit progress updates."""
     try:
         def on_progress(status: str, phase: str, message: str):
@@ -274,6 +280,7 @@ def _run_research_with_progress(research_id: str, query: str, depth: int, refine
             max_results_per_source=profile["max_results_per_source"],
             progress_callback=on_progress,
             refined_query=refined_query,
+            research_type=research_type,
         )
 
         research_id_actual = research_engine.save_research(state)
@@ -340,6 +347,9 @@ def start_research():
         query = data.get('query', '').strip()
         depth = int(data.get('depth', 1))
         refined_query = (data.get('refined_query') or '').strip() or None
+        research_type = (data.get('research_type') or '').strip() or None
+        if not research_type:
+            research_type = infer_research_type(refined_query or query)
 
         if not query:
             return jsonify({"error": "Query is required"}), 400
@@ -363,7 +373,10 @@ def start_research():
         thread = threading.Thread(
             target=_run_research_with_progress,
             args=(research_id, query, depth),
-            kwargs={"refined_query": refined_query},
+            kwargs={
+                "refined_query": refined_query,
+                "research_type": research_type,
+            },
             daemon=True
         )
         thread.start()

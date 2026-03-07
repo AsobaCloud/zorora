@@ -86,6 +86,15 @@ _LOW_VALUE_SOURCE_FACT_PATTERNS = [
     re.compile(r"\bheadquarters\b", re.IGNORECASE),
     re.compile(r"^\s*citations?\s*:\s*\d+\b", re.IGNORECASE),
     re.compile(r"^copyright\b|^©", re.IGNORECASE),
+    re.compile(r"^listen to this article\b", re.IGNORECASE),
+    re.compile(r"^click here to share\b", re.IGNORECASE),
+    re.compile(r"\bshare\s+(?:facebook|twitter|whatsapp|copylink)\b", re.IGNORECASE),
+    re.compile(r"^\s*loading\b", re.IGNORECASE),
+    re.compile(r"\bbuy now\b", re.IGNORECASE),
+    re.compile(r"open account|download now|login now", re.IGNORECASE),
+    re.compile(r"request sample|report format|table of contents|methodology", re.IGNORECASE),
+    re.compile(r"blogs?\s+insights?\s+home\b", re.IGNORECASE),
+    re.compile(r"welcome gift|claim now", re.IGNORECASE),
 ]
 _LOW_QUALITY_OUTLINE_SUMMARY_PATTERNS = [
     re.compile(r"\bthis (?:report|brief|analysis) (?:provides|presents|offers)\b", re.IGNORECASE),
@@ -95,6 +104,10 @@ _LOW_QUALITY_OUTLINE_SUMMARY_PATTERNS = [
 _GENERIC_OUTLINE_TITLE_PATTERNS = [
     re.compile(r"^thematic sections?$", re.IGNORECASE),
     re.compile(r"^key findings(?: and insights)?$", re.IGNORECASE),
+    re.compile(r"^evidence highlights?$", re.IGNORECASE),
+    re.compile(r"^source coverage$", re.IGNORECASE),
+    re.compile(r"^confidence and gaps$", re.IGNORECASE),
+    re.compile(r"^gaps?$", re.IGNORECASE),
     re.compile(r"^analysis$", re.IGNORECASE),
     re.compile(r"^conclusion$", re.IGNORECASE),
     re.compile(r"^conclusion\s*[:\-]?\s*$", re.IGNORECASE),
@@ -310,20 +323,8 @@ def _format_claims_for_prompt(
 
 def _extract_source_fact(source: Source, max_chars: int = 220) -> str:
     """Extract one compact, evidence-like sentence from a source."""
-    text = source.content_full or source.content_snippet or ""
-    text = re.sub(r"\s+", " ", text).strip()
-    if not text:
-        return ""
-
     title = (source.title or "").strip()
-    if title:
-        title_norm = re.sub(r"\s+", " ", title)
-        if text.lower().startswith(title_norm.lower()):
-            text = text[len(title_norm):].strip(" .:-")
-        text = text.replace(title_norm, "").strip()
-
-    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
-    chosen = ""
+    title_norm = re.sub(r"\s+", " ", title) if title else ""
 
     def _is_low_value_sentence(sentence: str) -> bool:
         normalized = re.sub(r"\s+", " ", (sentence or "").strip())
@@ -331,36 +332,62 @@ def _extract_source_fact(source: Source, max_chars: int = 220) -> str:
             return True
         if any(pattern.search(normalized) for pattern in _LOW_VALUE_SOURCE_FACT_PATTERNS):
             return True
+        token_count = len(re.findall(r"[A-Za-z0-9%$-]+", normalized))
+        if token_count < 6:
+            return True
+        if normalized.count("|") >= 2:
+            return True
+        if normalized.count("...") >= 1 and token_count < 18:
+            return True
+        alpha_ratio = sum(ch.isalpha() for ch in normalized) / max(len(normalized), 1)
+        if alpha_ratio < 0.45:
+            return True
         return False
 
-    # Prefer concrete statements with numbers.
-    for sentence in sentences:
-        normalized = re.sub(r"^(firstly|secondly|thirdly|however|in summary),?\s+", "", sentence, flags=re.IGNORECASE)
-        if _is_low_value_sentence(normalized):
-            continue
-        if len(normalized) >= 30 and re.search(r"\d", normalized):
-            chosen = normalized
-            break
+    def _clean_text(text: str) -> str:
+        cleaned = re.sub(r"\s+", " ", (text or "")).strip()
+        if not cleaned:
+            return ""
+        if title_norm:
+            if cleaned.lower().startswith(title_norm.lower()):
+                cleaned = cleaned[len(title_norm):].strip(" .:-")
+            cleaned = cleaned.replace(title_norm, "").strip()
+        cleaned = re.sub(r"\[[^\]]{30,}\]", "", cleaned).strip()
+        return cleaned
 
-    # Otherwise use first substantive non-boilerplate sentence.
-    if not chosen:
+    def _pick_sentence(text: str) -> str:
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+        best = ""
         for sentence in sentences:
-            normalized = re.sub(r"^(firstly|secondly|thirdly|however|in summary),?\s+", "", sentence, flags=re.IGNORECASE)
+            normalized = re.sub(
+                r"^(firstly|secondly|thirdly|however|in summary),?\s+",
+                "",
+                sentence,
+                flags=re.IGNORECASE,
+            )
             if _is_low_value_sentence(normalized):
                 continue
-            if len(normalized) >= 20:
-                chosen = normalized
-                break
+            if len(normalized) >= 30 and re.search(r"\d", normalized):
+                return normalized
+            if not best and len(normalized) >= 20:
+                best = normalized
+        return best
 
-    if not chosen:
-        chosen = text
+    # Prefer snippet first; full content often contains page-chrome noise.
+    for candidate in (source.content_snippet or "", source.content_full or ""):
+        cleaned = _clean_text(candidate)
+        if not cleaned:
+            continue
+        chosen = _pick_sentence(cleaned)
+        if not chosen:
+            continue
+        if chosen.count("[") > 1:
+            continue
+        if re.match(r"^[A-Z][a-z]{2,9}\s+\d{1,2},\s+\d{4}\b", chosen):
+            continue
+        return _normalize_sentence(chosen, max_chars=max_chars)
 
-    chosen = re.sub(r"\[[^\]]{30,}\]", "", chosen).strip()
-    if chosen.count("[") > 1:
-        return ""
-    if re.match(r"^[A-Z][a-z]{2,9}\s+\d{1,2},\s+\d{4}\b", chosen):
-        return ""
-    return _normalize_sentence(chosen, max_chars=max_chars)
+    return ""
 
 
 def _is_summary_source_usable(source: Source) -> bool:
@@ -799,12 +826,12 @@ def _deterministic_section_paragraph(
 
     lead = evidence_sentences[0]
     support = evidence_sentences[1] if len(evidence_sentences) > 1 else ""
-    direction = _infer_signal_direction(" ".join(evidence_sentences))
-    implication = (
-        f"Taken together, this indicates {section_label.lower()} remained {direction} "
-        "because observed disruptions passed through market and policy channels."
-    )
-    return " ".join(part for part in [lead, support, implication] if part)
+    conclusion = ""
+    if lead and support:
+        conclusion = (
+            f"Together, these cited records indicate a consistent signal in {section_label.lower()}."
+        )
+    return " ".join(part for part in [lead, support, conclusion] if part)
 
 
 def _deterministic_evidence_synthesis(state: ResearchState, reason: str) -> str:

@@ -541,6 +541,13 @@ class TestResearchTypePassthrough(unittest.TestCase):
         self.assertEqual(state.research_type, "comparative")
         self.assertEqual(state.compare_subjects, ["solar", "wind"])
 
+    def test_infer_research_type_from_refined_query_analysis_segment(self):
+        """Refined query analysis segment should map to canonical research_type."""
+        from engine.query_refiner import infer_research_type
+
+        refined = "gold price trend | geography: Global | analysis type: Trend analysis | scope: All sectors"
+        self.assertEqual(infer_research_type(refined), "trend_analysis")
+
 
 # ---------------------------------------------------------------------------
 # SEP-028 — Outline parser must handle normalized headers
@@ -1785,7 +1792,7 @@ class TestSynthesisProvenanceAndSalvage(unittest.TestCase):
 
         self.assertIn("[Council Policy Brief]", paragraph)
         self.assertIn("[Market Blog]", paragraph)
-        self.assertIn("Taken together, this indicates", paragraph)
+        self.assertIn("Together, these cited records indicate", paragraph)
         self.assertLess(
             paragraph.find("[Council Policy Brief]"),
             paragraph.find("[Market Blog]"),
@@ -1836,7 +1843,45 @@ class TestSynthesisProvenanceAndSalvage(unittest.TestCase):
         self.assertEqual(state.synthesis_model, "deterministic")
         self.assertIn("## Market Effects", synthesis)
         self.assertIn("[Grid Operations Update]", synthesis)
-        self.assertIn("Taken together, this indicates", synthesis)
+        self.assertIn("Together, these cited records indicate", synthesis)
+
+    def test_extract_source_fact_prefers_snippet_over_noisy_content_full(self):
+        """When full content is noisy page chrome, extraction should use cleaner snippet evidence."""
+        from workflows.deep_research.synthesizer import _extract_source_fact
+
+        src = _make_source(
+            title="Gold Market Note",
+            snippet="Gold prices rose from roughly $1,250 in 2016 to around $2,000 in 2025.",
+            relevance=0.7,
+            url="https://example.com/gold-note",
+        )
+        src.content_full = (
+            "Listen to this article | share facebook twitter whatsapp copylink "
+            "Loading wait... Buy now Request sample"
+        )
+
+        fact = _extract_source_fact(src, max_chars=220)
+        self.assertIn("Gold prices rose", fact)
+        self.assertNotIn("Listen to this article", fact)
+        self.assertNotIn("Buy now", fact)
+
+    def test_outline_quality_rejects_evidence_highlights_and_source_coverage_titles(self):
+        """Generic operational headings must fail outline quality gating."""
+        from workflows.deep_research.synthesizer import _parse_outline
+
+        raw = (
+            "## Executive Summary\n"
+            "Gold trend over the decade was upward with periodic shocks [Source A].\n\n"
+            "## Evidence Highlights\n"
+            "- pull top facts\n"
+            "- summarize snippets\n\n"
+            "## Source Coverage\n"
+            "- list credibility and relevance\n"
+            "- identify top domains\n"
+        )
+
+        parsed = _parse_outline(raw, is_comparison=False, subjects=None)
+        self.assertIsNone(parsed)
 
     @patch("workflows.deep_research.synthesizer.synthesize_outline")
     @patch("workflows.deep_research.synthesizer.synthesize_section", return_value=None)

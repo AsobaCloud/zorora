@@ -1310,6 +1310,16 @@
             selections: {},
         };
 
+        function normalizeResearchTypeLabel(label) {
+            const normalized = String(label || '').trim().toLowerCase();
+            if (normalized === 'trend analysis' || normalized === 'trend_analysis') return 'trend_analysis';
+            if (normalized === 'policy review' || normalized === 'policy_review') return 'policy_review';
+            if (normalized === 'impact assessment' || normalized === 'impact_assessment') return 'impact_assessment';
+            if (normalized === 'market overview' || normalized === 'market_overview') return 'trend_analysis';
+            if (normalized === 'comparative' || normalized === 'comparison') return 'comparative';
+            return null;
+        }
+
         function markdownToHtml(markdown) {
             const lines = String(markdown || '').split('\n');
             const htmlParts = [];
@@ -1482,8 +1492,12 @@
                 startBtn.onclick = function() {
                     if (startBtn.disabled) return;
                     const refinedQuery = buildRefinedQueryFromSelections(originalQuery, refinementModalState.selections);
+                    const researchType = normalizeResearchTypeLabel(refinementModalState.selections.analysis_type || '');
                     if (refinementModalState.resolve) {
-                        refinementModalState.resolve(refinedQuery);
+                        refinementModalState.resolve({
+                            refined_query: refinedQuery,
+                            research_type: researchType,
+                        });
                     }
                     closeRefinementModal(false);
                 };
@@ -1508,7 +1522,12 @@
             const refineResult = await response.json();
             const gaps = Array.isArray(refineResult.gaps) ? refineResult.gaps : [];
             if (refineResult.skip_refinement || gaps.length === 0) {
-                return (refineResult.refined_query || query || '').trim();
+                return {
+                    refined_query: (refineResult.refined_query || query || '').trim(),
+                    research_type: normalizeResearchTypeLabel(
+                        refineResult?.dimensions?.analysis_type?.value || ''
+                    ),
+                };
             }
 
             return await openRefinementModal(refineResult, query);
@@ -1743,7 +1762,9 @@
             searchButton.textContent = 'Refining...';
             
             try {
-                const refinedQuery = await requestRefinedQuery(query);
+                const refinementResult = await requestRefinedQuery(query);
+                const refinedQuery = refinementResult?.refined_query || query;
+                const researchType = refinementResult?.research_type || null;
                 searchButton.textContent = 'Researching...';
                 showProgressArea();
 
@@ -1752,7 +1773,12 @@
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ query, depth, refined_query: refinedQuery })
+                    body: JSON.stringify({
+                        query,
+                        depth,
+                        refined_query: refinedQuery,
+                        research_type: researchType,
+                    })
                 });
                 
                 if (!response.ok) {
