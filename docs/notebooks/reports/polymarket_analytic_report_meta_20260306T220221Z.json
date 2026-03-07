@@ -1,0 +1,10 @@
+{
+  "source": "hf_inputs_root",
+  "meta": {
+    "status": 200,
+    "attempt_errors": {
+      "hf_chat_completions": "HTTP 404: Not Found",
+      "hf_tgi_generate": "HTTP 404: Not Found"
+    }
+  }
+}

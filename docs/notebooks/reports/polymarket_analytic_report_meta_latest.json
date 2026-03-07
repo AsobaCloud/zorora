@@ -1,0 +1,37 @@
+{
+  "source": "deterministic_fallback",
+  "meta": {
+    "error": null,
+    "attempt_errors": {
+      "hf_inputs_root": "validation failed: missing_section:What This Report Tests; missing_section:Data Scope; missing_section:How Score Works; missing_section:Key Findings; missing_section:What This Means; missing_section:What This Does Not Prove; missing_section:Next Validation Steps; tests_section_missing_signal_noise_leak_context"
+    },
+    "endpoint_attempts": [
+      {
+        "attempt": 1,
+        "status": 200,
+        "error": null
+      }
+    ],
+    "endpoint_contract": "POST / with {inputs, parameters}",
+    "fallback_reason": "model output failed report validation on root endpoint",
+    "passed_checks": [
+      "section:What This Report Tests",
+      "section:Data Scope",
+      "section:How Score Works",
+      "section:Key Findings",
+      "section:What This Means",
+      "section:What This Does Not Prove",
+      "section:Next Validation Steps",
+      "tests_section_mentions_signal_noise_leak",
+      "what_means_has_hypothesis_verdict",
+      "what_means_mentions_signal_and_noise",
+      "mentions_all_three_case_clusters",
+      "score_non_probability_disclaimer_present",
+      "no_over_50_contradiction",
+      "key_findings_includes_market_ids",
+      "data_scope_mentions_market_count"
+    ],
+    "failed_checks": [],
+    "used_fallback": true
+  }
+}
