@@ -16,12 +16,16 @@ from engine.query_refiner import SearchIntent, decompose_query
 from workflows.deep_research.aggregator import aggregate_sources
 from workflows.deep_research.credibility import score_source_credibility
 from workflows.deep_research.reranker import score_relevance, filter_relevant, _count_cross_references
-from workflows.deep_research.synthesizer import synthesize
+from workflows.deep_research.synthesizer import synthesize_direct
 
 
 logger = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[str, str, str], None]
+
+# Backward-compat hook for existing tests: the shared service now routes
+# through direct synthesis, but callers may still patch `synthesize`.
+synthesize = synthesize_direct
 
 _CLUSTERING_SYSTEM_PROMPT = (
     "You are a senior energy and electricity market intelligence analyst. "
@@ -49,6 +53,29 @@ def _emit(progress_callback: Optional[ProgressCallback], phase: str, message: st
     """Emit progress update if callback is provided."""
     if progress_callback:
         progress_callback(status, phase, message)
+
+
+def _build_market_context_for_query(query: str) -> str:
+    """Build optional market context for market-oriented research queries."""
+    try:
+        from engine.query_refiner import detect_market_intent
+
+        if not detect_market_intent(query):
+            return ""
+
+        logger.info("Market intent detected — injecting FRED context")
+        from workflows.market_workflow import MarketWorkflow
+        from tools.market.context import build_market_context
+
+        workflow = MarketWorkflow()
+        workflow.update_all()
+        summaries = workflow.compute_summary()
+        if summaries:
+            return build_market_context(summaries)
+    except Exception as exc:
+        logger.warning("Market context build failed (non-fatal): %s", exc)
+
+    return ""
 
 
 def _query_terms(text: str) -> set:
@@ -897,21 +924,19 @@ def run_deep_research(
     )
     state.total_sources = len(state.sources_checked)
 
-    _emit(progress_callback, "cross_reference", "Clustering findings by theme across sources...")
-
-    # Cap clustering input — 7B model produces structured output reliably
-    # with ≤25 sources (each gets ~320 chars in 8000-char budget)
-    clustering_max = config.SYNTHESIS.get("clustering_max_sources", 25)
-    clustering_sources = state.sources_checked[:clustering_max]
-    state.findings = _cluster_findings(search_query, clustering_sources)
+    state.findings = []
+    market_context = _build_market_context_for_query(query)
 
     _emit(
         progress_callback,
         "cross_reference",
-        f"Identified {len(state.findings)} thematic findings from {len(state.sources_checked)} sources.",
+        f"Skipping finding clustering; sending {len(state.sources_checked)} ranked sources directly to synthesis.",
     )
-
-    _emit(progress_callback, "synthesis", "Generating synthesis from findings... This may take 15-25 seconds.")
+    _emit(
+        progress_callback,
+        "synthesis",
+        "Generating direct answer from ranked sources... This may take 15-25 seconds.",
+    )
 
     synthesis_done = threading.Event()
     synthesis_start_time = time.time()
@@ -919,9 +944,9 @@ def run_deep_research(
     def emit_heartbeat() -> None:
         heartbeat_count = 0
         messages = [
-            "Analyzing sources and generating synthesis...",
-            "Processing findings and cross-referencing...",
-            "Generating comprehensive answer with citations...",
+            "Analyzing ranked sources and answering the research question...",
+            "Synthesizing evidence across the full ranked source set...",
+            "Generating cited answer with structured sections...",
             "Finalizing synthesis...",
         ]
 
@@ -937,7 +962,11 @@ def run_deep_research(
     heartbeat_thread.start()
 
     try:
-        state.synthesis = synthesize(state, progress_callback=progress_callback)
+        state.synthesis = synthesize(
+            state,
+            market_context=market_context,
+            progress_callback=progress_callback,
+        )
         state.completed_at = datetime.now()
         state.current_iteration = 1
     finally:
