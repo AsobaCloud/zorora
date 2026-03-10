@@ -1645,6 +1645,11 @@
                     </div>
                 </div>
 
+                <div id="gvWarningBanner" class="hidden" style="background:#fef3c7;border:1px solid #f59e0b;color:#92400e;padding:10px 16px;border-radius:8px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;font-size:0.88rem;">
+                    <span id="gvWarningText"></span>
+                    <button onclick="this.parentElement.classList.add('hidden')" style="background:none;border:none;color:#92400e;font-size:1.1rem;cursor:pointer;padding:0 4px;">&times;</button>
+                </div>
+                <div id="gvMapCoverage" style="font-size:0.82rem;color:var(--text-light);margin-bottom:6px;"></div>
                 <div id="global-map-container"></div>
 
                 <div class="tab-bar" id="gvDataTabs" style="margin:16px 0 10px;">
@@ -2843,14 +2848,26 @@
                     fetch('/api/market/latest'),
                 ]);
 
+                // Show warnings from either endpoint
+                let warningMsg = null;
                 if (statsRes.ok) {
                     const statsData = await statsRes.json();
                     renderGlobalMapMarkers(statsData.stats || []);
+                    // Coverage indicator
+                    const covEl = document.getElementById('gvMapCoverage');
+                    if (covEl && statsData.total_articles != null) {
+                        const geo = statsData.geo_tagged_articles || 0;
+                        const total = statsData.total_articles;
+                        const pct = total > 0 ? Math.round((geo / total) * 100) : 0;
+                        covEl.textContent = `${geo} of ${total} articles geo-tagged (${pct}%)`;
+                    }
+                    if (statsData.warning) warningMsg = statsData.warning;
                 }
 
                 if (articlesRes.ok) {
                     const articlesData = await articlesRes.json();
                     gvArticles = articlesData.articles || [];
+                    if (articlesData.warning) warningMsg = articlesData.warning;
                     // Client-side keyword filter
                     const search = (document.getElementById('gvSearch')?.value || '').toLowerCase();
                     const srcFilter = (document.getElementById('gvSource')?.value || '').toLowerCase();
@@ -2865,6 +2882,17 @@
                     renderGvArticlesTable();
                 }
 
+                // Warning banner
+                const banner = document.getElementById('gvWarningBanner');
+                if (banner) {
+                    if (warningMsg) {
+                        document.getElementById('gvWarningText').textContent = warningMsg;
+                        banner.classList.remove('hidden');
+                    } else {
+                        banner.classList.add('hidden');
+                    }
+                }
+
                 if (datasetsRes.ok) {
                     const datasets = await datasetsRes.json();
                     renderDatasetCards(Array.isArray(datasets) ? datasets : []);
@@ -2874,6 +2902,22 @@
             }
         }
 
+        function filterGvByCountry(country) {
+            const allArticles = gvArticles;
+            gvArticles = allArticles.filter(a => {
+                const tags = (a.country_tags || []).map(t => normalizeCountry(t));
+                return tags.includes(country);
+            });
+            gvPage = 0;
+            renderGvArticlesTable();
+            // Switch to articles tab
+            document.querySelectorAll('#gvDataTabs button').forEach(b => b.classList.remove('active'));
+            const articlesBtn = document.querySelector('#gvDataTabs button[data-gvtab="articles"]');
+            if (articlesBtn) articlesBtn.classList.add('active');
+            document.getElementById('gvDatasetsTab')?.classList.add('hidden');
+            document.getElementById('gvArticlesTab')?.classList.remove('hidden');
+        }
+
         function renderGlobalMapMarkers(stats) {
             if (!globalMapMarkers) return;
             globalMapMarkers.clearLayers();
@@ -2881,18 +2925,41 @@
             stats.forEach(stat => {
                 const coords = COUNTRY_COORDS[stat.country];
                 if (!coords) return;
-                const radius = Math.max(6, Math.min(30, (stat.count / maxCount) * 30));
+                const radius = 6 + (stat.count / maxCount) * 14;
                 const marker = L.circleMarker(coords, {
                     radius,
-                    fillColor: '#6366f1',
-                    color: '#4f46e5',
+                    fillColor: '#3b82f6',
+                    color: '#1d4ed8',
                     weight: 1,
                     fillOpacity: 0.6,
                 });
+                // Rich popup matching data-admin.js
                 const topTopics = Object.entries(stat.topics || {})
-                    .sort((a, b) => b[1] - a[1]).slice(0, 3)
-                    .map(([t, c]) => `${t}: ${c}`).join('<br>');
-                marker.bindPopup(`<strong>${stat.country}</strong><br>${stat.count} articles<br>${topTopics}`);
+                    .sort((a, b) => b[1] - a[1]).slice(0, 6);
+                const topSources = Object.entries(stat.sources || {})
+                    .sort((a, b) => b[1] - a[1]).slice(0, 4);
+                const countryEsc = escapeHtml(stat.country);
+                let popup = `<div style="min-width:180px;font-size:0.85rem;">`;
+                popup += `<strong style="cursor:pointer;color:#1d4ed8;" onclick="filterGvByCountry('${countryEsc}')">${countryEsc}</strong>`;
+                popup += `<div style="color:#6B7280;margin:2px 0 6px;">${stat.count} article${stat.count !== 1 ? 's' : ''}</div>`;
+                if (topTopics.length) {
+                    popup += `<div style="font-weight:600;font-size:0.78rem;color:#6B7280;margin-bottom:2px;">TOPICS</div>`;
+                    popup += `<table style="width:100%;font-size:0.82rem;margin-bottom:6px;">`;
+                    topTopics.forEach(([t, c]) => {
+                        popup += `<tr><td style="padding:1px 6px 1px 0;">${escapeHtml(t)}</td><td style="text-align:right;color:#6B7280;">${c}</td></tr>`;
+                    });
+                    popup += `</table>`;
+                }
+                if (topSources.length) {
+                    popup += `<div style="font-weight:600;font-size:0.78rem;color:#6B7280;margin-bottom:2px;">SOURCES</div>`;
+                    popup += `<table style="width:100%;font-size:0.82rem;">`;
+                    topSources.forEach(([s, c]) => {
+                        popup += `<tr><td style="padding:1px 6px 1px 0;">${escapeHtml(s)}</td><td style="text-align:right;color:#6B7280;">${c}</td></tr>`;
+                    });
+                    popup += `</table>`;
+                }
+                popup += `</div>`;
+                marker.bindPopup(popup);
                 globalMapMarkers.addLayer(marker);
             });
         }

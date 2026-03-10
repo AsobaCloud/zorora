@@ -24,7 +24,7 @@ def _extract_keywords(query: str) -> List[str]:
 
 # Newsroom API endpoint (production)
 NEWSROOM_API_URL = "https://pj1ud6q3uf.execute-api.af-south-1.amazonaws.com/prod/api/data-admin/newsroom/articles"
-NEWSROOM_API_TIMEOUT = 10
+NEWSROOM_API_TIMEOUT = 30
 
 # Error messages for common issues
 AUTH_ERROR_MSG = """⚠ Newsroom authentication failed (HTTP 401)
@@ -58,7 +58,7 @@ def _get_auth_headers() -> Dict[str, str]:
     return {}
 
 
-def fetch_newsroom_cached(max_results: int = 100) -> List[Dict[str, Any]]:
+def fetch_newsroom_cached(max_results: int = 100):
     """
     Fetch newsroom articles with caching (7-day rolling window).
 
@@ -69,7 +69,9 @@ def fetch_newsroom_cached(max_results: int = 100) -> List[Dict[str, Any]]:
         max_results: Max articles to return (default: 100)
 
     Returns:
-        List of article dicts from cache or fresh API call
+        Tuple of (articles_list, error_string_or_None).
+        error is None on success, a warning message on stale-cache fallback,
+        or an error message when no data is available.
     """
     from tools.utils.newsroom_cache import get_cache
 
@@ -78,7 +80,7 @@ def fetch_newsroom_cached(max_results: int = 100) -> List[Dict[str, Any]]:
     if cache.is_fresh():
         articles = cache.get_articles()
         logger.info(f"Newsroom cache hit: {len(articles)} articles (age: {int(cache.get_age_seconds())}s)")
-        return articles[:max_results]
+        return (articles[:max_results], None)
 
     # Cache is stale - fetch fresh data
     logger.info("Newsroom cache stale, fetching fresh data...")
@@ -86,15 +88,15 @@ def fetch_newsroom_cached(max_results: int = 100) -> List[Dict[str, Any]]:
 
     if articles:
         cache.update(articles)
-        return articles[:max_results]
+        return (articles[:max_results], None)
 
     # API failed - try to use stale cache as fallback
     stale_articles = cache.get_articles()
     if stale_articles:
         logger.warning(f"API failed, using stale cache: {len(stale_articles)} articles")
-        return stale_articles[:max_results]
+        return (stale_articles[:max_results], "Using cached data \u2014 newsroom API unavailable")
 
-    return []
+    return ([], "Newsroom API unavailable and no cached data")
 
 
 def _fetch_newsroom_api_raw(days_back: int = 7, max_results: int = 500) -> List[Dict[str, Any]]:
@@ -233,7 +235,7 @@ def get_newsroom_headlines(query: str = None, max_results: int = None) -> str:
             return AUTH_ERROR_MSG
 
         # Fetch from cache (7-day rolling window)
-        articles = fetch_newsroom_cached(max_results=200)
+        articles, _cache_error = fetch_newsroom_cached(max_results=200)
 
         if not articles:
             return "No articles found in newsroom cache (check logs if unexpected)"

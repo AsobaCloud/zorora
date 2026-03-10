@@ -51,11 +51,11 @@ class TestCountryNormalization:
 
 
 class TestNewsIntelStatsEndpoint:
-    """Test the /api/news-intel/stats endpoint."""
+    """Test the /api/news-intel/stats endpoint uses cached data."""
 
-    @patch("ui.web.app.fetch_newsroom_api")
-    def test_stats_endpoint_returns_aggregated_data(self, mock_fetch):
-        mock_fetch.return_value = [
+    @patch("ui.web.app.fetch_newsroom_cached")
+    def test_stats_endpoint_returns_aggregated_data(self, mock_cached):
+        mock_cached.return_value = ([
             {"headline": "A", "date": "2026-03-01", "source": "Reuters",
              "url": "", "topic_tags": ["energy"], "geography_tags": [],
              "country_tags": ["US"]},
@@ -65,7 +65,7 @@ class TestNewsIntelStatsEndpoint:
             {"headline": "C", "date": "2026-03-02", "source": "FT",
              "url": "", "topic_tags": ["trade"], "geography_tags": [],
              "country_tags": ["Britain"]},
-        ]
+        ], None)
         mod = _import_app_module()
         client = mod.app.test_client()
         resp = client.post("/api/news-intel/stats",
@@ -79,9 +79,9 @@ class TestNewsIntelStatsEndpoint:
         assert country_names.count("United States") == 1
         assert "United Kingdom" in country_names
 
-    @patch("ui.web.app.fetch_newsroom_api")
-    def test_stats_endpoint_empty_articles(self, mock_fetch):
-        mock_fetch.return_value = []
+    @patch("ui.web.app.fetch_newsroom_cached")
+    def test_stats_endpoint_empty_articles(self, mock_cached):
+        mock_cached.return_value = ([], None)
         mod = _import_app_module()
         client = mod.app.test_client()
         resp = client.post("/api/news-intel/stats",
@@ -91,6 +91,23 @@ class TestNewsIntelStatsEndpoint:
         data = resp.get_json()
         assert data["total_articles"] == 0
         assert data["stats"] == []
+
+    @patch("ui.web.app.fetch_newsroom_cached")
+    def test_stats_endpoint_returns_warning_on_stale_cache(self, mock_cached):
+        mock_cached.return_value = (
+            [{"headline": "X", "date": "2026-03-01", "source": "R",
+              "url": "", "topic_tags": [], "geography_tags": [],
+              "country_tags": ["US"]}],
+            "Using cached data \u2014 newsroom API unavailable",
+        )
+        mod = _import_app_module()
+        client = mod.app.test_client()
+        resp = client.post("/api/news-intel/stats",
+                           data=json.dumps({}),
+                           content_type="application/json")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["warning"] == "Using cached data \u2014 newsroom API unavailable"
 
 
 class TestMarketLatestEndpoint:
@@ -114,13 +131,52 @@ class TestMarketLatestEndpoint:
         assert len(data) >= 1
 
 
+class TestArticlesEndpointCached:
+    """Test that /articles endpoint uses fetch_newsroom_cached and returns warning."""
+
+    @patch("ui.web.app.fetch_newsroom_cached")
+    def test_articles_endpoint_uses_cache(self, mock_cached):
+        mock_cached.return_value = ([
+            {"headline": "Cached Article", "date": "2026-03-01", "source": "AP",
+             "url": "https://example.com", "topic_tags": ["energy"],
+             "geography_tags": [], "country_tags": ["US"]},
+        ], None)
+        mod = _import_app_module()
+        client = mod.app.test_client()
+        resp = client.post("/api/news-intel/articles",
+                           data=json.dumps({}),
+                           content_type="application/json")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["count"] == 1
+        assert data["articles"][0]["headline"] == "Cached Article"
+        assert "warning" not in data or data["warning"] is None
+
+    @patch("ui.web.app.fetch_newsroom_cached")
+    def test_articles_endpoint_returns_warning(self, mock_cached):
+        mock_cached.return_value = (
+            [{"headline": "Stale", "date": "2026-03-01", "source": "AP",
+              "url": "", "topic_tags": [], "geography_tags": [],
+              "country_tags": []}],
+            "Using cached data \u2014 newsroom API unavailable",
+        )
+        mod = _import_app_module()
+        client = mod.app.test_client()
+        resp = client.post("/api/news-intel/articles",
+                           data=json.dumps({}),
+                           content_type="application/json")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["warning"] == "Using cached data \u2014 newsroom API unavailable"
+
+
 class TestSynthesizeWithStagedItems:
     """Test that synthesize endpoint accepts staged_articles."""
 
-    @patch("ui.web.app.fetch_newsroom_api")
+    @patch("ui.web.app.fetch_newsroom_cached")
     @patch("ui.web.app._news_intel_synthesis")
-    def test_synthesize_accepts_staged_articles(self, mock_synth, mock_fetch):
-        mock_fetch.return_value = []
+    def test_synthesize_accepts_staged_articles(self, mock_synth, mock_cached):
+        mock_cached.return_value = ([], None)
         mock_synth.return_value = "Test synthesis"
 
         mod = _import_app_module()
@@ -139,6 +195,64 @@ class TestSynthesizeWithStagedItems:
         assert resp.status_code == 200
         data = resp.get_json()
         assert "synthesis" in data
+
+
+class TestNewsroomCachedReturnsTuple:
+    """Test that fetch_newsroom_cached returns (articles, error) tuple."""
+
+    @patch("tools.utils.newsroom_cache.get_cache")
+    def test_cache_hit_returns_tuple_with_none_error(self, mock_get_cache):
+        cache = MagicMock()
+        cache.is_fresh.return_value = True
+        cache.get_articles.return_value = [{"headline": "A"}]
+        cache.get_age_seconds.return_value = 100
+        mock_get_cache.return_value = cache
+
+        from tools.research.newsroom import fetch_newsroom_cached
+        result = fetch_newsroom_cached(max_results=10)
+        assert isinstance(result, tuple), "fetch_newsroom_cached must return a tuple"
+        assert len(result) == 2
+        articles, error = result
+        assert len(articles) == 1
+        assert error is None
+
+    @patch("tools.research.newsroom._fetch_newsroom_api_raw")
+    @patch("tools.utils.newsroom_cache.get_cache")
+    def test_api_fail_stale_fallback_returns_warning(self, mock_get_cache, mock_raw):
+        cache = MagicMock()
+        cache.is_fresh.return_value = False
+        cache.get_articles.return_value = [{"headline": "Stale"}]
+        mock_get_cache.return_value = cache
+        mock_raw.return_value = []  # API failed
+
+        from tools.research.newsroom import fetch_newsroom_cached
+        articles, error = fetch_newsroom_cached(max_results=10)
+        assert len(articles) == 1
+        assert error is not None
+        assert "unavailable" in error.lower()
+
+    @patch("tools.research.newsroom._fetch_newsroom_api_raw")
+    @patch("tools.utils.newsroom_cache.get_cache")
+    def test_api_fail_no_cache_returns_empty_with_error(self, mock_get_cache, mock_raw):
+        cache = MagicMock()
+        cache.is_fresh.return_value = False
+        cache.get_articles.return_value = []
+        mock_get_cache.return_value = cache
+        mock_raw.return_value = []
+
+        from tools.research.newsroom import fetch_newsroom_cached
+        articles, error = fetch_newsroom_cached(max_results=10)
+        assert articles == []
+        assert error is not None
+        assert "unavailable" in error.lower()
+
+
+class TestNewsroomTimeout:
+    """Test that NEWSROOM_API_TIMEOUT is 30s for Lambda cold-start tolerance."""
+
+    def test_timeout_is_30(self):
+        from tools.research.newsroom import NEWSROOM_API_TIMEOUT
+        assert NEWSROOM_API_TIMEOUT == 30
 
 
 class TestTemplateStructure:
@@ -189,6 +303,28 @@ class TestTemplateStructure:
         resp = client.get("/")
         html = resp.data.decode()
         assert 'stagedBadge' in html
+
+    def test_template_has_coverage_indicator(self):
+        mod = _import_app_module()
+        client = mod.app.test_client()
+        resp = client.get("/")
+        html = resp.data.decode()
+        assert 'gvMapCoverage' in html
+
+    def test_template_has_warning_banner(self):
+        mod = _import_app_module()
+        client = mod.app.test_client()
+        resp = client.get("/")
+        html = resp.data.decode()
+        assert 'gvWarningBanner' in html
+
+    def test_template_has_rich_popup_function(self):
+        mod = _import_app_module()
+        client = mod.app.test_client()
+        resp = client.get("/")
+        html = resp.data.decode()
+        assert 'TOPICS' in html
+        assert 'SOURCES' in html
 
     def test_no_old_mode_tabs_in_search_section(self):
         mod = _import_app_module()

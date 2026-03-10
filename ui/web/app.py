@@ -11,7 +11,7 @@ from engine.research_engine import ResearchEngine
 from engine.deep_research_service import run_deep_research, build_results_payload
 from engine.query_refiner import refine_query, infer_research_type
 from ui.web.config_manager import ConfigManager, ModelFetcher
-from tools.research.newsroom import fetch_newsroom_api
+from tools.research.newsroom import fetch_newsroom_cached
 from tools.specialist.client import create_specialist_client
 from tools.market.store import MarketDataStore
 from tools.market.series import SERIES_CATALOG
@@ -591,17 +591,12 @@ def get_news_intel_articles():
         limit = int(data.get("limit", 100))
         limit = max(1, min(limit, 200))
 
-        today = datetime.now(timezone.utc).date()
         start_date = _parse_date(date_from)
         end_date = _parse_date(date_to)
         if start_date and end_date and start_date > end_date:
             return jsonify({"error": "date_from must be <= date_to"}), 400
 
-        days_back = 365
-        if start_date:
-            days_back = max(1, min(365, (today - start_date).days + 1))
-
-        articles = fetch_newsroom_api(query=None, days_back=days_back, max_results=500)
+        articles, warning = fetch_newsroom_cached(max_results=500)
         filtered = _filter_newsroom_articles(
             articles,
             topic=topic,
@@ -622,7 +617,7 @@ def get_news_intel_articles():
             }
             for article in filtered
         ]
-        return jsonify({"count": len(serialized), "articles": serialized})
+        return jsonify({"count": len(serialized), "articles": serialized, "warning": warning})
     except Exception as e:
         logger.error(f"News intel articles error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
@@ -639,17 +634,12 @@ def synthesize_news_intel():
         limit = int(data.get("limit", 100))
         limit = max(1, min(limit, 200))
 
-        today = datetime.now(timezone.utc).date()
         start_date = _parse_date(date_from)
         end_date = _parse_date(date_to)
         if start_date and end_date and start_date > end_date:
             return jsonify({"error": "date_from must be <= date_to"}), 400
 
-        days_back = 365
-        if start_date:
-            days_back = max(1, min(365, (today - start_date).days + 1))
-
-        articles = fetch_newsroom_api(query=None, days_back=days_back, max_results=500)
+        articles, _synth_warning = fetch_newsroom_cached(max_results=500)
         filtered = _filter_newsroom_articles(
             articles,
             topic=topic,
@@ -750,13 +740,7 @@ def get_news_intel_stats():
         limit = int(data.get("limit", 500))
         limit = max(1, min(limit, 500))
 
-        today = datetime.now(timezone.utc).date()
-        start_date = _parse_date(date_from)
-        days_back = 365
-        if start_date:
-            days_back = max(1, min(365, (today - start_date).days + 1))
-
-        articles = fetch_newsroom_api(query=None, days_back=days_back, max_results=500)
+        articles, warning = fetch_newsroom_cached(max_results=500)
         filtered = _filter_newsroom_articles(
             articles, topic=topic, date_from=date_from, date_to=date_to, limit=limit,
         )
@@ -789,6 +773,7 @@ def get_news_intel_stats():
             "total_articles": len(filtered),
             "geo_tagged_articles": geo_tagged,
             "stats": stats,
+            "warning": warning,
         })
     except Exception as e:
         logger.error(f"News intel stats error: {e}", exc_info=True)
