@@ -1647,27 +1647,32 @@
 
                 <div id="global-map-container"></div>
 
-                <h3 style="margin:16px 0 10px;color:var(--text-dark);">Commodity Datasets</h3>
-                <div class="dataset-cards-grid" id="datasetCardsGrid">
-                    <div style="color:var(--text-light);font-size:0.9rem;">Loading datasets...</div>
+                <div class="tab-bar" id="gvDataTabs" style="margin:16px 0 10px;">
+                    <button class="active" data-gvtab="datasets">Commodity Datasets</button>
+                    <button data-gvtab="articles">Articles</button>
                 </div>
-
-                <h3 style="margin:16px 0 10px;color:var(--text-dark);">Articles</h3>
-                <div class="articles-table-container">
-                    <table class="articles-table">
-                        <thead>
-                            <tr>
-                                <th>Headline</th>
-                                <th>Date</th>
-                                <th>Topics</th>
-                                <th>Geography</th>
-                                <th>Source</th>
-                                <th></th>
-                            </tr>
-                        </thead>
-                        <tbody id="gvArticlesBody"></tbody>
-                    </table>
-                    <div class="articles-pagination" id="gvPagination"></div>
+                <div id="gvDatasetsTab">
+                    <div class="dataset-cards-grid" id="datasetCardsGrid">
+                        <div style="color:var(--text-light);font-size:0.9rem;">Loading datasets...</div>
+                    </div>
+                </div>
+                <div id="gvArticlesTab" class="hidden">
+                    <div class="articles-table-container">
+                        <table class="articles-table">
+                            <thead>
+                                <tr>
+                                    <th>Headline</th>
+                                    <th>Date</th>
+                                    <th>Topics</th>
+                                    <th>Geography</th>
+                                    <th>Source</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody id="gvArticlesBody"></tbody>
+                        </table>
+                        <div class="articles-pagination" id="gvPagination"></div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -2155,6 +2160,16 @@
                 document.querySelector('.welcome-section').classList.remove('hidden');
             }
         }
+
+        // Global View data tabs (Datasets / Articles)
+        document.getElementById('gvDataTabs').addEventListener('click', e => {
+            const btn = e.target.closest('button[data-gvtab]');
+            if (!btn) return;
+            document.querySelectorAll('#gvDataTabs button').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            document.getElementById('gvDatasetsTab').classList.toggle('hidden', btn.dataset.gvtab !== 'datasets');
+            document.getElementById('gvArticlesTab').classList.toggle('hidden', btn.dataset.gvtab !== 'articles');
+        });
 
         // Depth selector functionality
         document.querySelectorAll('.depth-option').forEach(option => {
@@ -2787,14 +2802,22 @@
         };
 
         function initGlobalViewMap() {
-            if (globalMap) return;
-            globalMap = L.map('global-map-container').setView([20, 0], 2);
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-                attribution: '&copy; OpenStreetMap &copy; CARTO',
-                subdomains: 'abcd',
-                maxZoom: 18,
-            }).addTo(globalMap);
-            globalMapMarkers = L.layerGroup().addTo(globalMap);
+            if (globalMap) {
+                globalMap.invalidateSize();
+                return;
+            }
+            try {
+                globalMap = L.map('global-map-container').setView([20, 0], 2);
+                L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+                    attribution: '&copy; OpenStreetMap &copy; CARTO',
+                    subdomains: 'abcd',
+                    maxZoom: 18,
+                }).addTo(globalMap);
+                globalMapMarkers = L.layerGroup().addTo(globalMap);
+                setTimeout(() => globalMap.invalidateSize(), 200);
+            } catch (e) {
+                console.error('Map init error:', e);
+            }
         }
 
         async function loadGlobalView() {
