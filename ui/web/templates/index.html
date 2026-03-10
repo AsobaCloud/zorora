@@ -3120,6 +3120,17 @@
                 );
                 satellite.addTo(imagingMap);
 
+                const borders = L.tileLayer(
+                    'https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_only_labels/{z}/{x}/{y}.png',
+                    { attribution: '&copy; CartoDB', maxZoom: 18, subdomains: 'abcd' }
+                );
+                borders.addTo(imagingMap);
+
+                const railways = L.tileLayer(
+                    'https://{s}.tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png',
+                    { attribution: '&copy; OpenRailwayMap', maxZoom: 18, subdomains: 'abc' }
+                );
+
                 const viirs = L.tileLayer(
                     'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_DayNightBand_AtSensor_M15/default/2024-01-01/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png',
                     { attribution: 'NASA GIBS VIIRS', opacity: 0.6, maxZoom: 8 }
@@ -3132,7 +3143,7 @@
 
                 L.control.layers(
                     { 'Satellite': satellite },
-                    { 'VIIRS Nightlights': viirs, 'Deposits': imagingDeposits, 'Concessions': imagingConcessions },
+                    { 'Borders & Labels': borders, 'Railways': railways, 'VIIRS Nightlights': viirs, 'Deposits': imagingDeposits, 'Concessions': imagingConcessions },
                     { collapsed: false }
                 ).addTo(imagingMap);
 
