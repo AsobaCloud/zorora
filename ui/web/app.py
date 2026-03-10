@@ -17,6 +17,7 @@ from tools.market.store import MarketDataStore
 from tools.market.series import SERIES_CATALOG
 from tools.imaging.store import ImagingDataStore
 from tools.imaging.viability import score_all_deposits
+from tools.imaging.mrds_client import fetch_deposits
 import config
 from config import LOGGING_LEVEL, LOGGING_FORMAT, LOG_FILE
 
@@ -830,8 +831,16 @@ def get_imaging_deposits():
         commodity = request.args.get('commodity')
         country = request.args.get('country')
         store = ImagingDataStore()
+        img_config = getattr(config, "IMAGING", {})
+        stale_hours = img_config.get("stale_threshold_hours", 168)
+        # Auto-fetch from MRDS when store is empty or stale
+        staleness = store.get_staleness("deposits")
+        if staleness is None or staleness > stale_hours:
+            logger.info("Imaging deposits stale (%.1fh), fetching from MRDS",
+                        staleness or -1)
+            deposits = fetch_deposits()
+            store.upsert_deposits(deposits.get("features", []))
         geojson = store.get_deposits(commodity=commodity, country=country)
-        # Inject viability scores into each feature
         scored_features = score_all_deposits(geojson.get("features", []))
         store.close()
         return jsonify({"type": "FeatureCollection", "features": scored_features})
