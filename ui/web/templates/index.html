@@ -2829,6 +2829,7 @@
         // ── Global View ──
         let globalMap = null;
         let globalMapMarkers = null;
+        let gvAllArticles = [];
         let gvArticles = [];
         let gvPage = 0;
         const GV_PAGE_SIZE = 50;
@@ -2921,7 +2922,8 @@
 
                 if (articlesRes.ok) {
                     const articlesData = await articlesRes.json();
-                    gvArticles = articlesData.articles || [];
+                    gvAllArticles = articlesData.articles || [];
+                    gvArticles = gvAllArticles;
                     if (articlesData.warning) warningMsg = articlesData.warning;
                     // Client-side keyword filter
                     const search = (document.getElementById('gvSearch')?.value || '').toLowerCase();
@@ -2957,20 +2959,43 @@
             }
         }
 
-        function filterGvByCountry(country) {
-            const allArticles = gvArticles;
-            gvArticles = allArticles.filter(a => {
-                const tags = (a.country_tags || []).map(t => normalizeCountry(t));
-                return tags.includes(country);
-            });
-            gvPage = 0;
-            renderGvArticlesTable();
-            // Switch to articles tab
+        function switchToArticlesTab() {
             document.querySelectorAll('#gvDataTabs button').forEach(b => b.classList.remove('active'));
             const articlesBtn = document.querySelector('#gvDataTabs button[data-gvtab="articles"]');
             if (articlesBtn) articlesBtn.classList.add('active');
             document.getElementById('gvDatasetsTab')?.classList.add('hidden');
             document.getElementById('gvArticlesTab')?.classList.remove('hidden');
+        }
+
+        function filterGvByCountry(country) {
+            gvArticles = gvAllArticles.filter(a => {
+                const tags = (a.country_tags || []).map(t => normalizeCountry(t));
+                return tags.includes(country);
+            });
+            gvPage = 0;
+            renderGvArticlesTable();
+            switchToArticlesTab();
+        }
+
+        function filterGvByTopic(country, topic) {
+            gvArticles = gvAllArticles.filter(a => {
+                const tags = (a.country_tags || []).map(t => normalizeCountry(t));
+                const topics = a.topic_tags || [];
+                return tags.includes(country) && topics.includes(topic);
+            });
+            gvPage = 0;
+            renderGvArticlesTable();
+            switchToArticlesTab();
+        }
+
+        function filterGvBySource(country, source) {
+            gvArticles = gvAllArticles.filter(a => {
+                const tags = (a.country_tags || []).map(t => normalizeCountry(t));
+                return tags.includes(country) && (a.source || '') === source;
+            });
+            gvPage = 0;
+            renderGvArticlesTable();
+            switchToArticlesTab();
         }
 
         function renderGlobalMapMarkers(stats) {
@@ -3001,7 +3026,7 @@
                     popup += `<div style="font-weight:600;font-size:0.78rem;color:#6B7280;margin-bottom:2px;">TOPICS</div>`;
                     popup += `<table style="width:100%;font-size:0.82rem;margin-bottom:6px;">`;
                     topTopics.forEach(([t, c]) => {
-                        popup += `<tr><td style="padding:1px 6px 1px 0;">${escapeHtml(t)}</td><td style="text-align:right;color:#6B7280;">${c}</td></tr>`;
+                        popup += `<tr onclick="filterGvByTopic('${countryEsc}', '${escapeHtml(t)}')" style="cursor:pointer;"><td style="padding:1px 6px 1px 0;">${escapeHtml(t)}</td><td style="text-align:right;color:#6B7280;">${c}</td></tr>`;
                     });
                     popup += `</table>`;
                 }
@@ -3009,7 +3034,7 @@
                     popup += `<div style="font-weight:600;font-size:0.78rem;color:#6B7280;margin-bottom:2px;">SOURCES</div>`;
                     popup += `<table style="width:100%;font-size:0.82rem;">`;
                     topSources.forEach(([s, c]) => {
-                        popup += `<tr><td style="padding:1px 6px 1px 0;">${escapeHtml(s)}</td><td style="text-align:right;color:#6B7280;">${c}</td></tr>`;
+                        popup += `<tr onclick="filterGvBySource('${countryEsc}', '${escapeHtml(s)}')" style="cursor:pointer;"><td style="padding:1px 6px 1px 0;">${escapeHtml(s)}</td><td style="text-align:right;color:#6B7280;">${c}</td></tr>`;
                     });
                     popup += `</table>`;
                 }

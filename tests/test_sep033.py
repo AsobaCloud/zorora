@@ -326,6 +326,41 @@ class TestTemplateStructure:
         assert 'TOPICS' in html
         assert 'SOURCES' in html
 
+    def test_template_has_filter_by_topic_function(self):
+        mod = _import_app_module()
+        client = mod.app.test_client()
+        resp = client.get("/")
+        html = resp.data.decode()
+        assert 'filterGvByTopic' in html
+
+    def test_template_has_filter_by_source_function(self):
+        mod = _import_app_module()
+        client = mod.app.test_client()
+        resp = client.get("/")
+        html = resp.data.decode()
+        assert 'filterGvBySource' in html
+
+    def test_template_has_gv_all_articles_variable(self):
+        mod = _import_app_module()
+        client = mod.app.test_client()
+        resp = client.get("/")
+        html = resp.data.decode()
+        assert 'gvAllArticles' in html
+
+    def test_template_topic_rows_are_clickable(self):
+        mod = _import_app_module()
+        client = mod.app.test_client()
+        resp = client.get("/")
+        html = resp.data.decode()
+        assert "filterGvByTopic(" in html
+
+    def test_template_source_rows_are_clickable(self):
+        mod = _import_app_module()
+        client = mod.app.test_client()
+        resp = client.get("/")
+        html = resp.data.decode()
+        assert "filterGvBySource(" in html
+
     def test_no_old_mode_tabs_in_search_section(self):
         mod = _import_app_module()
         client = mod.app.test_client()
