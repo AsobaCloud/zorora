@@ -1520,6 +1520,7 @@
                 <button class="mode-nav-btn active" data-mode="deep" onclick="switchMode('deep')">Deep Research</button>
                 <button class="mode-nav-btn" data-mode="digest" onclick="switchMode('digest')">Digest</button>
                 <button class="mode-nav-btn" data-mode="global" onclick="switchMode('global')">Global View</button>
+                <button class="mode-nav-btn" data-mode="imaging" onclick="switchMode('imaging')">Imaging</button>
             </div>
             <div class="staged-badge hidden" id="stagedBadge">Staged: 0 items</div>
             <div class="sidebar-header">
@@ -1678,6 +1679,55 @@
                         </table>
                         <div class="articles-pagination" id="gvPagination"></div>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="hidden" id="imagingSection">
+            <div class="global-view-panel">
+                <div class="global-view-filters">
+                    <div>
+                        <label for="imgCommodity">Commodity</label>
+                        <select id="imgCommodity" class="search-input" style="padding:8px 10px;">
+                            <option value="">All</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="imgCountry">Country</label>
+                        <select id="imgCountry" class="search-input" style="padding:8px 10px;">
+                            <option value="">All</option>
+                            <option value="South Africa">South Africa</option>
+                            <option value="Zimbabwe">Zimbabwe</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="imgStatus">Status</label>
+                        <select id="imgStatus" class="search-input" style="padding:8px 10px;">
+                            <option value="">All</option>
+                            <option value="Producer">Producer</option>
+                            <option value="Past producer">Past producer</option>
+                            <option value="Prospect">Prospect</option>
+                            <option value="Occurrence">Occurrence</option>
+                        </select>
+                    </div>
+                    <div style="display:flex;align-items:flex-end;">
+                        <button type="button" class="search-button" style="padding:8px 16px;font-size:0.88rem;" onclick="applyImagingFilters()">Apply</button>
+                    </div>
+                </div>
+
+                <div id="imaging-map-container" style="height:600px;border-radius:12px;margin-bottom:12px;"></div>
+
+                <div id="imagingSummary" style="font-size:0.88rem;color:var(--text-light);padding:8px 0;display:flex;flex-wrap:wrap;gap:16px;align-items:center;">
+                    <span id="imgDepositCount">0 deposits</span>
+                    <span id="imgConcessionCount">0 concessions</span>
+                    <span style="display:flex;gap:8px;align-items:center;">
+                        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#22c55e;"></span><span id="imgHighCount">0</span> high
+                        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#f59e0b;"></span><span id="imgMedCount">0</span> medium
+                        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#ef4444;"></span><span id="imgLowCount">0</span> low
+                    </span>
+                </div>
+                <div style="font-size:0.78rem;color:var(--text-light);opacity:0.7;">
+                    Data: USGS MRDS (pre-2011 vintage) | openAFRICA DMRE | VIIRS 2024 | EOX Sentinel-2
                 </div>
             </div>
         </div>
@@ -2152,11 +2202,16 @@
             document.getElementById('deepResearchSection').classList.toggle('hidden', mode !== 'deep');
             document.getElementById('digestSection').classList.toggle('hidden', mode !== 'digest');
             document.getElementById('globalViewSection').classList.toggle('hidden', mode !== 'global');
-            // Hide welcome/research layout when switching to global
+            document.getElementById('imagingSection').classList.toggle('hidden', mode !== 'imaging');
+            // Hide welcome/research layout when switching to non-deep modes
             if (mode === 'global') {
                 document.querySelector('.welcome-section').classList.add('hidden');
                 document.getElementById('researchLayout').classList.add('hidden');
                 loadGlobalView();
+            } else if (mode === 'imaging') {
+                document.querySelector('.welcome-section').classList.add('hidden');
+                document.getElementById('researchLayout').classList.add('hidden');
+                loadImagingView();
             } else if (mode === 'digest') {
                 document.querySelector('.welcome-section').classList.add('hidden');
                 document.getElementById('researchLayout').classList.add('hidden');
@@ -3019,6 +3074,180 @@
                 pHtml += `<button ${gvPage >= totalPages - 1 ? 'disabled' : ''} onclick="gvPage++;renderGvArticlesTable();">Next</button>`;
                 pagination.innerHTML = pHtml;
             }
+        }
+
+        // ===================================================================
+        // Imaging tab — OSINT mineral intelligence map
+        // ===================================================================
+        let imagingMap = null, imagingDeposits = null, imagingViirs = null, imagingConcessions = null;
+
+        function initImagingMap() {
+            if (imagingMap) {
+                imagingMap.invalidateSize();
+                return;
+            }
+            try {
+                imagingMap = L.map('imaging-map-container').setView([-25, 28], 5);
+
+                const satellite = L.tileLayer(
+                    'https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2021_3857/default/GoogleMapsCompatible/{z}/{y}/{x}.jpg',
+                    { attribution: '&copy; EOX Sentinel-2', maxZoom: 14 }
+                );
+                satellite.addTo(imagingMap);
+
+                const viirs = L.tileLayer(
+                    'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_DayNightBand_AtSensor_M15/default/2024-01-01/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png',
+                    { attribution: 'NASA GIBS VIIRS', opacity: 0.6, maxZoom: 8 }
+                );
+                viirs.addTo(imagingMap);
+                imagingViirs = viirs;
+
+                imagingDeposits = L.layerGroup().addTo(imagingMap);
+                imagingConcessions = L.layerGroup().addTo(imagingMap);
+
+                L.control.layers(
+                    { 'Satellite': satellite },
+                    { 'VIIRS Nightlights': viirs, 'Deposits': imagingDeposits, 'Concessions': imagingConcessions },
+                    { collapsed: false }
+                ).addTo(imagingMap);
+
+                setTimeout(() => imagingMap.invalidateSize(), 200);
+            } catch (e) {
+                console.error('Imaging map init error:', e);
+            }
+        }
+
+        function viabilityColor(score) {
+            if (score >= 65) return '#22c55e';
+            if (score >= 35) return '#f59e0b';
+            return '#ef4444';
+        }
+
+        function viabilityTierLabel(tier) {
+            if (tier === 'high') return '<span style="color:#22c55e;font-weight:700;">HIGH</span>';
+            if (tier === 'medium') return '<span style="color:#f59e0b;font-weight:700;">MEDIUM</span>';
+            return '<span style="color:#ef4444;font-weight:700;">LOW</span>';
+        }
+
+        function renderDepositPopup(props) {
+            const v = props.viability || {};
+            const pct = Math.round((v.score || 0));
+            const barW = pct;
+            let html = `<div style="min-width:260px;font-size:0.85rem;">`;
+            html += `<strong>${escapeHtml(props.name || 'Unknown')}</strong>`;
+            html += `<div style="color:#6B7280;margin:2px 0 4px;">${escapeHtml(props.country || '')}</div>`;
+            html += `<div>Commodity: ${escapeHtml(props.commod1 || '')}`;
+            if (props.commod2) html += `, ${escapeHtml(props.commod2)}`;
+            html += `</div>`;
+            html += `<div>Type: ${escapeHtml(props.dep_type || '')} &nbsp; Status: ${escapeHtml(props.dev_stat || '')}</div>`;
+            html += `<hr style="margin:6px 0;border:none;border-top:1px solid #e5e7eb;">`;
+            html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">`;
+            html += `<span style="font-weight:600;">VIABILITY SCORE: ${pct}/100</span> ${viabilityTierLabel(v.tier)}`;
+            html += `</div>`;
+            html += `<div style="background:#e5e7eb;border-radius:4px;height:8px;margin-bottom:8px;">`;
+            html += `<div style="background:${viabilityColor(v.score || 0)};width:${barW}%;height:100%;border-radius:4px;"></div></div>`;
+            html += `<table style="width:100%;font-size:0.8rem;">`;
+            html += `<tr><td>Commodity demand</td><td style="text-align:right;">${v.commodity_pts || 0}/20</td></tr>`;
+            html += `<tr><td>Price signal</td><td style="text-align:right;">${v.price_signal > 0 ? '+' : ''}${v.price_signal || 0}</td></tr>`;
+            html += `<tr><td>Development status</td><td style="text-align:right;">${v.status_pts || 0}/25</td></tr>`;
+            html += `<tr><td>Processing</td><td style="text-align:right;">${v.processing_pts || 0}/15</td></tr>`;
+            html += `<tr><td>Power proximity</td><td style="text-align:right;">${v.power_pts || 0}/20</td></tr>`;
+            html += `<tr><td>Regulatory</td><td style="text-align:right;">${v.regulatory_pts || 0}/15</td></tr>`;
+            html += `</table></div>`;
+            return html;
+        }
+
+        async function loadImagingView() {
+            initImagingMap();
+            const params = new URLSearchParams();
+            const commodity = document.getElementById('imgCommodity')?.value;
+            const country = document.getElementById('imgCountry')?.value;
+            if (commodity) params.set('commodity', commodity);
+            if (country) params.set('country', country);
+
+            try {
+                const [depositsRes, concessionsRes, configRes] = await Promise.all([
+                    fetch(`/api/imaging/deposits?${params}`),
+                    fetch(`/api/imaging/concessions?${params}`),
+                    fetch('/api/imaging/config'),
+                ]);
+
+                // Populate commodity filter from config
+                if (configRes.ok) {
+                    const cfg = await configRes.json();
+                    const sel = document.getElementById('imgCommodity');
+                    if (sel && sel.options.length <= 1) {
+                        (cfg.target_commodities || []).forEach(c => {
+                            const opt = document.createElement('option');
+                            opt.value = c; opt.textContent = c;
+                            sel.appendChild(opt);
+                        });
+                    }
+                }
+
+                if (depositsRes.ok) {
+                    const data = await depositsRes.json();
+                    const features = data.features || [];
+                    const statusFilter = document.getElementById('imgStatus')?.value;
+                    imagingDeposits.clearLayers();
+                    let high = 0, med = 0, low = 0;
+
+                    features.forEach(f => {
+                        const p = f.properties || {};
+                        const v = p.viability || {};
+                        if (statusFilter && p.dev_stat !== statusFilter) return;
+                        const score = v.score || 0;
+                        const color = viabilityColor(score);
+                        const radius = 4 + (score / 100) * 8;
+                        const coords = f.geometry?.coordinates;
+                        if (!coords) return;
+                        const marker = L.circleMarker([coords[1], coords[0]], {
+                            radius, fillColor: color, color: color,
+                            weight: 1, fillOpacity: 0.7,
+                        });
+                        marker.bindPopup(renderDepositPopup(p));
+                        imagingDeposits.addLayer(marker);
+                        if (v.tier === 'high') high++;
+                        else if (v.tier === 'medium') med++;
+                        else low++;
+                    });
+
+                    const shown = high + med + low;
+                    document.getElementById('imgDepositCount').textContent = `${shown} deposits`;
+                    document.getElementById('imgHighCount').textContent = high;
+                    document.getElementById('imgMedCount').textContent = med;
+                    document.getElementById('imgLowCount').textContent = low;
+                }
+
+                if (concessionsRes.ok) {
+                    const data = await concessionsRes.json();
+                    const features = data.features || [];
+                    imagingConcessions.clearLayers();
+                    features.forEach(f => {
+                        const p = f.properties || {};
+                        const coords = f.geometry?.coordinates;
+                        if (!coords) return;
+                        const marker = L.circleMarker([coords[1], coords[0]], {
+                            radius: 5, fillColor: '#8b5cf6', color: '#7c3aed',
+                            weight: 1, fillOpacity: 0.7,
+                        });
+                        let popup = `<div style="min-width:200px;font-size:0.85rem;">`;
+                        popup += `<strong>${escapeHtml(p.name || 'Unknown')}</strong>`;
+                        popup += `<div>Operator: ${escapeHtml(p.operator || 'Unknown')}</div>`;
+                        popup += `<div>Mineral: ${escapeHtml(p.mineral_type || '')} &nbsp; Status: ${escapeHtml(p.status || '')}</div>`;
+                        popup += `<div style="color:#6B7280;">${escapeHtml(p.country || '')}</div></div>`;
+                        marker.bindPopup(popup);
+                        imagingConcessions.addLayer(marker);
+                    });
+                    document.getElementById('imgConcessionCount').textContent = `${features.length} concessions`;
+                }
+            } catch (err) {
+                console.error('Imaging view load error:', err);
+            }
+        }
+
+        function applyImagingFilters() {
+            loadImagingView();
         }
 
         // Update news intel form to include staged items

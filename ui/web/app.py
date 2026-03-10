@@ -15,6 +15,8 @@ from tools.research.newsroom import fetch_newsroom_cached
 from tools.specialist.client import create_specialist_client
 from tools.market.store import MarketDataStore
 from tools.market.series import SERIES_CATALOG
+from tools.imaging.store import ImagingDataStore
+from tools.imaging.viability import score_all_deposits
 import config
 from config import LOGGING_LEVEL, LOGGING_FORMAT, LOG_FILE
 
@@ -814,6 +816,75 @@ def get_market_latest():
         return jsonify(results)
     except Exception as e:
         logger.error(f"Market latest error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Imaging (OSINT mineral intelligence) endpoints
+# ---------------------------------------------------------------------------
+
+@app.route('/api/imaging/deposits', methods=['GET'])
+def get_imaging_deposits():
+    """Return mineral deposits as GeoJSON with viability scores."""
+    try:
+        commodity = request.args.get('commodity')
+        country = request.args.get('country')
+        store = ImagingDataStore()
+        geojson = store.get_deposits(commodity=commodity, country=country)
+        # Inject viability scores into each feature
+        scored_features = score_all_deposits(geojson.get("features", []))
+        store.close()
+        return jsonify({"type": "FeatureCollection", "features": scored_features})
+    except Exception as e:
+        logger.error(f"Imaging deposits error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/imaging/concessions', methods=['GET'])
+def get_imaging_concessions():
+    """Return mining concessions as GeoJSON."""
+    try:
+        country = request.args.get('country')
+        store = ImagingDataStore()
+        geojson = store.get_concessions(country=country)
+        store.close()
+        return jsonify(geojson)
+    except Exception as e:
+        logger.error(f"Imaging concessions error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/imaging/config', methods=['GET'])
+def get_imaging_config():
+    """Return imaging tile URLs, filter options, and viability thresholds."""
+    img_config = getattr(config, "IMAGING", {})
+    return jsonify({
+        "satellite_tile_url": img_config.get("satellite_tile_url", ""),
+        "viirs_tile_url": img_config.get("viirs_tile_url", ""),
+        "target_commodities": img_config.get("target_commodities", []),
+        "viability_tiers": {"high": [65, 100], "medium": [35, 64], "low": [0, 34]},
+    })
+
+
+@app.route('/api/imaging/refresh', methods=['POST'])
+def refresh_imaging_data():
+    """Force-refresh deposits and concessions from upstream sources."""
+    try:
+        from tools.imaging.mrds_client import fetch_deposits
+        from tools.imaging.concessions_client import fetch_concessions_sa
+        store = ImagingDataStore()
+        deposits = fetch_deposits()
+        store.upsert_deposits(deposits.get("features", []))
+        concessions = fetch_concessions_sa()
+        store.upsert_concessions(concessions.get("features", []))
+        store.close()
+        return jsonify({
+            "status": "ok",
+            "deposits": len(deposits.get("features", [])),
+            "concessions": len(concessions.get("features", [])),
+        })
+    except Exception as e:
+        logger.error(f"Imaging refresh error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
