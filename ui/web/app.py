@@ -13,6 +13,8 @@ from engine.query_refiner import refine_query, infer_research_type
 from ui.web.config_manager import ConfigManager, ModelFetcher
 from tools.research.newsroom import fetch_newsroom_api
 from tools.specialist.client import create_specialist_client
+from tools.market.store import MarketDataStore
+from tools.market.series import SERIES_CATALOG
 import config
 from config import LOGGING_LEVEL, LOGGING_FORMAT, LOG_FILE
 
@@ -140,6 +142,26 @@ def _news_intel_synthesis(articles, topic=None, date_from=None, date_to=None):
         + "\\n\\nRecent Headlines:\\n"
         + "\\n".join(latest)
     )
+
+
+COUNTRY_ALIASES = {
+    "US": "United States", "USA": "United States", "Usa": "United States",
+    "Us": "United States", "America": "United States",
+    "UK": "United Kingdom", "Uk": "United Kingdom", "Britain": "United Kingdom",
+    "Great Britain": "United Kingdom",
+    "UAE": "United Arab Emirates", "Uae": "United Arab Emirates",
+    "EU": "European Union", "Eu": "European Union",
+    "South Korea": "South Korea", "Republic of Korea": "South Korea",
+    "Russia": "Russia", "Russian Federation": "Russia",
+    "DRC": "Democratic Republic of the Congo",
+    "Congo DR": "Democratic Republic of the Congo",
+    "SA": "South Africa", "RSA": "South Africa",
+}
+
+
+def normalize_country(name: str) -> str:
+    """Normalize a country name/alias to its canonical form."""
+    return COUNTRY_ALIASES.get(name, name)
 
 
 def _load_research_by_id(research_id: str):
@@ -635,6 +657,10 @@ def synthesize_news_intel():
             date_to=date_to,
             limit=limit,
         )
+        # Merge staged articles from client
+        staged_articles = data.get("staged_articles") or []
+        if staged_articles:
+            filtered = staged_articles + filtered
         synthesis = _news_intel_synthesis(filtered, topic=topic, date_from=date_from, date_to=date_to)
 
         return jsonify(
@@ -710,6 +736,99 @@ def news_intel_chat():
         return jsonify({"reply": reply, "mode": "evidence" if strict_citations else "advisory", "thread_size": len(thread)})
     except Exception as e:
         logger.error(f"News intel chat error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/news-intel/stats', methods=['POST'])
+def get_news_intel_stats():
+    """Aggregate articles by normalized country for map display."""
+    try:
+        data = request.get_json() or {}
+        topic = (data.get("topic") or "").strip()
+        date_from = data.get("date_from")
+        date_to = data.get("date_to")
+        limit = int(data.get("limit", 500))
+        limit = max(1, min(limit, 500))
+
+        today = datetime.now(timezone.utc).date()
+        start_date = _parse_date(date_from)
+        days_back = 365
+        if start_date:
+            days_back = max(1, min(365, (today - start_date).days + 1))
+
+        articles = fetch_newsroom_api(query=None, days_back=days_back, max_results=500)
+        filtered = _filter_newsroom_articles(
+            articles, topic=topic, date_from=date_from, date_to=date_to, limit=limit,
+        )
+
+        country_agg = {}
+        geo_tagged = 0
+        for article in filtered:
+            tags = article.get("country_tags") or []
+            if tags:
+                geo_tagged += 1
+            for raw_tag in tags:
+                country = normalize_country(raw_tag.strip())
+                if not country:
+                    continue
+                if country not in country_agg:
+                    country_agg[country] = {"count": 0, "topics": {}, "sources": {}}
+                entry = country_agg[country]
+                entry["count"] += 1
+                for t in (article.get("topic_tags") or [])[:4]:
+                    entry["topics"][t] = entry["topics"].get(t, 0) + 1
+                src = article.get("source", "Unknown")
+                entry["sources"][src] = entry["sources"].get(src, 0) + 1
+
+        stats = [
+            {"country": c, "count": v["count"], "topics": v["topics"], "sources": v["sources"]}
+            for c, v in sorted(country_agg.items(), key=lambda x: x[1]["count"], reverse=True)
+        ]
+
+        return jsonify({
+            "total_articles": len(filtered),
+            "geo_tagged_articles": geo_tagged,
+            "stats": stats,
+        })
+    except Exception as e:
+        logger.error(f"News intel stats error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/market/latest', methods=['GET'])
+def get_market_latest():
+    """Return latest observation per series from MarketDataStore."""
+    try:
+        store = MarketDataStore()
+        results = []
+        for sid, series in SERIES_CATALOG.items():
+            try:
+                df = store.get_series_df(sid, provider=series.provider)
+                if df.empty:
+                    continue
+                latest_val = float(df["value"].iloc[-1])
+                latest_date = str(df.index[-1].date())
+                prev_val = float(df["value"].iloc[-2]) if len(df) >= 2 else None
+                pct_change = None
+                if prev_val and prev_val != 0:
+                    pct_change = round(((latest_val - prev_val) / abs(prev_val)) * 100, 2)
+                results.append({
+                    "series_id": sid,
+                    "name": series.label,
+                    "group": series.group,
+                    "unit": series.unit,
+                    "source": series.provider,
+                    "latest_value": latest_val,
+                    "latest_date": latest_date,
+                    "prev_value": prev_val,
+                    "pct_change": pct_change,
+                })
+            except Exception as e:
+                logger.debug(f"Skipping series {sid}: {e}")
+        store.close()
+        return jsonify(results)
+    except Exception as e:
+        logger.error(f"Market latest error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 

@@ -6,6 +6,8 @@
     <title>Zorora - AI Deep Research Assistant</title>
     <link rel="icon" type="image/png" sizes="32x32" href="../static/images/Artboard-7.png">
     <link rel="apple-touch-icon" sizes="180x180" href="../static/images/Artboard-7.png">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
     <style>
         :root {
             --primary-purple: #6366f1;
@@ -1153,6 +1155,347 @@
                 width: 100%;
             }
         }
+        /* Mode Switcher in Sidebar */
+        .mode-switcher {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 12px;
+            border-bottom: 1px solid var(--border-grey);
+        }
+
+        .mode-nav-btn {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            padding: 10px 12px;
+            border: none;
+            background: none;
+            cursor: pointer;
+            text-align: left;
+            font-family: inherit;
+            font-size: 0.88rem;
+            font-weight: 500;
+            color: var(--text-dark);
+            border-radius: 8px;
+            transition: all 0.15s;
+        }
+
+        .mode-nav-btn:hover {
+            background: var(--neutral-grey);
+        }
+
+        .mode-nav-btn.active {
+            background: var(--light-purple);
+            color: var(--primary-purple);
+            font-weight: 600;
+        }
+
+        .staged-badge {
+            margin: 0 12px 8px;
+            padding: 6px 10px;
+            background: var(--light-purple);
+            color: var(--accent-purple);
+            border-radius: 6px;
+            font-size: 0.82rem;
+            font-weight: 600;
+            text-align: center;
+        }
+
+        /* Global View Panel */
+        .global-view-panel {
+            max-width: 1200px;
+            width: 100%;
+            margin: 0 auto;
+            padding: 24px;
+        }
+
+        .global-view-filters {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 10px;
+            margin-bottom: 16px;
+            padding: 16px;
+            background: var(--white);
+            border: 1px solid var(--border-grey);
+            border-radius: 12px;
+        }
+
+        .global-view-filters label {
+            font-size: 0.82rem;
+            font-weight: 600;
+            color: var(--text-dark);
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        .global-view-filters input,
+        .global-view-filters select {
+            width: 100%;
+            padding: 8px 10px;
+            border: 1px solid var(--border-grey);
+            border-radius: 6px;
+            font-size: 0.88rem;
+            font-family: inherit;
+        }
+
+        #global-map-container {
+            height: 400px;
+            border: 1px solid var(--border-grey);
+            border-radius: 12px;
+            margin-bottom: 20px;
+            overflow: hidden;
+        }
+
+        .dataset-cards-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        .dataset-card {
+            background: var(--white);
+            border: 1px solid var(--border-grey);
+            border-radius: 10px;
+            padding: 14px;
+            transition: all 0.15s;
+        }
+
+        .dataset-card:hover {
+            border-color: #c7d2fe;
+            box-shadow: 0 2px 8px rgba(99, 102, 241, 0.1);
+        }
+
+        .dataset-card-name {
+            font-size: 0.88rem;
+            font-weight: 600;
+            color: var(--text-dark);
+            margin-bottom: 6px;
+        }
+
+        .dataset-card-value {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: var(--primary-black);
+        }
+
+        .dataset-card-change {
+            font-size: 0.82rem;
+            margin-top: 2px;
+        }
+
+        .dataset-card-change.positive { color: #16a34a; }
+        .dataset-card-change.negative { color: #dc2626; }
+
+        .dataset-card-meta {
+            font-size: 0.78rem;
+            color: var(--text-light);
+            margin-top: 4px;
+        }
+
+        .stage-btn {
+            border: 1px solid var(--border-grey);
+            background: var(--white);
+            color: var(--accent-purple);
+            padding: 4px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.78rem;
+            font-weight: 600;
+            transition: all 0.15s;
+            margin-top: 6px;
+        }
+
+        .stage-btn:hover {
+            background: var(--light-purple);
+            border-color: var(--primary-purple);
+        }
+
+        .stage-btn.staged {
+            background: var(--light-purple);
+            border-color: var(--primary-purple);
+            color: var(--primary-purple);
+        }
+
+        /* Articles Table */
+        .articles-table-container {
+            background: var(--white);
+            border: 1px solid var(--border-grey);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .articles-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.88rem;
+        }
+
+        .articles-table th {
+            background: var(--neutral-grey);
+            padding: 10px 14px;
+            text-align: left;
+            font-weight: 600;
+            color: var(--text-dark);
+            border-bottom: 1px solid var(--border-grey);
+        }
+
+        .articles-table td {
+            padding: 10px 14px;
+            border-bottom: 1px solid var(--border-grey);
+            color: var(--text-dark);
+        }
+
+        .articles-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .articles-table tr:hover td {
+            background: var(--neutral-grey);
+        }
+
+        .articles-pagination {
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            padding: 12px;
+        }
+
+        .articles-pagination button {
+            border: 1px solid var(--border-grey);
+            background: var(--white);
+            color: var(--text-dark);
+            padding: 6px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85rem;
+        }
+
+        .articles-pagination button:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .articles-pagination button.active {
+            background: var(--primary-purple);
+            color: var(--white);
+            border-color: var(--primary-purple);
+        }
+
+        /* Digest Holding Area */
+        .digest-holding {
+            background: var(--neutral-grey);
+            border: 1px dashed var(--border-grey);
+            border-radius: 10px;
+            padding: 14px;
+            margin-bottom: 16px;
+        }
+
+        .digest-holding h4 {
+            font-size: 0.92rem;
+            color: var(--text-dark);
+            margin: 0 0 8px;
+        }
+
+        .digest-holding-empty {
+            color: var(--text-light);
+            font-size: 0.86rem;
+        }
+
+        .holding-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 8px;
+            border: 1px solid var(--border-grey);
+            border-radius: 6px;
+            background: var(--white);
+            margin-bottom: 6px;
+            font-size: 0.84rem;
+        }
+
+        .holding-item-title {
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .holding-item-type {
+            font-size: 0.72rem;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 600;
+            flex-shrink: 0;
+        }
+
+        .holding-item-type.art {
+            background: #dbeafe;
+            color: #1d4ed8;
+        }
+
+        .holding-item-type.ds {
+            background: #dcfce7;
+            color: #15803d;
+        }
+
+        .unstage-btn {
+            border: none;
+            background: none;
+            color: var(--text-light);
+            cursor: pointer;
+            font-size: 1rem;
+            padding: 0 4px;
+            flex-shrink: 0;
+        }
+
+        .unstage-btn:hover {
+            color: #ef4444;
+        }
+
+        .digest-divider {
+            text-align: center;
+            color: var(--text-light);
+            font-size: 0.82rem;
+            margin: 12px 0;
+            position: relative;
+        }
+
+        .digest-divider::before,
+        .digest-divider::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            width: 30%;
+            height: 1px;
+            background: var(--border-grey);
+        }
+
+        .digest-divider::before { left: 0; }
+        .digest-divider::after { right: 0; }
+
+        .tag-chip {
+            display: inline-block;
+            padding: 2px 6px;
+            background: var(--neutral-grey);
+            border: 1px solid var(--border-grey);
+            border-radius: 4px;
+            font-size: 0.75rem;
+            color: var(--text-light);
+            margin-right: 3px;
+        }
+
+        @media (max-width: 768px) {
+            .global-view-filters {
+                grid-template-columns: 1fr;
+            }
+            .dataset-cards-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
     </style>
 </head>
 <body>
@@ -1173,6 +1516,12 @@
 
     <div class="app-layout">
         <div class="research-sidebar" id="researchSidebar">
+            <div class="mode-switcher">
+                <button class="mode-nav-btn active" data-mode="deep" onclick="switchMode('deep')">Deep Research</button>
+                <button class="mode-nav-btn" data-mode="digest" onclick="switchMode('digest')">Digest</button>
+                <button class="mode-nav-btn" data-mode="global" onclick="switchMode('global')">Global View</button>
+            </div>
+            <div class="staged-badge hidden" id="stagedBadge">Staged: 0 items</div>
             <div class="sidebar-header">
                 <h3>Research History</h3>
                 <button class="sidebar-new-btn" onclick="sidebarNewResearch()" title="New Research">+</button>
@@ -1190,12 +1539,7 @@
             </p>
         </div>
 
-        <div class="search-section">
-            <div class="mode-tabs">
-                <button type="button" class="mode-tab active" data-mode="deep">Deep Research</button>
-                <button type="button" class="mode-tab" data-mode="intel">News Intel</button>
-            </div>
-
+        <div class="search-section" id="deepResearchSection">
             <div id="deepResearchPanel" class="mode-panel">
                 <form class="search-form" id="deepResearchForm">
                     <div class="search-input-wrapper">
@@ -1229,8 +1573,17 @@
                     </button>
                 </form>
             </div>
+        </div>
 
-            <div id="newsIntelPanel" class="mode-panel hidden">
+        <div class="search-section hidden" id="digestSection">
+            <div id="digestPanel" class="mode-panel">
+                <div class="digest-holding" id="digestHolding">
+                    <h4>Staged Items</h4>
+                    <div id="stagedItemsList">
+                        <div class="digest-holding-empty">No items staged yet. Use Global View to add articles and datasets.</div>
+                    </div>
+                </div>
+                <div class="digest-divider">or also fetch by topic</div>
                 <form class="search-form" id="newsIntelForm">
                     <div class="search-input-wrapper">
                         <input
@@ -1256,13 +1609,68 @@
                         </div>
                     </div>
                     <button type="submit" class="search-button" id="newsIntelButton">
-                        Synthesize News Intel
+                        Synthesize Digest
                     </button>
                 </form>
             </div>
         </div>
 
         <div id="newsIntelResultsContainer"></div>
+
+        <div class="hidden" id="globalViewSection">
+            <div class="global-view-panel">
+                <div class="global-view-filters">
+                    <div>
+                        <label for="gvDateFrom">Date From</label>
+                        <input type="date" id="gvDateFrom">
+                    </div>
+                    <div>
+                        <label for="gvDateTo">Date To</label>
+                        <input type="date" id="gvDateTo">
+                    </div>
+                    <div>
+                        <label for="gvTopic">Topic</label>
+                        <input type="text" id="gvTopic" placeholder="e.g., energy">
+                    </div>
+                    <div>
+                        <label for="gvSource">Source</label>
+                        <input type="text" id="gvSource" placeholder="e.g., Reuters">
+                    </div>
+                    <div>
+                        <label for="gvSearch">Search</label>
+                        <input type="text" id="gvSearch" placeholder="Keyword...">
+                    </div>
+                    <div style="display:flex;align-items:flex-end;">
+                        <button type="button" class="search-button" style="padding:8px 16px;font-size:0.88rem;" onclick="loadGlobalView()">Apply</button>
+                    </div>
+                </div>
+
+                <div id="global-map-container"></div>
+
+                <h3 style="margin:16px 0 10px;color:var(--text-dark);">Commodity Datasets</h3>
+                <div class="dataset-cards-grid" id="datasetCardsGrid">
+                    <div style="color:var(--text-light);font-size:0.9rem;">Loading datasets...</div>
+                </div>
+
+                <h3 style="margin:16px 0 10px;color:var(--text-dark);">Articles</h3>
+                <div class="articles-table-container">
+                    <table class="articles-table">
+                        <thead>
+                            <tr>
+                                <th>Headline</th>
+                                <th>Date</th>
+                                <th>Topics</th>
+                                <th>Geography</th>
+                                <th>Source</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="gvArticlesBody"></tbody>
+                    </table>
+                    <div class="articles-pagination" id="gvPagination"></div>
+                </div>
+            </div>
+        </div>
 
         <div id="researchLayout" class="research-layout hidden">
             <div class="chat-column">
@@ -1724,18 +2132,29 @@
             }
         });
 
-        // Mode tab functionality
-        document.querySelectorAll('.mode-tab').forEach(tab => {
-            tab.addEventListener('click', function() {
-                const mode = this.dataset.mode;
-                if (mode === activeMode) return;
-                activeMode = mode;
-                document.querySelectorAll('.mode-tab').forEach(t => t.classList.remove('active'));
-                this.classList.add('active');
-                document.getElementById('deepResearchPanel').classList.toggle('hidden', mode !== 'deep');
-                document.getElementById('newsIntelPanel').classList.toggle('hidden', mode !== 'intel');
+        // Mode switching (sidebar nav)
+        function switchMode(mode) {
+            if (mode === activeMode) return;
+            activeMode = mode;
+            document.querySelectorAll('.mode-nav-btn').forEach(b => {
+                b.classList.toggle('active', b.dataset.mode === mode);
             });
-        });
+            document.getElementById('deepResearchSection').classList.toggle('hidden', mode !== 'deep');
+            document.getElementById('digestSection').classList.toggle('hidden', mode !== 'digest');
+            document.getElementById('globalViewSection').classList.toggle('hidden', mode !== 'global');
+            // Hide welcome/research layout when switching to global
+            if (mode === 'global') {
+                document.querySelector('.welcome-section').classList.add('hidden');
+                document.getElementById('researchLayout').classList.add('hidden');
+                loadGlobalView();
+            } else if (mode === 'digest') {
+                document.querySelector('.welcome-section').classList.add('hidden');
+                document.getElementById('researchLayout').classList.add('hidden');
+                renderStagedItems();
+            } else if (mode === 'deep' && !sessionActive) {
+                document.querySelector('.welcome-section').classList.remove('hidden');
+            }
+        }
 
         // Depth selector functionality
         document.querySelectorAll('.depth-option').forEach(option => {
@@ -1806,47 +2225,7 @@
             }
         });
 
-        // News Intel form submission
-        document.getElementById('newsIntelForm').addEventListener('submit', async function(e) {
-            e.preventDefault();
-            const button = document.getElementById('newsIntelButton');
-            const topic = document.getElementById('newsTopicInput').value.trim();
-            const dateFrom = document.getElementById('newsDateFrom').value || null;
-            const dateTo = document.getElementById('newsDateTo').value || null;
-            const limit = parseInt(document.getElementById('newsLimit').value, 10) || 60;
-
-            if (dateFrom && dateTo && dateFrom > dateTo) {
-                alert('Date From must be before or equal to Date To');
-                return;
-            }
-
-            button.disabled = true;
-            button.textContent = 'Synthesizing...';
-
-            try {
-                const response = await fetch('/api/news-intel/synthesize', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        topic,
-                        date_from: dateFrom,
-                        date_to: dateTo,
-                        limit
-                    })
-                });
-                const data = await response.json();
-                if (!response.ok) {
-                    throw new Error(data.error || 'News intel synthesis failed');
-                }
-                displayNewsIntelResults(data);
-            } catch (error) {
-                alert('Error: ' + error.message);
-                console.error('News intel error:', error);
-            } finally {
-                button.disabled = false;
-                button.textContent = 'Synthesize News Intel';
-            }
-        });
+        // News Intel form submission is now handled by the digest form handler below
         
         function showProgressArea() {
             // Remove existing results container
@@ -2013,8 +2392,7 @@
                     throw new Error(data.error || 'Failed to load research result');
                 }
                 data.research_id = decodeURIComponent(researchId);
-                activeMode = 'deep';
-                document.querySelector('[data-mode="deep"]').click();
+                switchMode('deep');
                 displayResults(data);
             } catch (error) {
                 alert('Error loading research: ' + error.message);
@@ -2307,6 +2685,304 @@
 
         function escapeAttr(text) {
             return String(text).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        // ── Staging System ──
+        let stagedItems = [];
+
+        const COUNTRY_ALIASES = {
+            "US": "United States", "USA": "United States", "Usa": "United States",
+            "Us": "United States", "America": "United States",
+            "UK": "United Kingdom", "Uk": "United Kingdom", "Britain": "United Kingdom",
+            "Great Britain": "United Kingdom",
+            "UAE": "United Arab Emirates", "Uae": "United Arab Emirates",
+            "EU": "European Union", "Eu": "European Union",
+            "South Korea": "South Korea", "Republic of Korea": "South Korea",
+            "Russia": "Russia", "Russian Federation": "Russia",
+            "DRC": "Democratic Republic of the Congo",
+            "Congo DR": "Democratic Republic of the Congo",
+            "SA": "South Africa", "RSA": "South Africa",
+        };
+
+        function normalizeCountry(name) {
+            return COUNTRY_ALIASES[name] || name;
+        }
+
+        function stageItem(type, data) {
+            const key = type === 'article' ? data.headline : data.series_id;
+            if (stagedItems.some(i => (i.type === type) && ((i.data.headline || i.data.series_id) === key))) return;
+            stagedItems.push({ type, data });
+            renderStagedBadge();
+        }
+
+        function unstageItem(index) {
+            stagedItems.splice(index, 1);
+            renderStagedBadge();
+            renderStagedItems();
+        }
+
+        function renderStagedBadge() {
+            const badge = document.getElementById('stagedBadge');
+            if (stagedItems.length === 0) {
+                badge.classList.add('hidden');
+            } else {
+                badge.classList.remove('hidden');
+                badge.textContent = `Staged: ${stagedItems.length} item${stagedItems.length !== 1 ? 's' : ''}`;
+            }
+        }
+
+        function renderStagedItems() {
+            const container = document.getElementById('stagedItemsList');
+            if (!container) return;
+            if (stagedItems.length === 0) {
+                container.innerHTML = '<div class="digest-holding-empty">No items staged yet. Use Global View to add articles and datasets.</div>';
+                return;
+            }
+            container.innerHTML = stagedItems.map((item, idx) => {
+                const title = item.type === 'article'
+                    ? (item.data.headline || 'Untitled')
+                    : (item.data.name || item.data.series_id);
+                const typeBadge = item.type === 'article' ? 'art' : 'ds';
+                return `<div class="holding-item">
+                    <span class="holding-item-type ${typeBadge}">${typeBadge}</span>
+                    <span class="holding-item-title">${escapeHtml(title)}</span>
+                    <button class="unstage-btn" onclick="unstageItem(${idx})" title="Remove">&times;</button>
+                </div>`;
+            }).join('');
+        }
+
+        // ── Global View ──
+        let globalMap = null;
+        let globalMapMarkers = null;
+        let gvArticles = [];
+        let gvPage = 0;
+        const GV_PAGE_SIZE = 50;
+
+        const COUNTRY_COORDS = {
+            "United States": [39.8, -98.6], "United Kingdom": [54.0, -2.0],
+            "China": [35.0, 105.0], "Russia": [62.0, 100.0],
+            "Japan": [36.2, 138.3], "Germany": [51.2, 10.4],
+            "France": [46.6, 2.2], "India": [20.6, 79.0],
+            "Brazil": [-14.2, -51.9], "Canada": [56.1, -106.3],
+            "Australia": [-25.3, 133.8], "South Korea": [35.9, 127.8],
+            "South Africa": [-30.6, 22.9], "Nigeria": [9.1, 8.7],
+            "Egypt": [26.8, 30.8], "Saudi Arabia": [23.9, 45.1],
+            "United Arab Emirates": [23.4, 53.8], "Israel": [31.0, 34.8],
+            "Turkey": [39.9, 32.9], "Mexico": [23.6, -102.6],
+            "Indonesia": [-0.8, 113.9], "European Union": [50.1, 9.7],
+            "Iran": [32.4, 53.7], "Ukraine": [48.4, 31.2],
+            "Argentina": [-38.4, -63.6], "Kenya": [-0.02, 37.9],
+            "Democratic Republic of the Congo": [-4.0, 21.8],
+            "Zimbabwe": [-19.0, 29.2], "Zambia": [-13.1, 27.8],
+            "Mozambique": [-18.7, 35.5], "Tanzania": [-6.4, 34.9],
+            "Ghana": [7.9, -1.0], "Ethiopia": [9.1, 40.5],
+            "Pakistan": [30.4, 69.3], "Thailand": [15.9, 100.9],
+            "Vietnam": [14.1, 108.3], "Philippines": [12.9, 121.8],
+            "Colombia": [4.6, -74.3], "Chile": [-35.7, -71.5],
+            "Peru": [-9.2, -75.0], "Poland": [51.9, 19.1],
+            "Italy": [41.9, 12.6], "Spain": [40.5, -3.7],
+            "Netherlands": [52.1, 5.3], "Sweden": [60.1, 18.6],
+            "Norway": [60.5, 8.5], "Switzerland": [46.8, 8.2],
+            "Singapore": [1.4, 103.8], "Malaysia": [4.2, 101.9],
+        };
+
+        function initGlobalViewMap() {
+            if (globalMap) return;
+            globalMap = L.map('global-map-container').setView([20, 0], 2);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; OpenStreetMap &copy; CARTO',
+                subdomains: 'abcd',
+                maxZoom: 18,
+            }).addTo(globalMap);
+            globalMapMarkers = L.layerGroup().addTo(globalMap);
+        }
+
+        async function loadGlobalView() {
+            initGlobalViewMap();
+            const params = {
+                topic: document.getElementById('gvTopic')?.value || '',
+                date_from: document.getElementById('gvDateFrom')?.value || null,
+                date_to: document.getElementById('gvDateTo')?.value || null,
+            };
+
+            try {
+                const [statsRes, articlesRes, datasetsRes] = await Promise.all([
+                    fetch('/api/news-intel/stats', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(params),
+                    }),
+                    fetch('/api/news-intel/articles', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ...params, limit: 200 }),
+                    }),
+                    fetch('/api/market/latest'),
+                ]);
+
+                if (statsRes.ok) {
+                    const statsData = await statsRes.json();
+                    renderGlobalMapMarkers(statsData.stats || []);
+                }
+
+                if (articlesRes.ok) {
+                    const articlesData = await articlesRes.json();
+                    gvArticles = articlesData.articles || [];
+                    // Client-side keyword filter
+                    const search = (document.getElementById('gvSearch')?.value || '').toLowerCase();
+                    const srcFilter = (document.getElementById('gvSource')?.value || '').toLowerCase();
+                    if (search || srcFilter) {
+                        gvArticles = gvArticles.filter(a => {
+                            if (search && !(a.headline || '').toLowerCase().includes(search)) return false;
+                            if (srcFilter && !(a.source || '').toLowerCase().includes(srcFilter)) return false;
+                            return true;
+                        });
+                    }
+                    gvPage = 0;
+                    renderGvArticlesTable();
+                }
+
+                if (datasetsRes.ok) {
+                    const datasets = await datasetsRes.json();
+                    renderDatasetCards(Array.isArray(datasets) ? datasets : []);
+                }
+            } catch (err) {
+                console.error('Global view load error:', err);
+            }
+        }
+
+        function renderGlobalMapMarkers(stats) {
+            if (!globalMapMarkers) return;
+            globalMapMarkers.clearLayers();
+            const maxCount = Math.max(1, ...stats.map(s => s.count));
+            stats.forEach(stat => {
+                const coords = COUNTRY_COORDS[stat.country];
+                if (!coords) return;
+                const radius = Math.max(6, Math.min(30, (stat.count / maxCount) * 30));
+                const marker = L.circleMarker(coords, {
+                    radius,
+                    fillColor: '#6366f1',
+                    color: '#4f46e5',
+                    weight: 1,
+                    fillOpacity: 0.6,
+                });
+                const topTopics = Object.entries(stat.topics || {})
+                    .sort((a, b) => b[1] - a[1]).slice(0, 3)
+                    .map(([t, c]) => `${t}: ${c}`).join('<br>');
+                marker.bindPopup(`<strong>${stat.country}</strong><br>${stat.count} articles<br>${topTopics}`);
+                globalMapMarkers.addLayer(marker);
+            });
+        }
+
+        function renderDatasetCards(datasets) {
+            const grid = document.getElementById('datasetCardsGrid');
+            if (!grid) return;
+            if (datasets.length === 0) {
+                grid.innerHTML = '<div style="color:var(--text-light);font-size:0.9rem;">No dataset data available.</div>';
+                return;
+            }
+            grid.innerHTML = datasets.map(ds => {
+                const changeClass = (ds.pct_change || 0) >= 0 ? 'positive' : 'negative';
+                const changeSign = (ds.pct_change || 0) >= 0 ? '+' : '';
+                const isStaged = stagedItems.some(i => i.type === 'dataset' && i.data.series_id === ds.series_id);
+                return `<div class="dataset-card">
+                    <div class="dataset-card-name">${escapeHtml(ds.name)}</div>
+                    <div class="dataset-card-value">${ds.latest_value != null ? ds.latest_value.toLocaleString() : 'N/A'}</div>
+                    ${ds.pct_change != null ? `<div class="dataset-card-change ${changeClass}">${changeSign}${ds.pct_change}%</div>` : ''}
+                    <div class="dataset-card-meta">${escapeHtml(ds.unit)} | ${escapeHtml(ds.source)} | ${escapeHtml(ds.latest_date || '')}</div>
+                    <button class="stage-btn${isStaged ? ' staged' : ''}" onclick="stageItem('dataset', ${escapeAttr(JSON.stringify(ds))}); this.classList.add('staged'); this.textContent='Staged';">
+                        ${isStaged ? 'Staged' : '+Add'}
+                    </button>
+                </div>`;
+            }).join('');
+        }
+
+        function renderGvArticlesTable() {
+            const body = document.getElementById('gvArticlesBody');
+            const pagination = document.getElementById('gvPagination');
+            if (!body) return;
+
+            const start = gvPage * GV_PAGE_SIZE;
+            const pageArticles = gvArticles.slice(start, start + GV_PAGE_SIZE);
+            const totalPages = Math.ceil(gvArticles.length / GV_PAGE_SIZE);
+
+            body.innerHTML = pageArticles.map(a => {
+                const isStaged = stagedItems.some(i => i.type === 'article' && i.data.headline === a.headline);
+                const topics = (a.topic_tags || []).slice(0, 3).map(t => `<span class="tag-chip">${escapeHtml(t)}</span>`).join('');
+                const geo = (a.geography_tags || a.country_tags || []).slice(0, 2).map(g => escapeHtml(normalizeCountry(g))).join(', ');
+                return `<tr>
+                    <td>${a.url ? `<a href="${escapeHtml(a.url)}" target="_blank" rel="noopener" style="color:#4f46e5;text-decoration:none;">${escapeHtml(a.headline || 'Untitled')}</a>` : escapeHtml(a.headline || 'Untitled')}</td>
+                    <td style="white-space:nowrap;">${(a.date || '').toString().slice(0, 10)}</td>
+                    <td>${topics}</td>
+                    <td>${geo}</td>
+                    <td>${escapeHtml(a.source || '')}</td>
+                    <td><button class="stage-btn${isStaged ? ' staged' : ''}" onclick="stageItem('article', ${escapeAttr(JSON.stringify(a))}); this.classList.add('staged'); this.textContent='Staged';">
+                        ${isStaged ? 'Staged' : '+Add'}
+                    </button></td>
+                </tr>`;
+            }).join('');
+
+            if (pagination) {
+                let pHtml = '';
+                pHtml += `<button ${gvPage === 0 ? 'disabled' : ''} onclick="gvPage--;renderGvArticlesTable();">Prev</button>`;
+                pHtml += `<span style="padding:6px 10px;font-size:0.85rem;color:var(--text-light);">Page ${gvPage + 1} of ${Math.max(1, totalPages)}</span>`;
+                pHtml += `<button ${gvPage >= totalPages - 1 ? 'disabled' : ''} onclick="gvPage++;renderGvArticlesTable();">Next</button>`;
+                pagination.innerHTML = pHtml;
+            }
+        }
+
+        // Update news intel form to include staged items
+        const originalNewsIntelSubmit = document.getElementById('newsIntelForm');
+        if (originalNewsIntelSubmit) {
+            originalNewsIntelSubmit.addEventListener('submit', async function(e) {
+                e.preventDefault();
+                const button = document.getElementById('newsIntelButton');
+                const topic = document.getElementById('newsTopicInput').value.trim();
+                const dateFrom = document.getElementById('newsDateFrom').value || null;
+                const dateTo = document.getElementById('newsDateTo').value || null;
+                const limit = parseInt(document.getElementById('newsLimit').value, 10) || 60;
+
+                if (dateFrom && dateTo && dateFrom > dateTo) {
+                    alert('Date From must be before or equal to Date To');
+                    return;
+                }
+
+                button.disabled = true;
+                button.textContent = 'Synthesizing...';
+
+                try {
+                    const stagedArticles = stagedItems
+                        .filter(i => i.type === 'article')
+                        .map(i => i.data);
+                    const stagedDatasets = stagedItems
+                        .filter(i => i.type === 'dataset')
+                        .map(i => i.data);
+
+                    const response = await fetch('/api/news-intel/synthesize', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            topic,
+                            date_from: dateFrom,
+                            date_to: dateTo,
+                            limit,
+                            staged_articles: stagedArticles,
+                            staged_datasets: stagedDatasets,
+                        })
+                    });
+                    const data = await response.json();
+                    if (!response.ok) {
+                        throw new Error(data.error || 'Digest synthesis failed');
+                    }
+                    displayNewsIntelResults(data);
+                } catch (error) {
+                    alert('Error: ' + error.message);
+                    console.error('Digest error:', error);
+                } finally {
+                    button.disabled = false;
+                    button.textContent = 'Synthesize Digest';
+                }
+            });
         }
 
         loadResearchHistory();
