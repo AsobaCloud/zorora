@@ -36,6 +36,100 @@
             flex-direction: column;
         }
 
+        .generation-triangle-icon {
+            background: transparent;
+            border: none;
+        }
+
+        .concession-square-icon {
+            background: transparent;
+            border: none;
+        }
+
+        .concession-square-marker {
+            display: block;
+            width: var(--square-size);
+            height: var(--square-size);
+            background: var(--square-color);
+            border: 1px solid var(--square-border, rgba(15, 23, 42, 0.2));
+            border-radius: 2px;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.25);
+        }
+
+        .generation-triangle-marker {
+            display: block;
+            width: 0;
+            height: 0;
+            border-left: calc(var(--triangle-size) * 0.58) solid transparent;
+            border-right: calc(var(--triangle-size) * 0.58) solid transparent;
+            border-bottom: var(--triangle-size) solid var(--triangle-color);
+            filter: drop-shadow(0 1px 2px rgba(15, 23, 42, 0.35));
+        }
+
+        .imaging-summary {
+            display: grid;
+            gap: 10px;
+            padding: 10px 0 4px;
+        }
+
+        .imaging-counts {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+            align-items: center;
+            font-size: 0.88rem;
+            color: var(--text-light);
+        }
+
+        .imaging-legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px 16px;
+            align-items: center;
+            font-size: 0.8rem;
+            color: var(--text-light);
+        }
+
+        .imaging-legend-title {
+            font-weight: 700;
+            color: var(--text-dark);
+            margin-right: 2px;
+        }
+
+        .legend-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+        }
+
+        .legend-shape {
+            display: inline-block;
+            flex: 0 0 auto;
+        }
+
+        .legend-circle {
+            width: 11px;
+            height: 11px;
+            border-radius: 999px;
+            border: 1px solid rgba(15, 23, 42, 0.18);
+        }
+
+        .legend-square {
+            width: 11px;
+            height: 11px;
+            border-radius: 2px;
+            border: 1px solid rgba(15, 23, 42, 0.18);
+        }
+
+        .legend-triangle {
+            width: 0;
+            height: 0;
+            border-left: 6px solid transparent;
+            border-right: 6px solid transparent;
+            border-bottom: 12px solid var(--triangle-color, #64748b);
+            filter: drop-shadow(0 1px 1px rgba(15, 23, 42, 0.25));
+        }
+
         .app-layout {
             display: flex;
             flex: 1;
@@ -1616,7 +1710,7 @@
             </div>
         </div>
 
-        <div id="newsIntelResultsContainer"></div>
+        <div id="newsIntelResultsContainer" class="hidden"></div>
 
         <div class="hidden" id="globalViewSection">
             <div class="global-view-panel">
@@ -1701,7 +1795,7 @@
                         </select>
                     </div>
                     <div>
-                        <label for="imgStatus">Status</label>
+                        <label for="imgStatus">Deposit Status</label>
                         <select id="imgStatus" class="search-input" style="padding:8px 10px;">
                             <option value="">All</option>
                             <option value="Producer">Producer</option>
@@ -1710,6 +1804,26 @@
                             <option value="Occurrence">Occurrence</option>
                         </select>
                     </div>
+                    <div>
+                        <label for="imgGenerationTech">Power Tech</label>
+                        <select id="imgGenerationTech" class="search-input" style="padding:8px 10px;">
+                            <option value="">All</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="imgGenerationStatus">Plant Status</label>
+                        <select id="imgGenerationStatus" class="search-input" style="padding:8px 10px;">
+                            <option value="">All</option>
+                            <option value="operating">Operating</option>
+                            <option value="construction">Construction</option>
+                            <option value="pre-construction">Pre-construction</option>
+                            <option value="announced">Announced</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="imgGenerationMinCapacity">Min MW</label>
+                        <input id="imgGenerationMinCapacity" class="search-input" type="number" min="0" step="1" placeholder="0" style="padding:8px 10px;">
+                    </div>
                     <div style="display:flex;align-items:flex-end;">
                         <button type="button" class="search-button" style="padding:8px 16px;font-size:0.88rem;" onclick="applyImagingFilters()">Apply</button>
                     </div>
@@ -1717,17 +1831,35 @@
 
                 <div id="imaging-map-container" style="height:600px;border-radius:12px;margin-bottom:12px;"></div>
 
-                <div id="imagingSummary" style="font-size:0.88rem;color:var(--text-light);padding:8px 0;display:flex;flex-wrap:wrap;gap:16px;align-items:center;">
-                    <span id="imgDepositCount">0 deposits</span>
-                    <span id="imgConcessionCount">0 concessions</span>
-                    <span style="display:flex;gap:8px;align-items:center;">
-                        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#22c55e;"></span><span id="imgHighCount">0</span> high
-                        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#f59e0b;"></span><span id="imgMedCount">0</span> medium
-                        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#ef4444;"></span><span id="imgLowCount">0</span> low
-                    </span>
+                <div id="imagingSummary" class="imaging-summary">
+                    <div class="imaging-counts">
+                        <span id="imgDepositCount">0 deposits</span>
+                        <span id="imgConcessionCount">0 concessions</span>
+                        <span id="imgGenerationCount">0 generation assets</span>
+                    </div>
+                    <div class="imaging-legend">
+                        <span class="imaging-legend-title">Marker legend</span>
+                        <span class="legend-item"><span class="legend-shape legend-circle" style="background:#64748b;"></span>Mineral deposits</span>
+                        <span class="legend-item"><span class="legend-shape legend-square" style="background:#8b5cf6;"></span>Concessions</span>
+                        <span class="legend-item"><span class="legend-shape legend-triangle" style="--triangle-color:#64748b;"></span>Generation assets</span>
+                    </div>
+                    <div class="imaging-legend">
+                        <span class="imaging-legend-title">Deposit viability</span>
+                        <span class="legend-item"><span class="legend-shape legend-circle" style="background:#22c55e;"></span><span id="imgHighCount">0</span> high</span>
+                        <span class="legend-item"><span class="legend-shape legend-circle" style="background:#f59e0b;"></span><span id="imgMedCount">0</span> medium</span>
+                        <span class="legend-item"><span class="legend-shape legend-circle" style="background:#ef4444;"></span><span id="imgLowCount">0</span> low</span>
+                    </div>
+                    <div class="imaging-legend">
+                        <span class="imaging-legend-title">Generation technology</span>
+                        <span class="legend-item"><span class="legend-shape legend-triangle" style="--triangle-color:#f59e0b;"></span>Solar</span>
+                        <span class="legend-item"><span class="legend-shape legend-triangle" style="--triangle-color:#0ea5e9;"></span>Wind</span>
+                        <span class="legend-item"><span class="legend-shape legend-triangle" style="--triangle-color:#2563eb;"></span>Hydropower</span>
+                        <span class="legend-item"><span class="legend-shape legend-triangle" style="--triangle-color:#16a34a;"></span>Bioenergy</span>
+                        <span class="legend-item"><span class="legend-shape legend-triangle" style="--triangle-color:#dc2626;"></span>Geothermal</span>
+                    </div>
                 </div>
                 <div style="font-size:0.78rem;color:var(--text-light);opacity:0.7;">
-                    Data: USGS MRDS (pre-2011 vintage) | openAFRICA DMRE | VIIRS 2024 | EOX Sentinel-2
+                    Data: USGS MRDS (pre-2011 vintage) | openAFRICA DMRE | GEM Africa Energy Tracker (March 2026) | VIIRS 2024 | EOX Sentinel-2
                 </div>
             </div>
         </div>
@@ -2000,14 +2132,36 @@
 
             return await openRefinementModal(refineResult, query);
         }
+        function getSessionMode() {
+            if (!currentSession || !currentSession.type) return null;
+            if (currentSession.type === 'research') return 'deep';
+            if (currentSession.type === 'news_intel') return 'digest';
+            return null;
+        }
+
+        function syncSessionView() {
+            const sessionMode = getSessionMode();
+            const showResearchSession = activeMode === 'deep' && sessionMode === 'deep';
+            const showDigestSession = activeMode === 'digest' && sessionMode === 'digest';
+            const showSessionChrome = showResearchSession || showDigestSession;
+
+            sessionActive = showSessionChrome;
+
+            document.body.classList.toggle('session-active', showSessionChrome);
+            document.querySelector('.welcome-section').classList.toggle('hidden', activeMode !== 'deep' || showResearchSession);
+            document.getElementById('deepResearchSection').classList.toggle('hidden', activeMode !== 'deep' || showResearchSession);
+            document.getElementById('digestSection').classList.toggle('hidden', activeMode !== 'digest');
+            document.getElementById('globalViewSection').classList.toggle('hidden', activeMode !== 'global');
+            document.getElementById('imagingSection').classList.toggle('hidden', activeMode !== 'imaging');
+            document.getElementById('newSearchButton').classList.toggle('hidden', !showSessionChrome);
+            document.getElementById('researchLayout').classList.toggle('hidden', !showResearchSession);
+            document.getElementById('chatDock').classList.toggle('hidden', !showSessionChrome);
+            document.getElementById('newsIntelResultsContainer').classList.toggle('hidden', !showDigestSession);
+        }
+
         function setSessionActive(active) {
             sessionActive = active;
-            document.body.classList.toggle('session-active', active);
-            document.querySelector('.welcome-section').classList.toggle('hidden', active);
-            document.querySelector('.search-section').classList.toggle('hidden', active);
-            document.getElementById('newSearchButton').classList.toggle('hidden', !active);
-            document.getElementById('researchLayout').classList.toggle('hidden', !active);
-            document.getElementById('chatDock').classList.toggle('hidden', !active);
+            syncSessionView();
             loadResearchHistory();
         }
 
@@ -2030,7 +2184,6 @@
         document.getElementById('newSearchButton').addEventListener('click', resetToNewSearch);
 
         function activateSessionFromResearch(data) {
-            setSessionActive(true);
             currentSession = {
                 type: 'research',
                 researchId: data.research_id || null,
@@ -2039,11 +2192,11 @@
                 synthesis: data.synthesis || '',
             };
             chatMessages = [];
+            setSessionActive(true);
             setTimeout(() => document.getElementById('chatInput').focus(), 50);
         }
 
         function activateSessionFromNewsIntel(data) {
-            setSessionActive(true);
             currentSession = {
                 type: 'news_intel',
                 sessionId: `${data.topic || 'all'}:${data.date_from || 'any'}:${data.date_to || 'any'}`,
@@ -2058,6 +2211,7 @@
                 synthesis: data.synthesis || '',
             };
             chatMessages = [];
+            setSessionActive(true);
             setTimeout(() => document.getElementById('chatInput').focus(), 50);
         }
 
@@ -2199,25 +2353,14 @@
             document.querySelectorAll('.mode-nav-btn').forEach(b => {
                 b.classList.toggle('active', b.dataset.mode === mode);
             });
-            document.getElementById('deepResearchSection').classList.toggle('hidden', mode !== 'deep');
-            document.getElementById('digestSection').classList.toggle('hidden', mode !== 'digest');
-            document.getElementById('globalViewSection').classList.toggle('hidden', mode !== 'global');
-            document.getElementById('imagingSection').classList.toggle('hidden', mode !== 'imaging');
-            // Hide welcome/research layout when switching to non-deep modes
+            syncSessionView();
+
             if (mode === 'global') {
-                document.querySelector('.welcome-section').classList.add('hidden');
-                document.getElementById('researchLayout').classList.add('hidden');
                 loadGlobalView();
             } else if (mode === 'imaging') {
-                document.querySelector('.welcome-section').classList.add('hidden');
-                document.getElementById('researchLayout').classList.add('hidden');
                 loadImagingView();
             } else if (mode === 'digest') {
-                document.querySelector('.welcome-section').classList.add('hidden');
-                document.getElementById('researchLayout').classList.add('hidden');
                 renderStagedItems();
-            } else if (mode === 'deep' && !sessionActive) {
-                document.querySelector('.welcome-section').classList.remove('hidden');
             }
         }
 
@@ -3104,7 +3247,7 @@
         // ===================================================================
         // Imaging tab — OSINT mineral intelligence map
         // ===================================================================
-        let imagingMap = null, imagingDeposits = null, imagingViirs = null, imagingConcessions = null;
+        let imagingMap = null, imagingDeposits = null, imagingViirs = null, imagingConcessions = null, imagingGeneration = null;
 
         function initImagingMap() {
             if (imagingMap) {
@@ -3121,8 +3264,8 @@
                 satellite.addTo(imagingMap);
 
                 const borders = L.tileLayer(
-                    'https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_only_labels/{z}/{x}/{y}.png',
-                    { attribution: '&copy; CartoDB', maxZoom: 18, subdomains: 'abcd' }
+                    'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+                    { attribution: 'Tiles &copy; Esri', maxZoom: 18 }
                 );
                 borders.addTo(imagingMap);
 
@@ -3140,10 +3283,11 @@
 
                 imagingDeposits = L.layerGroup().addTo(imagingMap);
                 imagingConcessions = L.layerGroup().addTo(imagingMap);
+                imagingGeneration = L.layerGroup().addTo(imagingMap);
 
                 L.control.layers(
                     { 'Satellite': satellite },
-                    { 'Borders & Labels': borders, 'Railways': railways, 'VIIRS Nightlights': viirs, 'Deposits': imagingDeposits, 'Concessions': imagingConcessions },
+                    { 'Borders & Labels': borders, 'Railways': railways, 'VIIRS Nightlights': viirs, 'Deposits': imagingDeposits, 'Concessions': imagingConcessions, 'Generation': imagingGeneration },
                     { collapsed: false }
                 ).addTo(imagingMap);
 
@@ -3163,6 +3307,43 @@
             if (tier === 'high') return '<span style="color:#22c55e;font-weight:700;">HIGH</span>';
             if (tier === 'medium') return '<span style="color:#f59e0b;font-weight:700;">MEDIUM</span>';
             return '<span style="color:#ef4444;font-weight:700;">LOW</span>';
+        }
+
+        function generationColor(technology) {
+            if (technology === 'solar') return '#f59e0b';
+            if (technology === 'wind') return '#0ea5e9';
+            if (technology === 'hydropower') return '#2563eb';
+            if (technology === 'bioenergy') return '#16a34a';
+            if (technology === 'geothermal') return '#dc2626';
+            return '#64748b';
+        }
+
+        function generationRadius(capacity) {
+            const mw = Number(capacity || 0);
+            return Math.max(5, Math.min(16, 4 + Math.sqrt(mw) / 2.5));
+        }
+
+        function createGenerationIcon(technology, capacity) {
+            const size = Math.round(generationRadius(capacity) * 1.7);
+            const color = generationColor(technology);
+            return L.divIcon({
+                className: 'generation-triangle-icon',
+                html: `<span class="generation-triangle-marker" style="--triangle-color:${color};--triangle-size:${size}px;"></span>`,
+                iconSize: [size, size],
+                iconAnchor: [Math.round(size / 2), size],
+                popupAnchor: [0, -size + 6],
+            });
+        }
+
+        function createConcessionIcon() {
+            const size = 11;
+            return L.divIcon({
+                className: 'concession-square-icon',
+                html: '<span class="concession-square-marker" style="--square-size:11px;--square-color:#8b5cf6;--square-border:#7c3aed;"></span>',
+                iconSize: [size, size],
+                iconAnchor: [Math.round(size / 2), Math.round(size / 2)],
+                popupAnchor: [0, -Math.round(size / 2)],
+            });
         }
 
         function renderDepositPopup(props) {
@@ -3193,30 +3374,68 @@
             return html;
         }
 
+        function renderGenerationPopup(props) {
+            const technology = escapeHtml(props.technology || 'unknown');
+            const capacity = Number(props.capacity_mw || 0);
+            let html = `<div style="min-width:220px;font-size:0.85rem;">`;
+            html += `<strong>${escapeHtml(props.name || 'Unknown')}</strong>`;
+            html += `<div style="color:#6B7280;margin:2px 0 4px;">${escapeHtml(props.country || '')}</div>`;
+            html += `<div>Technology: ${technology}</div>`;
+            html += `<div>Capacity: ${capacity ? `${capacity.toLocaleString()} MW` : 'Unknown'}</div>`;
+            html += `<div>Status: ${escapeHtml(props.status || '')}</div>`;
+            html += `<div>Operator: ${escapeHtml(props.operator || 'Unknown')}</div>`;
+            html += `<div>Owner: ${escapeHtml(props.owner || 'Unknown')}</div>`;
+            if (props.wiki_url) {
+                html += `<div style="margin-top:6px;"><a href="${escapeHtml(props.wiki_url)}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;">GEM project page</a></div>`;
+            }
+            html += `</div>`;
+            return html;
+        }
+
         async function loadImagingView() {
             initImagingMap();
-            const params = new URLSearchParams();
+            const depositParams = new URLSearchParams();
+            const generationParams = new URLSearchParams();
             const commodity = document.getElementById('imgCommodity')?.value;
             const country = document.getElementById('imgCountry')?.value;
-            if (commodity) params.set('commodity', commodity);
-            if (country) params.set('country', country);
+            const generationTech = document.getElementById('imgGenerationTech')?.value;
+            const generationStatus = document.getElementById('imgGenerationStatus')?.value;
+            const generationMinCapacity = document.getElementById('imgGenerationMinCapacity')?.value;
+            if (commodity) depositParams.set('commodity', commodity);
+            if (country) {
+                depositParams.set('country', country);
+                generationParams.set('country', country);
+            }
+            if (generationTech) generationParams.set('technology', generationTech);
+            if (generationStatus) generationParams.set('status', generationStatus);
+            if (generationMinCapacity) generationParams.set('min_capacity_mw', generationMinCapacity);
 
             try {
-                const [depositsRes, concessionsRes, configRes] = await Promise.all([
-                    fetch(`/api/imaging/deposits?${params}`),
-                    fetch(`/api/imaging/concessions?${params}`),
+                const [depositsRes, concessionsRes, generationRes, configRes] = await Promise.all([
+                    fetch(`/api/imaging/deposits?${depositParams}`),
+                    fetch(`/api/imaging/concessions?${depositParams}`),
+                    fetch(`/api/imaging/generation?${generationParams}`),
                     fetch('/api/imaging/config'),
                 ]);
 
                 // Populate commodity filter from config
                 if (configRes.ok) {
                     const cfg = await configRes.json();
-                    const sel = document.getElementById('imgCommodity');
-                    if (sel && sel.options.length <= 1) {
+                    const commoditySel = document.getElementById('imgCommodity');
+                    if (commoditySel && commoditySel.options.length <= 1) {
                         (cfg.target_commodities || []).forEach(c => {
                             const opt = document.createElement('option');
                             opt.value = c; opt.textContent = c;
-                            sel.appendChild(opt);
+                            commoditySel.appendChild(opt);
+                        });
+                    }
+                    const generationSel = document.getElementById('imgGenerationTech');
+                    if (generationSel && generationSel.options.length <= 1) {
+                        (cfg.generation_technologies || []).forEach(t => {
+                            const opt = document.createElement('option');
+                            opt.value = t;
+                            opt.textContent = t.charAt(0).toUpperCase() + t.slice(1);
+                            generationSel.appendChild(opt);
                         });
                     }
                 }
@@ -3263,9 +3482,8 @@
                         const p = f.properties || {};
                         const coords = f.geometry?.coordinates;
                         if (!coords) return;
-                        const marker = L.circleMarker([coords[1], coords[0]], {
-                            radius: 5, fillColor: '#8b5cf6', color: '#7c3aed',
-                            weight: 1, fillOpacity: 0.7,
+                        const marker = L.marker([coords[1], coords[0]], {
+                            icon: createConcessionIcon(),
                         });
                         let popup = `<div style="min-width:200px;font-size:0.85rem;">`;
                         popup += `<strong>${escapeHtml(p.name || 'Unknown')}</strong>`;
@@ -3276,6 +3494,24 @@
                         imagingConcessions.addLayer(marker);
                     });
                     document.getElementById('imgConcessionCount').textContent = `${features.length} concessions`;
+                }
+
+                if (generationRes.ok) {
+                    const data = await generationRes.json();
+                    const features = data.features || [];
+                    imagingGeneration.clearLayers();
+                    features.forEach(f => {
+                        const p = f.properties || {};
+                        const coords = f.geometry?.coordinates;
+                        if (!coords) return;
+                        const technology = String(p.technology || '').toLowerCase();
+                        const marker = L.marker([coords[1], coords[0]], {
+                            icon: createGenerationIcon(technology, p.capacity_mw),
+                        });
+                        marker.bindPopup(renderGenerationPopup(p));
+                        imagingGeneration.addLayer(marker);
+                    });
+                    document.getElementById('imgGenerationCount').textContent = `${features.length} generation assets`;
                 }
             } catch (err) {
                 console.error('Imaging view load error:', err);
@@ -3340,6 +3576,7 @@
             });
         }
 
+        syncSessionView();
         loadResearchHistory();
     </script>
 
