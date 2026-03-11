@@ -18,6 +18,17 @@ from tools.market.series import SERIES_CATALOG
 from tools.imaging.store import ImagingDataStore
 from tools.imaging.viability import score_all_deposits
 from tools.imaging.mrds_client import fetch_deposits
+from tools.imaging.generation_client import load_generation_assets
+from tools.imaging.resource_client import fetch_resource_summary
+from tools.imaging.site_score import score_site
+from tools.regulatory.store import RegulatoryDataStore
+from tools.alerts.store import AlertStore
+from workflows.regulatory_workflow import RegulatoryWorkflow
+from workflows.digest_synthesis import (
+    parse_date as shared_parse_date,
+    filter_newsroom_articles as shared_filter_newsroom_articles,
+    news_intel_synthesis as shared_news_intel_synthesis,
+)
 import config
 from config import LOGGING_LEVEL, LOGGING_FORMAT, LOG_FILE
 
@@ -45,106 +56,41 @@ model_fetcher = ModelFetcher()
 # Progress tracking for research workflows
 research_progress = {}  # {research_id: {"status": str, "message": str, "phase": str}}
 chat_threads = {}  # lightweight in-memory thread store keyed by context id
+newsroom_api_warning = None
 
 
 def _parse_date(date_str: str):
     """Parse date string to date object (supports ISO prefixes)."""
-    if not date_str:
-        return None
-    try:
-        return datetime.strptime(str(date_str)[:10], "%Y-%m-%d").date()
-    except Exception:
-        return None
+    return shared_parse_date(date_str)
 
 
 def _filter_newsroom_articles(articles, topic=None, date_from=None, date_to=None, limit=100):
     """Filter newsroom articles by topic and date range."""
-    topic_terms = [t.strip().lower() for t in (topic or "").split() if t.strip()]
-    start_date = _parse_date(date_from)
-    end_date = _parse_date(date_to)
-    filtered = []
-
-    for article in articles:
-        article_date = _parse_date(article.get("date"))
-        if start_date and (not article_date or article_date < start_date):
-            continue
-        if end_date and (not article_date or article_date > end_date):
-            continue
-
-        if topic_terms:
-            title = str(article.get("headline", "")).lower()
-            source = str(article.get("source", "")).lower()
-            tags = " ".join(str(t).lower() for t in article.get("topic_tags", []))
-            haystack = f"{title} {source} {tags}"
-            if not all(term in haystack for term in topic_terms):
-                continue
-
-        filtered.append(article)
-
-    filtered.sort(key=lambda x: str(x.get("date", "")), reverse=True)
-    return filtered[:limit]
+    return shared_filter_newsroom_articles(
+        articles,
+        topic=topic,
+        date_from=date_from,
+        date_to=date_to,
+        limit=limit,
+    )
 
 
 def _news_intel_synthesis(articles, topic=None, date_from=None, date_to=None):
     """Synthesize filtered newsroom articles."""
-    if not articles:
-        return "No articles matched the selected filters."
-
-    entries = []
-    for article in articles[:80]:
-        headline = article.get("headline", "Untitled")
-        source = article.get("source", "Unknown")
-        date_str = article.get("date", "")[:10]
-        url = article.get("url", "")
-        topics = ", ".join(article.get("topic_tags", [])[:6])
-        entries.append(f"- [{date_str}] {headline} ({source})\\n  Topics: {topics}\\n  URL: {url}")
-
-    scope = f"topic='{topic or 'all'}', date_from='{date_from or 'none'}', date_to='{date_to or 'none'}'"
-    prompt = (
-        "You are producing a newsroom intelligence brief from API-fetched articles.\\n"
-        f"Scope: {scope}\\n"
-        f"Total articles: {len(articles)}\\n\\n"
-        "Provide:\\n"
-        "1) Executive Summary (4-6 bullets)\\n"
-        "2) Key Themes\\n"
-        "3) Notable Signals/Risks\\n"
-        "4) Watchlist (next 1-2 weeks)\\n"
-        "Use citations as [Headline].\\n\\n"
-        "Articles:\\n"
-        + "\\n\\n".join(entries)
+    return shared_news_intel_synthesis(
+        articles,
+        topic=topic,
+        date_from=date_from,
+        date_to=date_to,
     )
 
-    try:
-        model_config = config.SPECIALIZED_MODELS["reasoning"]
-        client = create_specialist_client("reasoning", model_config)
-        messages = [
-            {"role": "system", "content": "You are a concise intelligence analyst."},
-            {"role": "user", "content": prompt},
-        ]
-        response = client.chat_complete(messages, tools=None)
-        content = client.extract_content(response)
-        if content and content.strip():
-            return content.strip()
-    except Exception as e:
-        logger.warning(f"News intel synthesis fallback triggered: {e}")
 
-    # Deterministic fallback summary
-    theme_counts = {}
-    for article in articles:
-        for tag in article.get("topic_tags", [])[:3]:
-            key = str(tag).strip()
-            if key:
-                theme_counts[key] = theme_counts.get(key, 0) + 1
-    top_themes = sorted(theme_counts.items(), key=lambda x: x[1], reverse=True)[:8]
-    bullets = [f"- {name}: {count} mentions" for name, count in top_themes]
-    latest = [f"- [{a.get('date', '')[:10]}] {a.get('headline', 'Untitled')}" for a in articles[:8]]
-    return (
-        f"News Intel Summary ({len(articles)} articles)\\n\\n"
-        "Top Themes:\\n"
-        + ("\\n".join(bullets) if bullets else "- No dominant themes detected")
-        + "\\n\\nRecent Headlines:\\n"
-        + "\\n".join(latest)
-    )
+def fetch_newsroom_api(max_results=500):
+    """Compatibility wrapper that exposes newsroom articles for API handlers/tests."""
+    global newsroom_api_warning
+    articles, warning = fetch_newsroom_cached(max_results=max_results)
+    newsroom_api_warning = warning
+    return articles
 
 
 COUNTRY_ALIASES = {
@@ -599,7 +545,8 @@ def get_news_intel_articles():
         if start_date and end_date and start_date > end_date:
             return jsonify({"error": "date_from must be <= date_to"}), 400
 
-        articles, warning = fetch_newsroom_cached(max_results=500)
+        articles = fetch_newsroom_api(max_results=500)
+        warning = newsroom_api_warning
         filtered = _filter_newsroom_articles(
             articles,
             topic=topic,
@@ -642,7 +589,7 @@ def synthesize_news_intel():
         if start_date and end_date and start_date > end_date:
             return jsonify({"error": "date_from must be <= date_to"}), 400
 
-        articles, _synth_warning = fetch_newsroom_cached(max_results=500)
+        articles = fetch_newsroom_api(max_results=500)
         filtered = _filter_newsroom_articles(
             articles,
             topic=topic,
@@ -783,6 +730,109 @@ def get_news_intel_stats():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/alerts', methods=['POST'])
+def create_alert():
+    """Create a recurring digest alert from current Digest state."""
+    try:
+        data = request.get_json() or {}
+        name = (data.get("name") or "").strip()
+        interval = (data.get("interval") or "daily").strip().lower()
+        if not name:
+            return jsonify({"error": "name is required"}), 400
+        if interval not in {"daily", "weekly"}:
+            return jsonify({"error": "interval must be daily or weekly"}), 400
+
+        store = AlertStore()
+        alert_id = store.create_alert(
+            name=name,
+            topic=(data.get("topic") or "").strip(),
+            date_window_days=int(data.get("date_window_days", 7)),
+            article_limit=int(data.get("article_limit", 100)),
+            staged_series=data.get("staged_series") or [],
+            interval=interval,
+        )
+        store.close()
+        return jsonify({"alert_id": alert_id, "status": "created"})
+    except Exception as e:
+        logger.error(f"Create alert error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/alerts', methods=['GET'])
+def list_alerts():
+    """List recurring digest alerts."""
+    try:
+        store = AlertStore()
+        alerts = store.list_alerts()
+        store.close()
+        return jsonify({"alerts": alerts, "unread_total": sum(alert.get("unread_count", 0) for alert in alerts)})
+    except Exception as e:
+        logger.error(f"List alerts error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/alerts/<alert_id>/results', methods=['GET'])
+def get_alert_results(alert_id):
+    """Return paginated alert results."""
+    try:
+        limit = int(request.args.get("limit", 20))
+        offset = int(request.args.get("offset", 0))
+        store = AlertStore()
+        results = store.get_results(alert_id, limit=limit, offset=offset)
+        store.close()
+        return jsonify({"results": results})
+    except Exception as e:
+        logger.error(f"Get alert results error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/alerts/<alert_id>', methods=['PATCH'])
+def update_alert(alert_id):
+    """Update alert settings."""
+    try:
+        data = request.get_json() or {}
+        updates = {}
+        for key in ("name", "topic", "date_window_days", "article_limit", "interval", "enabled", "last_run_at"):
+            if key in data:
+                updates[key] = data[key]
+        if "staged_series" in data:
+            updates["staged_series"] = data["staged_series"]
+        store = AlertStore()
+        store.update_alert(alert_id, **updates)
+        alert = store.get_alert(alert_id)
+        store.close()
+        return jsonify({"status": "updated", "alert": alert})
+    except Exception as e:
+        logger.error(f"Update alert error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/alerts/<alert_id>', methods=['DELETE'])
+def delete_alert(alert_id):
+    """Delete an alert and its results."""
+    try:
+        store = AlertStore()
+        store.delete_alert(alert_id)
+        store.close()
+        return jsonify({"status": "deleted"})
+    except Exception as e:
+        logger.error(f"Delete alert error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/alerts/<alert_id>/read', methods=['POST'])
+def mark_alert_read(alert_id):
+    """Mark all alert results as read."""
+    try:
+        store = AlertStore()
+        store.mark_all_read(alert_id)
+        store.close()
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        logger.error(f"Mark alert read error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/api/market/latest', methods=['GET'])
 def get_market_latest():
     """Return latest observation per series from MarketDataStore."""
@@ -817,6 +867,147 @@ def get_market_latest():
         return jsonify(results)
     except Exception as e:
         logger.error(f"Market latest error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/regulatory/rps', methods=['GET'])
+def get_regulatory_rps():
+    """Return parsed RPS/CES targets with optional state/year filters."""
+    try:
+        state = request.args.get("state")
+        year = request.args.get("year", type=int)
+        standard_type = request.args.get("standard_type")
+        store = RegulatoryDataStore()
+        items = store.get_rps_targets(state=state, year=year, standard_type=standard_type)
+        store.close()
+        return jsonify({"count": len(items), "items": items})
+    except Exception as e:
+        logger.error(f"Regulatory RPS error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/regulatory/eia/capacity', methods=['GET'])
+def get_regulatory_capacity():
+    """Return EIA operating generator capacity rows."""
+    try:
+        state = request.args.get("state")
+        fuel_type = request.args.get("fuel_type")
+        store = RegulatoryDataStore()
+        items = store.get_eia_series("operating-generator-capacity", state=state, fuel_type=fuel_type)
+        store.close()
+        return jsonify({"count": len(items), "items": items})
+    except Exception as e:
+        logger.error(f"Regulatory capacity error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/regulatory/eia/generation', methods=['GET'])
+def get_regulatory_generation():
+    """Return EIA generation rows from operational data."""
+    try:
+        state = request.args.get("state")
+        fuel_type = request.args.get("fuel_type")
+        store = RegulatoryDataStore()
+        items = store.get_eia_series("electric-power-operational-data", state=state, fuel_type=fuel_type)
+        store.close()
+        return jsonify({"count": len(items), "items": items})
+    except Exception as e:
+        logger.error(f"Regulatory generation error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/regulatory/rates', methods=['GET'])
+def get_regulatory_rates():
+    """Return stored utility rate records."""
+    try:
+        state = request.args.get("state")
+        sector = request.args.get("sector")
+        store = RegulatoryDataStore()
+        items = store.get_utility_rates(state=state, sector=sector)
+        store.close()
+        return jsonify({"count": len(items), "items": items})
+    except Exception as e:
+        logger.error(f"Regulatory rates error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/regulatory/events', methods=['GET'])
+def get_regulatory_events():
+    """Return structured regulatory events."""
+    try:
+        jurisdiction = request.args.get("jurisdiction")
+        event_type = request.args.get("event_type")
+        store = RegulatoryDataStore()
+        items = store.get_regulatory_events(jurisdiction=jurisdiction, event_type=event_type)
+        store.close()
+        return jsonify({"count": len(items), "items": items})
+    except Exception as e:
+        logger.error(f"Regulatory events error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/regulatory/refresh', methods=['POST'])
+def refresh_regulatory_data():
+    """Force-refresh regulatory ingest sources."""
+    try:
+        workflow = RegulatoryWorkflow()
+        updated = workflow.update_all(force=True)
+        return jsonify({"status": "ok", "updated_sources": updated})
+    except Exception as e:
+        logger.error(f"Regulatory refresh error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Brownfield pipeline endpoints
+# ---------------------------------------------------------------------------
+
+@app.route('/api/pipeline/assets', methods=['GET'])
+def list_pipeline_assets():
+    """List brownfield acquisition pipeline assets."""
+    try:
+        technology = request.args.get("technology")
+        country = request.args.get("country")
+        store = ImagingDataStore()
+        items = store.list_pipeline_assets(technology=technology, country=country)
+        store.close()
+        return jsonify({"items": items, "count": len(items)})
+    except Exception as e:
+        logger.error(f"Pipeline list error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/pipeline/assets', methods=['POST'])
+def create_pipeline_asset():
+    """Persist a generation or deposit asset into the brownfield pipeline."""
+    try:
+        data = request.get_json() or {}
+        source_type = (data.get("source_type") or "").strip()
+        asset = data.get("asset") or {}
+        if not source_type:
+            return jsonify({"error": "source_type is required"}), 400
+        if not asset:
+            return jsonify({"error": "asset is required"}), 400
+
+        store = ImagingDataStore()
+        saved = store.upsert_pipeline_asset(source_type=source_type, asset=asset)
+        store.close()
+        return jsonify({"status": "ok", "asset": saved})
+    except Exception as e:
+        logger.error(f"Pipeline create error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/pipeline/assets/<asset_id>', methods=['DELETE'])
+def delete_pipeline_asset(asset_id):
+    """Delete a brownfield pipeline asset."""
+    try:
+        store = ImagingDataStore()
+        store.delete_pipeline_asset(asset_id)
+        store.close()
+        return jsonify({"status": "deleted"})
+    except Exception as e:
+        logger.error(f"Pipeline delete error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
@@ -863,6 +1054,38 @@ def get_imaging_concessions():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/imaging/generation', methods=['GET'])
+def get_imaging_generation():
+    """Return renewable generation assets as GeoJSON."""
+    try:
+        technology = request.args.get('technology')
+        status = request.args.get('status')
+        country = request.args.get('country')
+        min_capacity = request.args.get('min_capacity_mw', type=float)
+        store = ImagingDataStore()
+        img_config = getattr(config, "IMAGING", {})
+        stale_hours = img_config.get("stale_threshold_hours", 168)
+        staleness = store.get_staleness("generation_assets")
+        if staleness is None or staleness > stale_hours:
+            logger.info(
+                "Imaging generation assets stale (%.1fh), loading workbook",
+                staleness or -1,
+            )
+            generation = load_generation_assets()
+            store.upsert_generation_assets(generation.get("features", []))
+        geojson = store.get_generation_assets(
+            technology=technology,
+            status=status,
+            country=country,
+            min_capacity_mw=min_capacity,
+        )
+        store.close()
+        return jsonify(geojson)
+    except Exception as e:
+        logger.error(f"Imaging generation error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/api/imaging/config', methods=['GET'])
 def get_imaging_config():
     """Return imaging tile URLs, filter options, and viability thresholds."""
@@ -871,6 +1094,16 @@ def get_imaging_config():
         "satellite_tile_url": img_config.get("satellite_tile_url", ""),
         "viirs_tile_url": img_config.get("viirs_tile_url", ""),
         "target_commodities": img_config.get("target_commodities", []),
+        "generation_technologies": ["solar", "wind", "hydropower", "bioenergy", "geothermal"],
+        "resource_layers": [
+            {
+                "key": "solar_resource",
+                "label": "Solar Resource",
+                "url": img_config.get("solar_overlay_tile_url", ""),
+                "attribution": img_config.get("solar_overlay_attribution", ""),
+            },
+        ],
+        "scouting_technologies": ["solar", "wind"],
         "viability_tiers": {"high": [65, 100], "medium": [35, 64], "low": [0, 34]},
     })
 
@@ -886,14 +1119,114 @@ def refresh_imaging_data():
         store.upsert_deposits(deposits.get("features", []))
         concessions = fetch_concessions_sa()
         store.upsert_concessions(concessions.get("features", []))
+        generation = load_generation_assets()
+        store.upsert_generation_assets(generation.get("features", []))
         store.close()
         return jsonify({
             "status": "ok",
             "deposits": len(deposits.get("features", [])),
             "concessions": len(concessions.get("features", [])),
+            "generation_assets": len(generation.get("features", [])),
         })
     except Exception as e:
         logger.error(f"Imaging refresh error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Greenfield scouting endpoints
+# ---------------------------------------------------------------------------
+
+@app.route('/api/scouting/score', methods=['POST'])
+def score_greenfield_site():
+    """Score a clicked greenfield candidate site."""
+    try:
+        data = request.get_json() or {}
+        if "lat" not in data or "lon" not in data:
+            return jsonify({"error": "lat and lon are required"}), 400
+        technology = (data.get("technology") or "").strip().lower()
+        if not technology:
+            return jsonify({"error": "technology is required"}), 400
+
+        lat = float(data["lat"])
+        lon = float(data["lon"])
+        store = ImagingDataStore()
+        generation_assets = store.get_generation_assets().get("features", [])
+        pipeline_assets = store.list_pipeline_assets()
+        resource_summary = fetch_resource_summary(lat=lat, lon=lon)
+        site = score_site(
+            lat=lat,
+            lon=lon,
+            technology=technology,
+            resource_summary=resource_summary,
+            generation_assets=generation_assets,
+            pipeline_assets=pipeline_assets,
+            name=(data.get("name") or "").strip() or None,
+            country=(data.get("country") or "").strip() or None,
+        )
+        store.close()
+        return jsonify({"site": site})
+    except Exception as e:
+        logger.error(f"Scouting score error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scouting/watchlist', methods=['GET'])
+def list_scout_watchlist():
+    """List persisted greenfield scouting watchlist entries."""
+    try:
+        technology = request.args.get("technology")
+        store = ImagingDataStore()
+        items = store.list_watchlist_sites(technology=technology)
+        store.close()
+        return jsonify({"items": items, "count": len(items)})
+    except Exception as e:
+        logger.error(f"Scouting watchlist error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scouting/watchlist', methods=['POST'])
+def create_scout_watchlist_item():
+    """Persist a scored site in the greenfield watchlist."""
+    try:
+        data = request.get_json() or {}
+        site = data.get("site") or {}
+        if not site:
+            return jsonify({"error": "site is required"}), 400
+
+        store = ImagingDataStore()
+        saved = store.upsert_watchlist_site(site)
+        store.close()
+        return jsonify({"status": "ok", "site": saved})
+    except Exception as e:
+        logger.error(f"Scouting watchlist create error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scouting/watchlist/<site_id>', methods=['DELETE'])
+def delete_scout_watchlist_item(site_id):
+    """Delete a site from the greenfield watchlist."""
+    try:
+        store = ImagingDataStore()
+        store.delete_watchlist_site(site_id)
+        store.close()
+        return jsonify({"status": "deleted"})
+    except Exception as e:
+        logger.error(f"Scouting watchlist delete error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scouting/compare', methods=['GET'])
+def compare_scout_watchlist_sites():
+    """Return watchlist sites for side-by-side comparison."""
+    try:
+        ids = [item.strip() for item in (request.args.get("ids") or "").split(",") if item.strip()]
+        store = ImagingDataStore()
+        items = store.get_watchlist_sites_by_ids(ids)
+        store.close()
+        return jsonify({"items": items, "count": len(items)})
+    except Exception as e:
+        logger.error(f"Scouting compare error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
