@@ -5,6 +5,8 @@
 
 Zorora is a local-first deep research and analysis tool for policy, market, and technical intelligence. It runs against local LLM endpoints, supports both terminal and web interfaces, and handles everything from source discovery to structured data analysis.
 
+Current stable release: **v3.5.0-prod** (March 6, 2026).
+
 **Learn more in the [full documentation](https://code.asoba.co)**.
 
 ![Zorora Web UI](docs/ui.png)
@@ -12,6 +14,8 @@ Zorora is a local-first deep research and analysis tool for policy, market, and 
 ## Features
 
 - **Deep research** — intent refinement + query decomposition across newsroom/web/academic sources, relevance-first then credibility ranking, and contract-based synthesis (outline → section expansion) with inline citations and no raw dump fallback
+- **Global View + Digest** — interactive country map with click-to-filter topic/source popups, staged-article digest synthesis, and market dataset cards
+- **Imaging map** — Leaflet-based OSINT geospatial view for mineral deposits, concessions, and generation assets with viability scoring overlays
 - **Comparative queries** — auto-detects "X vs Y" queries and generates dimension-based comparison tables
 - **Source quality** — credibility scoring, cross-reference detection, and full article content extraction for grounded analysis
 - **Data analysis** — sandboxed Python execution with pandas, numpy, and matplotlib for structured dataset workflows
