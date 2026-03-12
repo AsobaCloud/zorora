@@ -23,6 +23,7 @@ class Source:
     content_full: str = ""
     cited_by_count: int = 0
     cites: List[str] = field(default_factory=list)
+    intent_domain: str = ""
 
     @staticmethod
     def generate_id(url: str) -> str:
@@ -61,6 +62,9 @@ class ResearchState:
     sources_checked: List[Source] = field(default_factory=list)
     findings: List[Finding] = field(default_factory=list)
     citation_graph: Dict[str, List[str]] = field(default_factory=dict)
+
+    # Asset metadata (for diligence searches)
+    asset_metadata: Optional[dict] = None
 
     # Synthesis
     synthesis: Optional[str] = None

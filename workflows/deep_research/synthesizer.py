@@ -152,6 +152,7 @@ _RESEARCH_TYPE_LENSES = {
     "policy_review": "Emphasize regulatory mechanism, implementation status, and market pass-through effects.",
     "comparative": "Emphasize explicit contrasts, trade-offs, and relative outcomes across subjects.",
     "impact_assessment": "Emphasize causal chain from event/policy to prices, supply-demand balance, and risk.",
+    "diligence": "Produce a structured acquisition diligence report. Estimate revenue potential, identify regulatory requirements, benchmark performance against targets, and assess vendor/counterparty relationships.",
 }
 
 _BACKGROUND_TERM_DEFINITIONS = {
@@ -1969,6 +1970,173 @@ def _format_direct_sources_for_prompt(sources: List[Source]) -> str:
     return "\n\n".join(entries)
 
 
+def _build_diligence_synthesis_prompt(
+    state: ResearchState,
+    diligence_context: str = "",
+    asset_metadata: Optional[dict] = None,
+) -> str:
+    """Build a diligence-specific synthesis prompt with fixed report sections."""
+    today = date.today().isoformat()
+    search_topic = state.refined_query or state.original_query
+    sources_text = _format_direct_sources_for_prompt(state.sources_checked)
+    meta = asset_metadata or {}
+
+    asset_block = (
+        f"**ASSET UNDER REVIEW:**\n"
+        f"- Name: {meta.get('name', 'Unknown')}\n"
+        f"- Technology: {meta.get('technology', 'Unknown')}\n"
+        f"- Capacity: {meta.get('capacity_mw', 'Unknown')} MW\n"
+        f"- Country: {meta.get('country', 'Unknown')}\n"
+        f"- Operator: {meta.get('operator', 'Unknown')}\n"
+        f"- Owner: {meta.get('owner', 'Unknown')}\n"
+        f"- Status: {meta.get('status', 'Unknown')}\n"
+    )
+
+    context_block = ""
+    if diligence_context:
+        context_block = (
+            "\n**LOCAL DATA CONTEXT (use for quantitative analysis; do not cite as a source):**\n"
+            f"{diligence_context}\n"
+        )
+
+    return f"""Today's date is {today}. Produce a structured acquisition diligence report for the asset described below.
+
+{asset_block}
+**RESEARCH QUESTION:** {state.original_query}
+**SEARCH TOPIC / REFINEMENT:** {search_topic}
+
+**RANKED SOURCES:**
+{sources_text}
+{context_block}
+**Instructions:**
+1. Use the local data context for quantitative analysis (tariff rates, capacity benchmarks, RPS targets).
+2. Use the ranked sources for qualitative context (regulatory environment, vendor intelligence, market trends).
+3. Cite evidence inline using exact source titles in square brackets.
+4. If the sources leave a material gap, supplement with concise general knowledge marked as [Background Knowledge].
+5. Use today's date ({today}) when interpreting relative dates.
+6. No planning language, no meta-commentary, no boilerplate caveats.
+
+**Output format (follow exactly; use ## for all headers):**
+
+## Executive Summary
+[2-4 sentences summarizing the diligence findings with key risk/opportunity highlights]
+
+## Tariff & Revenue Potential
+[Analysis of electricity tariffs, pricing mechanisms, and estimated revenue potential with inline citations]
+
+## Regulatory & Licensing Requirements
+[Required permits, regulatory approvals, compliance obligations with inline citations]
+
+## Performance Gap Analysis
+[Benchmarking against comparable plants, capacity factor analysis, performance targets with inline citations]
+
+## Vendor & Counterparty Relationships
+[Known offtake agreements, vendor dependencies, counterparty risk assessment with inline citations]
+
+## Risk Summary & Recommendation
+[Key risks, mitigants, and overall acquisition recommendation with inline citations]
+
+Begin:
+"""
+
+
+def generate_diligence_charts(
+    asset_metadata: dict,
+    diligence_context: str = "",
+) -> list:
+    """Generate diligence charts as base64-encoded PNGs.
+
+    Returns list of (section_title, data_uri) tuples.
+    """
+    import base64
+    import io
+
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        logger.warning("matplotlib not available for diligence charts")
+        return []
+
+    charts = []
+    capacity_mw = float(asset_metadata.get("capacity_mw", 0) or 0)
+    technology = asset_metadata.get("technology", "Power")
+    country = asset_metadata.get("country", "")
+
+    # Chart 1: Revenue estimate at low/mid/high tariff rates
+    if capacity_mw > 0:
+        try:
+            capacity_factors = {"Solar": 0.20, "Wind": 0.30, "Coal": 0.70, "Gas": 0.50}
+            cf = capacity_factors.get(technology, 0.35)
+            annual_mwh = capacity_mw * cf * 8760
+
+            low_rate, mid_rate, high_rate = 0.04, 0.07, 0.12
+            revenues = [annual_mwh * r for r in (low_rate, mid_rate, high_rate)]
+
+            fig, ax = plt.subplots(figsize=(8, 4))
+            bars = ax.bar(
+                ["Low ($0.04/kWh)", "Mid ($0.07/kWh)", "High ($0.12/kWh)"],
+                [r / 1e6 for r in revenues],
+                color=["#94a3b8", "#3b82f6", "#22c55e"],
+            )
+            ax.set_ylabel("Annual Revenue ($M)")
+            ax.set_title(f"Estimated Annual Revenue — {capacity_mw:.0f} MW {technology} (CF={cf:.0%})")
+            ax.grid(True, alpha=0.3, axis="y")
+            for bar, rev in zip(bars, revenues):
+                ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.1,
+                        f"${rev / 1e6:.1f}M", ha="center", va="bottom", fontsize=9)
+            fig.tight_layout()
+
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png", dpi=100)
+            plt.close(fig)
+            buf.seek(0)
+            b64 = base64.b64encode(buf.read()).decode("ascii")
+            charts.append(("Revenue Estimate", f"data:image/png;base64,{b64}"))
+        except Exception as exc:
+            logger.warning("Revenue chart generation failed: %s", exc)
+
+    # Chart 2: Capacity benchmark vs comparable plants
+    try:
+        from tools.imaging.store import ImagingDataStore
+        img_store = ImagingDataStore()
+        comparable = img_store.get_generation_assets(technology=technology or None, country=country or None)
+        features = comparable.get("features", []) if isinstance(comparable, dict) else []
+        capacities = [
+            f.get("properties", {}).get("capacity_mw", 0)
+            for f in features
+            if f.get("properties", {}).get("capacity_mw")
+        ]
+        if capacities and capacity_mw > 0:
+            import statistics
+            avg_cap = statistics.mean(capacities)
+            med_cap = statistics.median(capacities)
+
+            fig, ax = plt.subplots(figsize=(8, 4))
+            labels = ["This Asset", f"Average ({len(capacities)} plants)", "Median"]
+            values = [capacity_mw, avg_cap, med_cap]
+            colors = ["#f59e0b", "#3b82f6", "#8b5cf6"]
+            ax.barh(labels, values, color=colors)
+            ax.set_xlabel("Capacity (MW)")
+            ax.set_title(f"Capacity Benchmark — {technology} in {country}")
+            ax.grid(True, alpha=0.3, axis="x")
+            for i, v in enumerate(values):
+                ax.text(v + max(values) * 0.02, i, f"{v:.0f} MW", va="center", fontsize=9)
+            fig.tight_layout()
+
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png", dpi=100)
+            plt.close(fig)
+            buf.seek(0)
+            b64 = base64.b64encode(buf.read()).decode("ascii")
+            charts.append(("Capacity Benchmark", f"data:image/png;base64,{b64}"))
+    except Exception as exc:
+        logger.warning("Capacity benchmark chart generation failed: %s", exc)
+
+    return charts
+
+
 def _build_direct_synthesis_prompt(state: ResearchState, market_context: str = "") -> str:
     """Build a single-pass question-answering prompt over the ranked source set."""
     today = date.today().isoformat()
@@ -2038,6 +2206,18 @@ def _replace_markdown_section(text: str, title: str, replacement: str) -> str:
         rf"(?ms)^##\s+{re.escape(title)}\s*\n(.*?)(?=^##\s+|\Z)"
     )
     return pattern.sub(f"## {title}\n{replacement.strip()}\n\n", text, count=1).rstrip()
+
+
+def _insert_after_section(text: str, title: str, content: str) -> str:
+    """Insert content at the end of a named markdown section."""
+    pattern = re.compile(
+        rf"(?ms)(^##\s+{re.escape(title)}\s*\n.*?)(?=^##\s+|\Z)"
+    )
+    match = pattern.search(text or "")
+    if not match:
+        return text + content
+    end = match.end()
+    return text[:end].rstrip() + content + "\n" + text[end:]
 
 
 def _parse_markdown_sections(text: str) -> List[Tuple[str, str]]:
@@ -2425,6 +2605,99 @@ def _background_definition_fact(term: str) -> str:
     return _BACKGROUND_TERM_DEFINITIONS.get(term.strip().lower(), "")
 
 
+def _extractive_summarize(texts: List[str], query: str, max_sentences: int = 3) -> str:
+    """Select the most query-relevant sentences from *texts* using TF-IDF
+    cosine similarity.  Falls back to first *max_sentences* if scikit-learn
+    is unavailable."""
+    if not texts:
+        return ""
+    # Split each text into sentences and flatten
+    import re as _re
+    sentences: List[str] = []
+    for t in texts:
+        sentences.extend(s.strip() for s in _re.split(r'(?<=[.!?])\s+', t) if s.strip())
+    if not sentences:
+        return " ".join(texts[:max_sentences])
+    # Score sentences by keyword overlap with query (no external deps)
+    query_tokens = set(query.lower().split())
+    scored = []
+    for i, sent in enumerate(sentences):
+        sent_tokens = set(sent.lower().split())
+        overlap = len(query_tokens & sent_tokens)
+        scored.append((overlap, i, sent))
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    # Only include sentences with at least 1 query-term overlap
+    selected = [s for overlap, _, s in scored[:max_sentences] if overlap > 0]
+    if not selected:
+        selected = [scored[0][2]]
+    return " ".join(selected)
+
+
+# Domain label → report section header mapping for diligence fallback
+_DILIGENCE_DOMAIN_SECTIONS = {
+    "commercial": "Tariff & Revenue",
+    "licensing": "Regulatory & Licensing",
+    "environmental": "Environmental & Grid Connection",
+    "performance": "Performance",
+    "counterparty": "Vendor & Counterparty",
+    "asset_specific": "Asset Intelligence",
+}
+
+
+def _deterministic_diligence_synthesis(state: ResearchState, asset_metadata: Optional[dict] = None) -> str:
+    """Structured diligence fallback when the LLM is unavailable.
+
+    Groups sources by ``intent_domain``, produces extractive summaries per
+    domain section, and assembles a report with the fixed diligence headers.
+    """
+    meta = asset_metadata or {}
+    query = state.original_query or ""
+    sources = state.sources_checked or []
+
+    # Group sources by domain
+    domain_sources: dict[str, List[Source]] = {}
+    for s in sources:
+        domain = s.intent_domain or "other"
+        domain_sources.setdefault(domain, []).append(s)
+
+    sections: List[str] = []
+
+    # Executive Summary
+    n_sources = len(sources)
+    domains_found = [d for d in _DILIGENCE_DOMAIN_SECTIONS if d in domain_sources]
+    exec_summary = (
+        f"Deterministic diligence report for {meta.get('name', 'the target asset')} "
+        f"({meta.get('technology', 'power')}, {meta.get('country', 'unknown country')}). "
+        f"Based on {n_sources} source(s) across {len(domains_found)} domain(s). "
+        f"LLM synthesis was unavailable; content below is extracted directly from sources."
+    )
+    sections.append(f"## Executive Summary\n{exec_summary}")
+
+    # Domain sections
+    for domain_key, section_title in _DILIGENCE_DOMAIN_SECTIONS.items():
+        ds = domain_sources.get(domain_key, [])
+        if not ds:
+            sections.append(f"## {section_title}\nNo sources found for this domain.")
+            continue
+        texts = [s.content_full or s.content_snippet for s in ds if (s.content_full or s.content_snippet)]
+        titles = [s.title or "Untitled" for s in ds]
+        summary = _extractive_summarize(texts, query, max_sentences=4)
+        citations = ", ".join(f"[{t}]" for t in titles[:3])
+        sections.append(f"## {section_title}\n{summary}\n\n*Sources: {citations}*")
+
+    # Risk Summary
+    sections.append(
+        "## Risk Summary & Recommendation\n"
+        "Unable to generate risk assessment without LLM synthesis. "
+        "Review the domain sections above for key findings."
+    )
+
+    synthesis = "\n\n".join(sections)
+    state.synthesis = synthesis
+    state.synthesis_model = "deterministic_diligence"
+    return synthesis
+
+
 def _deterministic_direct_synthesis(state: ResearchState, reason: str) -> str:
     """Question-answer-oriented deterministic fallback for direct synthesis."""
     ranked_sources = _summary_candidate_sources(state)
@@ -2509,12 +2782,20 @@ def synthesize_direct(
     state: ResearchState,
     market_context: str = "",
     progress_callback=None,
+    asset_metadata: Optional[dict] = None,
+    diligence_context: str = "",
 ) -> str:
     """Single-pass synthesis that answers the original research question directly."""
     logger.info("Synthesizing ranked sources (direct-answer pipeline)...")
     _emit_progress(progress_callback, "synthesis", "Preparing direct answer from ranked sources...")
 
-    prompt = _build_direct_synthesis_prompt(state, market_context=market_context)
+    is_diligence = state.research_type == "diligence" and asset_metadata
+    if is_diligence:
+        prompt = _build_diligence_synthesis_prompt(
+            state, diligence_context=diligence_context, asset_metadata=asset_metadata,
+        )
+    else:
+        prompt = _build_direct_synthesis_prompt(state, market_context=market_context)
 
     try:
         raw = _call_research_synthesis_model(
@@ -2527,6 +2808,8 @@ def synthesize_direct(
 
     if not raw:
         logger.warning("Direct synthesis returned empty output; using deterministic fallback")
+        if is_diligence:
+            return _deterministic_diligence_synthesis(state, asset_metadata=asset_metadata)
         return _deterministic_direct_synthesis(state, reason="direct_synthesis_unavailable")
 
     normalized = _normalize_outline_headers(raw).strip()
@@ -2564,7 +2847,22 @@ def synthesize_direct(
 
     if not _passes_direct_synthesis_quality_gate(normalized, state):
         logger.warning("Direct synthesis failed quality gate after retry; using deterministic fallback")
+        if is_diligence:
+            return _deterministic_diligence_synthesis(state, asset_metadata=asset_metadata)
         return _deterministic_direct_synthesis(state, reason="direct_synthesis_quality_failure")
+
+    # Insert diligence charts into the appropriate sections
+    if is_diligence:
+        try:
+            charts = generate_diligence_charts(asset_metadata, diligence_context)
+            for chart_title, data_uri in charts:
+                img_md = f"\n\n![{chart_title}]({data_uri})\n"
+                if "Revenue" in chart_title:
+                    normalized = _insert_after_section(normalized, "Tariff & Revenue Potential", img_md)
+                elif "Benchmark" in chart_title or "Capacity" in chart_title:
+                    normalized = _insert_after_section(normalized, "Performance Gap Analysis", img_md)
+        except Exception as exc:
+            logger.warning("Diligence chart insertion failed (non-fatal): %s", exc)
 
     state.synthesis = normalized
     state.synthesis_model = "direct"

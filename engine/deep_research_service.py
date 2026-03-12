@@ -12,7 +12,7 @@ from typing import Callable, List, Optional
 
 import config
 from engine.models import ResearchState, Source, Finding
-from engine.query_refiner import SearchIntent, decompose_query
+from engine.query_refiner import SearchIntent, decompose_query, decompose_diligence_query
 from workflows.deep_research.aggregator import aggregate_sources
 from workflows.deep_research.credibility import score_source_credibility
 from workflows.deep_research.reranker import score_relevance, filter_relevant, _count_cross_references
@@ -53,6 +53,91 @@ def _emit(progress_callback: Optional[ProgressCallback], phase: str, message: st
     """Emit progress update if callback is provided."""
     if progress_callback:
         progress_callback(status, phase, message)
+
+
+def _build_diligence_context(asset_metadata: dict) -> tuple:
+    """Build diligence context from local regulatory/imaging databases.
+
+    Returns (context_text, raw_data_dict) for synthesis and chart generation.
+    """
+    country = asset_metadata.get("country", "")
+    technology = asset_metadata.get("technology", "")
+    state_code = asset_metadata.get("state", "")
+    sections = []
+    raw_data = {}
+
+    try:
+        from tools.regulatory.store import RegulatoryDataStore
+        reg_store = RegulatoryDataStore()
+
+        if state_code or country == "United States":
+            eia_retail = reg_store.get_eia_series("retail-sales", state=state_code or None)
+            if eia_retail:
+                raw_data["eia_retail"] = eia_retail[:10]
+                prices = [r.get("value") for r in eia_retail[:5] if r.get("value")]
+                sections.append(f"EIA Retail Electricity Prices ({state_code or 'US'}): {prices}")
+
+            utility_rates = reg_store.get_utility_rates(state=state_code or None, sector="commercial")
+            if utility_rates:
+                raw_data["utility_rates"] = utility_rates[:10]
+                rate_names = [r.get("utility_name", "") for r in utility_rates[:5]]
+                sections.append(f"Utility Rates ({state_code or 'US'}, commercial): {rate_names}")
+
+            tech_map = {"Solar": "solar", "Wind": "wind", "Coal": "coal", "Gas": "gas"}
+            fuel = tech_map.get(technology, "")
+            eia_capacity = reg_store.get_eia_series(
+                "operating-generator-capacity", state=state_code or None, fuel_type=fuel or None
+            )
+            if eia_capacity:
+                raw_data["eia_capacity"] = eia_capacity[:10]
+                caps = [r.get("value") for r in eia_capacity[:5] if r.get("value")]
+                sections.append(f"EIA Operating Capacity ({technology}, {state_code or 'US'}): {caps}")
+
+            rps = reg_store.get_rps_targets(state=state_code or None)
+            if rps:
+                raw_data["rps_targets"] = rps[:10]
+                targets = [(r.get("year"), r.get("target_pct")) for r in rps[:5]]
+                sections.append(f"RPS Targets ({state_code or 'US'}): {targets}")
+
+            reg_events = reg_store.get_regulatory_events(jurisdiction=state_code or country or None, limit=5)
+            if reg_events:
+                raw_data["regulatory_events"] = reg_events
+                titles = [r.get("title", r.get("event_type", "")) for r in reg_events[:3]]
+                sections.append(f"Recent Regulatory Events: {titles}")
+    except Exception as exc:
+        logger.warning("Regulatory data fetch for diligence failed (non-fatal): %s", exc)
+
+    try:
+        from tools.imaging.store import ImagingDataStore
+        img_store = ImagingDataStore()
+        comparable = img_store.get_generation_assets(technology=technology or None, country=country or None)
+        features = comparable.get("features", []) if isinstance(comparable, dict) else []
+        if features:
+            raw_data["comparable_plants"] = features[:20]
+            capacities = [
+                f.get("properties", {}).get("capacity_mw", 0)
+                for f in features[:20]
+                if f.get("properties", {}).get("capacity_mw")
+            ]
+            sections.append(f"Comparable {technology} Plants in {country}: {len(features)} found, capacities (MW): {capacities[:10]}")
+    except Exception as exc:
+        logger.warning("Imaging data fetch for diligence failed (non-fatal): %s", exc)
+
+    if not sections and country and country != "United States":
+        try:
+            from tools.market.worldbank_client import WorldBankClient
+            wb = WorldBankClient()
+            elec_price = wb.fetch_indicator("EG.ELC.PETR.ZS", country=country)
+            if elec_price:
+                raw_data["worldbank_electricity"] = elec_price[:5]
+                sections.append(f"World Bank Electricity Data ({country}): {len(elec_price)} records")
+        except Exception as exc:
+            logger.warning("World Bank fetch for diligence failed (non-fatal): %s", exc)
+
+    if not sections:
+        return "No local diligence data available for this asset.", raw_data
+
+    return "\n".join(sections), raw_data
 
 
 def _build_market_context_for_query(query: str) -> str:
@@ -771,6 +856,7 @@ def run_deep_research(
     refined_query: Optional[str] = None,
     research_type: Optional[str] = None,
     compare_subjects: Optional[List[str]] = None,
+    asset_metadata: Optional[dict] = None,
 ) -> ResearchState:
     """Execute the shared deep-research pipeline and return populated state."""
     # Use refined query for search/analysis when available
@@ -789,8 +875,14 @@ def run_deep_research(
         research_type=research_type,
         compare_subjects=compare_subjects,
     )
+    if asset_metadata:
+        state.asset_metadata = asset_metadata
 
-    intents = decompose_query(search_query)
+    is_diligence = research_type == "diligence" and asset_metadata
+    if is_diligence:
+        intents = decompose_diligence_query(search_query, asset_metadata)
+    else:
+        intents = decompose_query(search_query)
     if not intents:
         intents = [SearchIntent(intent_query=search_query, parent_query=search_query, is_primary=True)]
 
@@ -800,9 +892,15 @@ def run_deep_research(
     relevance_min = config.SYNTHESIS.get("relevance_min_score", 0.15)
     merged_relevant_sources: List[Source] = []
 
+    _US_COUNTRY_NAMES = {"united states", "us", "usa", "u.s.", "u.s.a."}
+    is_us_asset = asset_metadata and asset_metadata.get("country", "").strip().lower() in _US_COUNTRY_NAMES
+    force_policy_flag = bool(is_diligence and is_us_asset)
+    suppress_policy_flag = bool(is_diligence and not is_us_asset)
+
     for intent_idx, intent in enumerate(intents, 1):
         intent_query = intent.intent_query.strip() or search_query
-        variants = _generate_query_variants(intent_query, num_variants)
+        effective_variants = 1 if is_diligence else num_variants
+        variants = _generate_query_variants(intent_query, effective_variants)
         logger.info(
             "Intent %d/%d query variants: %d (%s)",
             intent_idx,
@@ -828,6 +926,8 @@ def run_deep_research(
                 variant,
                 max_results_per_source=effective_max_per_source,
                 include_brave_news=include_brave_news,
+                force_policy=force_policy_flag,
+                suppress_policy=suppress_policy_flag,
             )
             intent_raw_sources.extend(variant_sources)
 
@@ -925,7 +1025,13 @@ def run_deep_research(
     state.total_sources = len(state.sources_checked)
 
     state.findings = []
-    market_context = _build_market_context_for_query(query)
+    diligence_context = ""
+    diligence_data = {}
+    if is_diligence:
+        diligence_context, diligence_data = _build_diligence_context(asset_metadata)
+        market_context = ""
+    else:
+        market_context = _build_market_context_for_query(query)
 
     _emit(
         progress_callback,
@@ -964,8 +1070,10 @@ def run_deep_research(
     try:
         state.synthesis = synthesize(
             state,
-            market_context=market_context,
+            market_context=market_context or diligence_context,
             progress_callback=progress_callback,
+            asset_metadata=asset_metadata if is_diligence else None,
+            diligence_context=diligence_context if is_diligence else "",
         )
         state.completed_at = datetime.now()
         state.current_iteration = 1

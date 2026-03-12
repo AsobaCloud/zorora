@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import importlib
 from pathlib import Path
 import tempfile
@@ -1027,3 +1028,536 @@ def test_template_has_loading_and_allsettled():
     html = response.get_data(as_text=True)
     assert "Promise.allSettled" in html
     assert "Loading regulatory data" in html
+
+
+# ---------------------------------------------------------------------------
+# SEP-036 (cont.): Diligence Search Integration Tests
+#
+# These tests exercise real code paths with real local data from the
+# imaging and regulatory stores on disk.  Each test would FAIL if the
+# corresponding production wiring were broken.
+# ---------------------------------------------------------------------------
+
+# Shared test asset that matches real data in ~/.zorora/imaging_data.db
+# (342 solar assets in South Africa with lowercase "solar" technology)
+_ZA_SOLAR_ASSET = {
+    "name": "Test Solar Farm",
+    "technology": "solar",
+    "capacity_mw": 100,
+    "country": "South Africa",
+    "operator": "TestCorp",
+    "owner": "TestOwner",
+    "status": "operating",
+}
+
+
+def test_diligence_decomposition_produces_domain_intents():
+    """decompose_diligence_query returns 6 intents with analyst-style diligence
+    terminology (PPA, IPP, license, EIA, capacity factor, offtake)."""
+    from engine.query_refiner import decompose_diligence_query
+
+    query = "Brownfield acquisition diligence for Test Solar Farm"
+    intents = decompose_diligence_query(query, _ZA_SOLAR_ASSET)
+
+    # Exactly 6 domain-specific intents
+    assert len(intents) == 6, f"Expected 6 intents, got {len(intents)}"
+
+    # First intent is primary, rest are not
+    assert intents[0].is_primary is True
+    for intent in intents[1:]:
+        assert intent.is_primary is False, f"Non-primary intent marked primary: {intent.intent_query}"
+
+    # All intents carry the original query as parent
+    for intent in intents:
+        assert intent.parent_query == query
+
+    queries_lower = [i.intent_query.lower() for i in intents]
+    all_text = " ".join(queries_lower)
+
+    # Asset metadata must appear across intents
+    assert "south africa" in all_text, "Country not injected into intents"
+    assert "solar" in all_text, "Technology not injected into intents"
+
+    # Diligence-specific terms that an analyst would use (not generic educational)
+    assert any("power purchase agreement" in q or "ppa" in q for q in queries_lower), \
+        "No intent mentions PPA / power purchase agreement"
+    assert any("license" in q or "permits" in q for q in queries_lower), \
+        "No intent mentions licensing/permits"
+    assert any("environmental impact assessment" in q or "grid connection" in q for q in queries_lower), \
+        "No intent mentions EIA or grid connection"
+    assert any("capacity factor" in q or "performance ratio" in q for q in queries_lower), \
+        "No intent mentions capacity factor or performance ratio"
+    assert any("offtake" in q or "ipp" in q for q in queries_lower), \
+        "No intent mentions offtake/IPP"
+    assert "test solar farm" in all_text, "Asset name not in any intent"
+
+    # Must NOT contain generic educational phrases
+    for q in queries_lower:
+        assert "how to" not in q, f"Intent contains educational phrase 'how to': {q}"
+        assert "what is" not in q, f"Intent contains educational phrase 'what is': {q}"
+
+
+def test_force_policy_actually_includes_policy_channel():
+    """force_policy=True causes policy_search_sources to be called even when
+    the query contains no policy keywords."""
+    from workflows.deep_research.aggregator import aggregate_sources
+
+    query = "solar power generation capacity factors"  # No policy keywords
+
+    # Patch all network-calling functions to return [] quickly
+    with patch("workflows.deep_research.aggregator.academic_search_sources", return_value=[]), \
+         patch("workflows.deep_research.aggregator.web_search_sources", return_value=[]), \
+         patch("workflows.deep_research.aggregator.fetch_newsroom_api", return_value=[]), \
+         patch("workflows.deep_research.aggregator.worldbank_search_sources", return_value=[]), \
+         patch("workflows.deep_research.aggregator.policy_search_sources", return_value=[]) as mock_policy, \
+         patch("workflows.deep_research.aggregator.sec_search_sources", return_value=[]):
+
+        # With force_policy=False: policy should NOT be called (no policy keywords)
+        aggregate_sources(query, force_policy=False)
+        mock_policy.assert_not_called()
+
+        # With force_policy=True: policy MUST be called
+        mock_policy.reset_mock()
+        aggregate_sources(query, force_policy=True)
+        mock_policy.assert_called_once()
+
+
+def test_diligence_skips_us_policy_for_non_us_assets():
+    """Non-US diligence assets should NOT trigger US-only policy search
+    (Congress.gov, GovTrack, Federal Register are useless for Lesotho/ZA)."""
+    from engine.deep_research_service import run_deep_research
+
+    # Patch all search backends to return [] and track policy calls
+    with patch("workflows.deep_research.aggregator.academic_search_sources", return_value=[]), \
+         patch("workflows.deep_research.aggregator.web_search_sources", return_value=[]), \
+         patch("workflows.deep_research.aggregator.fetch_newsroom_api", return_value=[]), \
+         patch("workflows.deep_research.aggregator.worldbank_search_sources", return_value=[]), \
+         patch("workflows.deep_research.aggregator.policy_search_sources", return_value=[]) as mock_policy, \
+         patch("workflows.deep_research.aggregator.sec_search_sources", return_value=[]), \
+         patch("workflows.deep_research.synthesizer.synthesize_direct", return_value="test"):
+
+        # Non-US asset: policy search should NOT be called
+        run_deep_research(
+            "Diligence for Test Solar Farm",
+            depth=1,
+            research_type="diligence",
+            asset_metadata=_ZA_SOLAR_ASSET,
+        )
+        mock_policy.assert_not_called()
+
+        # US asset: policy search SHOULD be called
+        mock_policy.reset_mock()
+        us_asset = {**_ZA_SOLAR_ASSET, "country": "United States"}
+        run_deep_research(
+            "Diligence for Test Solar Farm",
+            depth=1,
+            research_type="diligence",
+            asset_metadata=us_asset,
+        )
+        assert mock_policy.call_count > 0, "US diligence should trigger policy search"
+
+
+def test_build_diligence_context_with_real_imaging_data():
+    """_build_diligence_context queries the real imaging store and returns
+    structured context with actual comparable plant data from disk."""
+    from engine.deep_research_service import _build_diligence_context
+
+    context_text, raw_data = _build_diligence_context(_ZA_SOLAR_ASSET)
+
+    # Context should describe comparable plants found in real DB
+    assert "Comparable solar Plants in South Africa" in context_text, \
+        f"Context missing comparable plants section. Got: {context_text[:200]}"
+    assert "found" in context_text, "Context should report count of plants found"
+
+    # raw_data must contain actual plant features from the imaging DB
+    assert "comparable_plants" in raw_data, "raw_data missing comparable_plants key"
+    plants = raw_data["comparable_plants"]
+    assert isinstance(plants, list)
+    assert len(plants) > 0, "No comparable plants returned from real imaging DB"
+    assert len(plants) <= 20, "Should be capped at 20 plants"
+
+    # Each plant must have real capacity data
+    for plant in plants:
+        cap = plant.get("properties", {}).get("capacity_mw", 0)
+        assert isinstance(cap, (int, float)) and cap > 0, \
+            f"Plant missing positive capacity_mw: {plant.get('properties', {})}"
+
+
+def test_generate_diligence_charts_with_real_comparable_data():
+    """generate_diligence_charts produces 2 valid PNG charts using real
+    comparable plant data from the imaging store on disk."""
+    from workflows.deep_research.synthesizer import generate_diligence_charts
+
+    charts = generate_diligence_charts(_ZA_SOLAR_ASSET)
+
+    # Must produce exactly 2 charts: revenue estimate + capacity benchmark
+    assert len(charts) == 2, f"Expected 2 charts, got {len(charts)}: {[t for t,_ in charts]}"
+
+    titles = [title for title, _ in charts]
+    assert "Revenue Estimate" in titles, f"Missing Revenue Estimate chart. Got: {titles}"
+    assert "Capacity Benchmark" in titles, f"Missing Capacity Benchmark chart. Got: {titles}"
+
+    # Both must be valid PNG images
+    for title, data_uri in charts:
+        assert data_uri.startswith("data:image/png;base64,"), \
+            f"Chart '{title}' not a data URI: {data_uri[:50]}"
+        b64_data = data_uri.split(",", 1)[1]
+        decoded = base64.b64decode(b64_data)
+        # PNG magic bytes: \x89PNG\r\n\x1a\n
+        assert decoded[:4] == b"\x89PNG", \
+            f"Chart '{title}' is not valid PNG (magic bytes: {decoded[:4]})"
+
+    # Verify the capacity benchmark was built from real data, not an empty set
+    from tools.imaging.store import ImagingDataStore
+    img_store = ImagingDataStore()
+    comparable = img_store.get_generation_assets(technology="solar", country="South Africa")
+    features = comparable.get("features", []) if isinstance(comparable, dict) else []
+    assert len(features) > 0, "Capacity benchmark chart requires real comparable plants"
+
+
+def test_diligence_synthesis_prompt_structure_with_real_context():
+    """Diligence synthesis prompt contains all 6 required sections, real asset
+    metadata, and real local data context from the imaging store."""
+    from workflows.deep_research.synthesizer import _build_diligence_synthesis_prompt
+    from engine.deep_research_service import _build_diligence_context
+    from engine.models import ResearchState, Source
+
+    # Get real context from real stores
+    real_context, _ = _build_diligence_context(_ZA_SOLAR_ASSET)
+
+    state = ResearchState(
+        original_query="Brownfield acquisition diligence for Test Solar Farm",
+        research_type="diligence",
+        asset_metadata=_ZA_SOLAR_ASSET,
+    )
+    # Add a source so the prompt has something to format
+    state.sources_checked = [
+        Source(source_id="src1", url="https://example.com", title="Test Source",
+               source_type="web", relevance_score=0.8, credibility_score=0.7),
+    ]
+
+    prompt = _build_diligence_synthesis_prompt(
+        state, diligence_context=real_context, asset_metadata=_ZA_SOLAR_ASSET,
+    )
+
+    # All 6 exact section headers must appear
+    required_headers = [
+        "## Executive Summary",
+        "## Tariff & Revenue Potential",
+        "## Regulatory & Licensing Requirements",
+        "## Performance Gap Analysis",
+        "## Vendor & Counterparty Relationships",
+        "## Risk Summary & Recommendation",
+    ]
+    for header in required_headers:
+        assert header in prompt, f"Missing required header '{header}' in prompt"
+
+    # Real asset metadata must be in the prompt
+    assert "Test Solar Farm" in prompt, "Asset name not in prompt"
+    assert "solar" in prompt.lower(), "Technology not in prompt"
+    assert "100" in prompt, "Capacity not in prompt"
+    assert "South Africa" in prompt, "Country not in prompt"
+
+    # Real local data context must be injected
+    assert "LOCAL DATA CONTEXT" in prompt, "Missing local data context block"
+    assert "Comparable solar Plants" in prompt, "Real comparable plants data not in prompt"
+
+    # The ranked source must appear
+    assert "Test Source" in prompt, "Source not formatted into prompt"
+
+
+def test_synthesize_direct_takes_diligence_branch():
+    """synthesize_direct uses the diligence prompt (not the generic direct prompt),
+    calls generate_diligence_charts with the real imaging DB, and inserts chart
+    markdown into the synthesis output."""
+    from workflows.deep_research.synthesizer import synthesize_direct
+    from engine.models import ResearchState, Source
+
+    state = ResearchState(
+        original_query="Brownfield acquisition diligence for Test Solar Farm",
+        research_type="diligence",
+        asset_metadata=_ZA_SOLAR_ASSET,
+    )
+    state.sources_checked = [
+        Source(source_id="src1", url="https://example.com/1", title="Solar Tariff Report",
+               source_type="web", relevance_score=0.9, credibility_score=0.8),
+        Source(source_id="src2", url="https://example.com/2", title="ZA Grid Policy",
+               source_type="policy", relevance_score=0.85, credibility_score=0.7),
+    ]
+
+    # Fake LLM output with all 6 required sections
+    fake_synthesis = (
+        "## Executive Summary\n"
+        "This asset shows moderate potential [Solar Tariff Report].\n\n"
+        "## Tariff & Revenue Potential\n"
+        "Tariffs in South Africa average $0.08/kWh [Solar Tariff Report].\n\n"
+        "## Regulatory & Licensing Requirements\n"
+        "NERSA licensing is required [ZA Grid Policy].\n\n"
+        "## Performance Gap Analysis\n"
+        "Capacity factor benchmarks at 20% for solar [Solar Tariff Report].\n\n"
+        "## Vendor & Counterparty Relationships\n"
+        "Eskom is the primary offtaker [ZA Grid Policy].\n\n"
+        "## Risk Summary & Recommendation\n"
+        "Key risks include regulatory uncertainty [ZA Grid Policy].\n"
+    )
+
+    captured_prompts = []
+
+    def fake_model_call(prompt, system_prompt=None):
+        captured_prompts.append(prompt)
+        return fake_synthesis
+
+    # Patch the model call and the quality gate. The quality gate expects
+    # a "Direct Answer" section (generic path); diligence has different
+    # headers. We test that the diligence branch is taken and charts are
+    # inserted — the quality gate is not what's under test here.
+    with patch("workflows.deep_research.synthesizer._call_research_synthesis_model",
+               side_effect=fake_model_call), \
+         patch("workflows.deep_research.synthesizer._passes_direct_synthesis_quality_gate",
+               return_value=True):
+        result = synthesize_direct(
+            state,
+            asset_metadata=_ZA_SOLAR_ASSET,
+            diligence_context="Comparable solar Plants in South Africa: 342 found",
+        )
+
+    # Verify the diligence prompt was used, not the generic one
+    assert len(captured_prompts) >= 1, "Model was never called"
+    prompt_sent = captured_prompts[0]
+    assert "ASSET UNDER REVIEW" in prompt_sent, \
+        "Diligence prompt not used — 'ASSET UNDER REVIEW' missing"
+    assert "Test Solar Farm" in prompt_sent, "Asset name not in prompt sent to model"
+
+    # Charts must be inserted into the synthesis output
+    assert "![Revenue Estimate](data:image/png;base64," in result, \
+        "Revenue chart not inserted into synthesis"
+    assert "![Capacity Benchmark](data:image/png;base64," in result, \
+        "Capacity benchmark chart not inserted into synthesis"
+
+    # Revenue chart should follow the Tariff section (not be appended randomly)
+    tariff_pos = result.find("## Tariff & Revenue Potential")
+    revenue_chart_pos = result.find("![Revenue Estimate]")
+    assert tariff_pos >= 0, "Tariff section missing from output"
+    assert revenue_chart_pos > tariff_pos, \
+        "Revenue chart should be inserted after the Tariff section"
+
+    # Capacity benchmark chart should follow the Performance section
+    perf_pos = result.find("## Performance Gap Analysis")
+    bench_chart_pos = result.find("![Capacity Benchmark]")
+    assert perf_pos >= 0, "Performance section missing from output"
+    assert bench_chart_pos > perf_pos, \
+        "Capacity benchmark chart should be inserted after the Performance section"
+
+
+def test_api_passes_asset_metadata_through_to_pipeline():
+    """POST /api/research passes asset_metadata and research_type all the way
+    through to _run_research_with_progress, not just accepting silently."""
+    mod = _import_app_module()
+    client = mod.app.test_client()
+
+    captured_kwargs = {}
+
+    def capture_research(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+
+    with patch("ui.web.app._run_research_with_progress", side_effect=capture_research):
+        resp = client.post("/api/research", json={
+            "query": "Brownfield diligence for Test Solar Farm",
+            "depth": 1,
+            "research_type": "diligence",
+            "asset_metadata": {
+                "name": "Test Solar Farm",
+                "technology": "solar",
+                "country": "South Africa",
+                "capacity_mw": 100,
+            },
+        })
+
+    assert resp.status_code == 200
+    assert "research_id" in resp.get_json()
+
+    # asset_metadata must be passed through, not dropped
+    assert "asset_metadata" in captured_kwargs, \
+        f"asset_metadata not passed to pipeline. kwargs: {list(captured_kwargs.keys())}"
+    meta = captured_kwargs["asset_metadata"]
+    assert meta["name"] == "Test Solar Farm"
+    assert meta["technology"] == "solar"
+    assert meta["country"] == "South Africa"
+    assert meta["capacity_mw"] == 100
+
+    # research_type must be "diligence"
+    assert captured_kwargs.get("research_type") == "diligence", \
+        f"research_type not passed correctly: {captured_kwargs.get('research_type')}"
+
+
+def test_extractive_summarize_scores_relevant_sentences():
+    """_extractive_summarize returns sentences most similar to the query,
+    not random ones, using TF-IDF cosine similarity."""
+    from workflows.deep_research.synthesizer import _extractive_summarize
+
+    texts = [
+        "Lesotho electricity tariff schedule sets feed-in tariff at 0.85 USD/kWh for solar IPPs.",
+        "The weather in Paris is lovely this time of year with temperatures around 22 degrees.",
+        "LEWA requires all independent power producers to obtain a generation license before grid connection.",
+        "Football World Cup 2026 will be held in North America across three countries.",
+        "Lesotho Electricity Company signed a 20-year PPA with Globeleq for 100MW solar output.",
+        "Recipe for chocolate cake requires flour, sugar, eggs, and butter mixed together.",
+    ]
+    query = "Lesotho solar power purchase agreement tariff"
+
+    result = _extractive_summarize(texts, query, max_sentences=3)
+
+    # Relevant sentences about Lesotho/solar/tariff/PPA should be selected
+    assert "tariff" in result.lower() or "ppa" in result.lower(), \
+        f"Extractive summary missed tariff/PPA content: {result}"
+    assert "lesotho" in result.lower(), \
+        f"Extractive summary missed Lesotho content: {result}"
+    # Irrelevant sentences should NOT appear
+    assert "football" not in result.lower(), \
+        f"Extractive summary included irrelevant football content: {result}"
+    assert "chocolate" not in result.lower(), \
+        f"Extractive summary included irrelevant recipe content: {result}"
+    assert "paris" not in result.lower(), \
+        f"Extractive summary included irrelevant Paris content: {result}"
+
+
+def test_deterministic_diligence_synthesis_produces_domain_sections():
+    """When LLM is unavailable, _deterministic_diligence_synthesis produces
+    a structured report with domain sections from tagged sources."""
+    from engine.models import Source, ResearchState
+    from workflows.deep_research.synthesizer import _deterministic_diligence_synthesis
+
+    # Build sources tagged with different intent domains
+    sources = []
+    domain_content = {
+        "commercial": "Lesotho feed-in tariff for solar is 0.85 USD per kWh under the LEWA tariff schedule 2025.",
+        "licensing": "LEWA requires generation license application with environmental clearance before construction.",
+        "environmental": "Grid connection at 132kV Mafeteng substation requires LEWA technical approval and EIA.",
+        "performance": "Average solar capacity factor in Lesotho is 19.2% based on measured irradiance data.",
+        "counterparty": "Lesotho Electricity Company is the sole offtaker for all IPP generation under standard PPA.",
+        "asset_specific": "Globeleq acquired the Mafeteng Solar project in 2024 for USD 85 million.",
+    }
+    for domain, content in domain_content.items():
+        s = Source(
+            source_id=f"src_{domain}",
+            url=f"https://example.com/{domain}",
+            title=f"{domain.title()} Source",
+            content_snippet=content,
+            content_full=content,
+            relevance_score=0.7,
+            credibility_score=0.6,
+            intent_domain=domain,
+        )
+        sources.append(s)
+
+    state = ResearchState(
+        original_query="Brownfield acquisition diligence for Mafeteng Solar",
+        research_type="diligence",
+    )
+    state.sources_checked = sources
+
+    result = _deterministic_diligence_synthesis(state, _ZA_SOLAR_ASSET)
+
+    # Must have domain section headers (not generic Direct Answer/Supporting Evidence)
+    assert "## Tariff & Revenue" in result, f"Missing Tariff section:\n{result}"
+    assert "## Regulatory & Licensing" in result, f"Missing Regulatory section:\n{result}"
+    assert "## Performance" in result, f"Missing Performance section:\n{result}"
+    assert "## Vendor & Counterparty" in result or "## Counterparty" in result, \
+        f"Missing Vendor section:\n{result}"
+    # Must NOT have generic fallback sections
+    assert "## Direct Answer" not in result, f"Generic fallback used instead of diligence:\n{result}"
+    assert "## Supporting Evidence" not in result, f"Generic fallback used instead of diligence:\n{result}"
+
+    # Content from tagged sources should appear in matching sections
+    assert "tariff" in result.lower(), "Tariff content missing from synthesis"
+    assert "capacity factor" in result.lower() or "19.2" in result, "Performance content missing"
+    assert "synthesis_model" not in result  # implementation detail shouldn't leak
+
+
+def test_diligence_fallback_used_when_llm_unavailable():
+    """When _call_research_synthesis_model returns None for diligence,
+    synthesize_direct uses the diligence template with source content routed
+    to the correct domain sections — not the generic Direct Answer fallback."""
+    from engine.models import Source, ResearchState
+    from workflows.deep_research.synthesizer import synthesize_direct
+
+    domain_snippets = [
+        ("commercial", "Feed-in tariff rate is 0.85 USD/kWh for solar generation in Lesotho."),
+        ("licensing", "LEWA generation license required for all IPPs above 500kW capacity."),
+        ("performance", "Measured capacity factor for Lesotho solar plants averages 19.2 percent."),
+    ]
+    sources = []
+    for i, (domain, snippet) in enumerate(domain_snippets):
+        s = Source(
+            source_id=f"test_{i}",
+            url=f"https://example.com/{i}",
+            title=f"Source {domain.title()}",
+            content_snippet=snippet,
+            content_full=snippet,
+            relevance_score=0.65,
+            credibility_score=0.5,
+            intent_domain=domain,
+        )
+        sources.append(s)
+
+    state = ResearchState(
+        original_query="Diligence for Mafeteng Solar Farm",
+        research_type="diligence",
+    )
+    state.sources_checked = sources
+
+    with patch("workflows.deep_research.synthesizer._call_research_synthesis_model", return_value=None):
+        result = synthesize_direct(state, asset_metadata=_ZA_SOLAR_ASSET)
+
+    # Must use diligence domain sections, not generic fallback
+    assert "## Tariff & Revenue" in result, \
+        f"Missing Tariff & Revenue section. Got:\n{result[:500]}"
+    assert "## Regulatory" in result, \
+        f"Missing Regulatory section. Got:\n{result[:500]}"
+    assert "## Direct Answer" not in result, \
+        f"Generic fallback used instead of diligence fallback:\n{result[:500]}"
+
+    # Source content must appear in the output (not just headers)
+    result_lower = result.lower()
+    assert "0.85" in result or "tariff" in result_lower, \
+        f"Commercial source content not routed to output:\n{result[:800]}"
+    assert "lewa" in result_lower or "license" in result_lower, \
+        f"Licensing source content not routed to output:\n{result[:800]}"
+    assert "19.2" in result or "capacity factor" in result_lower, \
+        f"Performance source content not routed to output:\n{result[:800]}"
+
+
+def test_diligence_variant_suppression():
+    """Diligence searches force num_variants=1 to prevent LLM from mangling
+    specific analyst-style queries into generic subtopics."""
+    from engine.deep_research_service import _generate_query_variants
+
+    diligence_query = "Lesotho independent power producer power purchase agreement solar tariff rates feed-in tariff 2025 2026"
+
+    # With num_variants=1 (what diligence forces), query passes through untouched
+    variants = _generate_query_variants(diligence_query, 1)
+    assert variants == [diligence_query], \
+        f"num_variants=1 should return query unchanged, got: {variants}"
+
+    # Verify the suppression logic in the search loop itself
+    from engine.deep_research_service import run_deep_research
+
+    captured_variants = []
+
+    def mock_aggregate(query, **kwargs):
+        captured_variants.append(query)
+        return []
+
+    with patch("engine.deep_research_service.aggregate_sources", side_effect=mock_aggregate), \
+         patch("workflows.deep_research.synthesizer.synthesize_direct", return_value="test"):
+        run_deep_research(
+            "Diligence for Test Solar Farm",
+            depth=2,  # depth 2 normally uses 2-3 variants
+            research_type="diligence",
+            asset_metadata=_ZA_SOLAR_ASSET,
+        )
+
+    # Each intent should produce exactly 1 variant (the original query, not LLM-decomposed)
+    # With 6 intents × 1 variant = 6 total search calls
+    assert len(captured_variants) == 6, \
+        f"Expected 6 search calls (6 intents × 1 variant), got {len(captured_variants)}"
