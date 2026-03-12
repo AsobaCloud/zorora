@@ -1815,15 +1815,24 @@
             <div class="global-view-panel">
                 <div class="global-view-filters">
                     <div>
-                        <label for="regState">State</label>
+                        <label for="regJurisdiction">Jurisdiction</label>
+                        <select id="regJurisdiction">
+                            <option value="ALL">All</option>
+                            <option value="US">United States</option>
+                            <option value="ZA">South Africa</option>
+                            <option value="ZW">Zimbabwe</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="regState">US State</label>
                         <input type="text" id="regState" placeholder="e.g., CA">
                     </div>
                     <div>
-                        <label for="regFuel">Fuel</label>
+                        <label for="regFuel">US Fuel</label>
                         <input type="text" id="regFuel" placeholder="e.g., SUN">
                     </div>
                     <div>
-                        <label for="regYear">Year</label>
+                        <label for="regYear">US Year</label>
                         <input type="number" id="regYear" placeholder="e.g., 2025" min="2000" max="2050">
                     </div>
                     <div style="display:flex;align-items:flex-end;gap:8px;">
@@ -1832,17 +1841,21 @@
                     </div>
                 </div>
 
+                <div style="color:var(--text-light);font-size:0.88rem;margin-bottom:12px;">
+                    Cached regulatory events are the primary view. Jurisdiction filters the event and provenance cache; state, fuel, and year refine the US quantitative cache.
+                </div>
+
                 <div class="dataset-cards-grid" id="regulatoryCardsGrid">
-                    <div style="color:var(--text-light);font-size:0.9rem;">Load regulatory data to view RPS targets, EIA generation, and utility rates.</div>
+                    <div style="color:var(--text-light);font-size:0.9rem;">Load cached regulatory events, provenance, and US quantitative data.</div>
                 </div>
 
                 <div class="articles-table-container" style="margin-top:18px;">
                     <table class="articles-table">
                         <thead>
                             <tr>
-                                <th>RPS / CES Targets</th>
-                                <th>Capacity Snapshot</th>
-                                <th>Utility Rates</th>
+                                <th>Recent Regulatory Events</th>
+                                <th>Cache Provenance</th>
+                                <th>US Quantitative Cache</th>
                             </tr>
                         </thead>
                         <tbody id="regulatoryBody">
@@ -3588,14 +3601,117 @@
             }).join('');
         }
 
+        function formatRegulatoryDate(value) {
+            const text = (value || '').toString().trim();
+            return text ? text.slice(0, 10) : 'N/A';
+        }
+
+        function renderRegulatoryEvents(events) {
+            if (!events.length) {
+                return '<span style="color:var(--text-light);">No cached regulatory events for this filter.</span>';
+            }
+            return events.slice(0, 8).map(item => {
+                const jurisdiction = escapeHtml(item.jurisdiction || 'NA');
+                const eventType = escapeHtml((item.event_type || 'event').replaceAll('_', ' '));
+                const regulator = escapeHtml(item.regulator || 'Unknown regulator');
+                const title = escapeHtml(item.title || 'Untitled');
+                const sourceUrl = item.source_url ? escapeHtml(item.source_url) : '';
+                const linkedTitle = sourceUrl
+                    ? `<a href="${sourceUrl}" target="_blank" rel="noopener" style="color:#4f46e5;text-decoration:none;">${title}</a>`
+                    : title;
+                return `
+                    <div style="padding-bottom:10px;margin-bottom:10px;border-bottom:1px solid var(--border-grey);">
+                        <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:4px;">
+                            <strong style="font-size:0.82rem;">${escapeHtml(formatRegulatoryDate(item.published_date))}</strong>
+                            <span class="tag-chip">${jurisdiction}</span>
+                            <span class="tag-chip">${eventType}</span>
+                        </div>
+                        <div style="font-weight:600;color:var(--text-dark);line-height:1.35;">${linkedTitle}</div>
+                        <div style="font-size:0.78rem;color:var(--text-light);margin-top:4px;">${regulator} | ${escapeHtml(item.source_system || '')}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function renderRegulatoryProvenance(rawDocuments, transformRuns) {
+            if (!rawDocuments.length && !transformRuns.length) {
+                return '<span style="color:var(--text-light);">No provenance cached yet. Refresh to populate source fetch records.</span>';
+            }
+            const runMap = new Map(transformRuns.map(run => [run.source_system, run]));
+            const systems = [...new Set([
+                ...rawDocuments.map(item => item.source_system),
+                ...transformRuns.map(item => item.source_system),
+            ].filter(Boolean))];
+            return systems.map(sourceSystem => {
+                const doc = rawDocuments.find(item => item.source_system === sourceSystem) || {};
+                const run = runMap.get(sourceSystem) || {};
+                const metadata = doc.metadata || {};
+                const detailBits = [];
+                if (doc.fetch_status) detailBits.push(`status: ${doc.fetch_status}`);
+                if (metadata.fallback_reason) detailBits.push(`fallback: ${metadata.fallback_reason}`);
+                if (metadata.record_count != null) detailBits.push(`records: ${metadata.record_count}`);
+                if (run.transform_version) detailBits.push(`transform: ${run.transform_version}`);
+                return `
+                    <div style="padding-bottom:10px;margin-bottom:10px;border-bottom:1px solid var(--border-grey);">
+                        <div style="font-weight:600;color:var(--text-dark);">${escapeHtml(sourceSystem || 'unknown_source')}</div>
+                        <div style="font-size:0.78rem;color:var(--text-light);margin-top:4px;">
+                            ${escapeHtml(detailBits.join(' | ') || 'No provenance details available')}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function renderRegulatoryQuantCache(rpsItems, capacityItems, generationItems, rateItems) {
+            const blocks = [];
+            if (rpsItems.length) {
+                blocks.push(`
+                    <div style="margin-bottom:12px;">
+                        <div style="font-weight:600;color:var(--text-dark);margin-bottom:4px;">RPS / CES Targets</div>
+                        <div style="font-size:0.82rem;line-height:1.45;">${rpsItems.slice(0, 4).map(item => `${escapeHtml(item.state || '')} ${escapeHtml(String(item.year || ''))}: ${Math.round((item.target_pct || 0) * 100)}% ${escapeHtml(item.tier || '')}`).join('<br>')}</div>
+                    </div>
+                `);
+            }
+            if (capacityItems.length || generationItems.length) {
+                blocks.push(`
+                    <div style="margin-bottom:12px;">
+                        <div style="font-weight:600;color:var(--text-dark);margin-bottom:4px;">Power Data</div>
+                        <div style="font-size:0.82rem;line-height:1.45;">
+                            Capacity rows: ${escapeHtml(String(capacityItems.length))}<br>
+                            Generation rows: ${escapeHtml(String(generationItems.length))}
+                        </div>
+                    </div>
+                `);
+            }
+            if (rateItems.length) {
+                blocks.push(`
+                    <div style="margin-bottom:12px;">
+                        <div style="font-weight:600;color:var(--text-dark);margin-bottom:4px;">Utility Rates</div>
+                        <div style="font-size:0.82rem;line-height:1.45;">${rateItems.slice(0, 4).map(item => `${escapeHtml(item.utility_name || 'Unknown')}: ${escapeHtml(item.sector || '')} ${Number(item.rate_kwh || 0).toFixed(4)} $/kWh`).join('<br>')}</div>
+                    </div>
+                `);
+            }
+            if (!blocks.length) {
+                return '<span style="color:var(--text-light);">No US quantitative cache rows match this filter.</span>';
+            }
+            return blocks.join('');
+        }
+
         async function loadRegulatoryView() {
+            const jurisdiction = (document.getElementById('regJurisdiction')?.value || 'ALL').trim().toUpperCase();
             const state = (document.getElementById('regState')?.value || '').trim().toUpperCase();
             const fuelType = (document.getElementById('regFuel')?.value || '').trim().toUpperCase();
             const year = (document.getElementById('regYear')?.value || '').trim();
+            const eventParams = new URLSearchParams();
+            const provenanceParams = new URLSearchParams();
             const rpsParams = new URLSearchParams();
             const eiaParams = new URLSearchParams();
             const rateParams = new URLSearchParams();
 
+            if (jurisdiction && jurisdiction !== 'ALL') {
+                eventParams.set('jurisdiction', jurisdiction);
+                provenanceParams.set('jurisdiction', jurisdiction);
+            }
             if (state) {
                 rpsParams.set('state', state);
                 eiaParams.set('state', state);
@@ -3609,60 +3725,93 @@
             }
 
             try {
-                const [rpsRes, capacityRes, generationRes, ratesRes] = await Promise.all([
+                const [eventsRes, provenanceRes, rpsRes, capacityRes, generationRes, ratesRes] = await Promise.all([
+                    fetch(`/api/regulatory/events?${eventParams}`),
+                    fetch(`/api/regulatory/provenance?${provenanceParams}`),
                     fetch(`/api/regulatory/rps?${rpsParams}`),
                     fetch(`/api/regulatory/eia/capacity?${eiaParams}`),
                     fetch(`/api/regulatory/eia/generation?${eiaParams}`),
                     fetch(`/api/regulatory/rates?${rateParams}`),
                 ]);
+                const eventsData = eventsRes.ok ? await eventsRes.json() : { items: [] };
+                const provenanceData = provenanceRes.ok ? await provenanceRes.json() : { raw_documents: [], transform_runs: [] };
                 const rpsData = rpsRes.ok ? await rpsRes.json() : { items: [] };
                 const capacityData = capacityRes.ok ? await capacityRes.json() : { items: [] };
                 const generationData = generationRes.ok ? await generationRes.json() : { items: [] };
                 const ratesData = ratesRes.ok ? await ratesRes.json() : { items: [] };
 
+                const events = eventsData.items || [];
+                const rawDocuments = provenanceData.raw_documents || [];
+                const transformRuns = provenanceData.transform_runs || [];
+
                 const cards = document.getElementById('regulatoryCardsGrid');
                 if (cards) {
-                    const latestTarget = (rpsData.items || [])[0];
-                    const totalCapacity = (capacityData.items || []).reduce((sum, item) => sum + Number(item.value || 0), 0);
-                    const totalGeneration = (generationData.items || []).reduce((sum, item) => sum + Number(item.value || 0), 0);
-                    const rateValues = (ratesData.items || []).map(item => Number(item.rate_kwh || 0)).filter(Boolean);
-                    const avgRate = rateValues.length
-                        ? rateValues.reduce((sum, rate) => sum + rate, 0) / rateValues.length
-                        : null;
+                    const latestEvent = events[0];
+                    const jurisdictionCounts = Object.entries(
+                        events.reduce((acc, item) => {
+                            const key = item.jurisdiction || 'NA';
+                            acc[key] = (acc[key] || 0) + 1;
+                            return acc;
+                        }, {})
+                    );
+                    const jurisdictionSummary = jurisdictionCounts.length
+                        ? jurisdictionCounts.map(([key, count]) => `${key} ${count}`).join(' | ')
+                        : 'No jurisdictions cached';
+                    const sourceSystems = [...new Set([
+                        ...events.map(item => item.source_system),
+                        ...rawDocuments.map(item => item.source_system),
+                    ].filter(Boolean))];
+                    const okSources = rawDocuments.filter(item => item.fetch_status === 'ok').length;
+                    const fallbackSources = rawDocuments.filter(item => (item.metadata || {}).fallback_reason || item.fetch_status === 'seed_catalog').length;
+                    const rpsCount = Number(rpsData.count || (rpsData.items || []).length || 0);
+                    const capacityCount = Number(capacityData.count || (capacityData.items || []).length || 0);
+                    const generationCount = Number(generationData.count || (generationData.items || []).length || 0);
+                    const rateCount = Number(ratesData.count || (ratesData.items || []).length || 0);
                     cards.innerHTML = `
                         <div class="dataset-card">
-                            <div class="dataset-card-name">RPS / CES</div>
-                            <div class="dataset-card-value">${latestTarget ? `${Math.round((latestTarget.target_pct || 0) * 100)}%` : 'N/A'}</div>
-                            <div class="dataset-card-meta">${latestTarget ? `${escapeHtml(latestTarget.state || '')} ${escapeHtml(String(latestTarget.year || ''))}` : 'No target rows loaded'}</div>
+                            <div class="dataset-card-name">Cached Events</div>
+                            <div class="dataset-card-value">${events.length.toLocaleString()}</div>
+                            <div class="dataset-card-meta">${escapeHtml(jurisdictionSummary)}</div>
                         </div>
                         <div class="dataset-card">
-                            <div class="dataset-card-name">Installed Capacity</div>
-                            <div class="dataset-card-value">${totalCapacity ? totalCapacity.toLocaleString(undefined, { maximumFractionDigits: 1 }) : 'N/A'}</div>
-                            <div class="dataset-card-meta">${fuelType || 'All fuels'} | MW</div>
+                            <div class="dataset-card-name">Latest Event</div>
+                            <div class="dataset-card-value">${escapeHtml(formatRegulatoryDate(latestEvent?.published_date || ''))}</div>
+                            <div class="dataset-card-meta">${latestEvent ? `${escapeHtml(latestEvent.regulator || '')} | ${escapeHtml(latestEvent.jurisdiction || '')}` : 'No cached regulatory events'}</div>
                         </div>
                         <div class="dataset-card">
-                            <div class="dataset-card-name">Generation</div>
-                            <div class="dataset-card-value">${totalGeneration ? totalGeneration.toLocaleString(undefined, { maximumFractionDigits: 1 }) : 'N/A'}</div>
-                            <div class="dataset-card-meta">${fuelType || 'All fuels'} | thousand MWh</div>
+                            <div class="dataset-card-name">Active Sources</div>
+                            <div class="dataset-card-value">${sourceSystems.length}</div>
+                            <div class="dataset-card-meta">${escapeHtml(sourceSystems.slice(0, 3).join(', ') || 'No source systems cached')}</div>
                         </div>
                         <div class="dataset-card">
-                            <div class="dataset-card-name">Utility Rates</div>
-                            <div class="dataset-card-value">${avgRate != null ? avgRate.toFixed(4) : 'N/A'}</div>
-                            <div class="dataset-card-meta">avg $/kWh across stored sectors</div>
+                            <div class="dataset-card-name">Cache Status</div>
+                            <div class="dataset-card-value">${rawDocuments.length}</div>
+                            <div class="dataset-card-meta">${escapeHtml(`${okSources} ok | ${fallbackSources} fallback | ${transformRuns.length} transforms`)}</div>
+                        </div>
+                        <div class="dataset-card">
+                            <div class="dataset-card-name">US RPS Cache</div>
+                            <div class="dataset-card-value">${rpsCount.toLocaleString()}</div>
+                            <div class="dataset-card-meta">${state || 'All states'} | ${year || 'All years'}</div>
+                        </div>
+                        <div class="dataset-card">
+                            <div class="dataset-card-name">US Power Cache</div>
+                            <div class="dataset-card-value">${capacityCount.toLocaleString()} / ${generationCount.toLocaleString()}</div>
+                            <div class="dataset-card-meta">${escapeHtml(`${fuelType || 'All fuels'} | ${rateCount} rate rows`)}</div>
                         </div>
                     `;
                 }
 
                 const body = document.getElementById('regulatoryBody');
                 if (body) {
-                    const rpsItems = (rpsData.items || []).slice(0, 5);
-                    const capacityItems = (capacityData.items || []).slice(0, 5);
-                    const rateItems = (ratesData.items || []).slice(0, 5);
+                    const rpsItems = rpsData.items || [];
+                    const capacityItems = capacityData.items || [];
+                    const generationItems = generationData.items || [];
+                    const rateItems = ratesData.items || [];
                     body.innerHTML = `
                         <tr>
-                            <td>${rpsItems.length ? rpsItems.map(item => `${escapeHtml(item.state || '')} ${escapeHtml(String(item.year || ''))}: ${Math.round((item.target_pct || 0) * 100)}% ${escapeHtml(item.tier || '')}`).join('<br>') : '<span style="color:var(--text-light);">No matching target rows</span>'}</td>
-                            <td>${capacityItems.length ? capacityItems.map(item => `${escapeHtml(item.state || '')} ${escapeHtml(item.period || '')}: ${Number(item.value || 0).toLocaleString(undefined, { maximumFractionDigits: 1 })} ${escapeHtml(item.unit || '')}`).join('<br>') : '<span style="color:var(--text-light);">No matching capacity rows</span>'}</td>
-                            <td>${rateItems.length ? rateItems.map(item => `${escapeHtml(item.utility_name || 'Unknown')}: ${escapeHtml(item.sector || '')} ${Number(item.rate_kwh || 0).toFixed(4)} $/kWh`).join('<br>') : '<span style="color:var(--text-light);">No stored rate rows</span>'}</td>
+                            <td>${renderRegulatoryEvents(events)}</td>
+                            <td>${renderRegulatoryProvenance(rawDocuments, transformRuns)}</td>
+                            <td>${renderRegulatoryQuantCache(rpsItems, capacityItems, generationItems, rateItems)}</td>
                         </tr>
                     `;
                 }

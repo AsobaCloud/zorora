@@ -855,6 +855,35 @@ class TestRegulatoryApi:
             assert item["source_system"] == "zera_seed_catalog"
             mock_store.get_regulatory_events.assert_called_once_with(jurisdiction="ZW")
 
+    def test_provenance_endpoint_returns_cached_metadata(self, client):
+        with patch("ui.web.app.RegulatoryDataStore") as mock_store_cls:
+            mock_store = MagicMock()
+            mock_store.get_raw_documents.return_value = [
+                {
+                    "source_system": "zera_seed_catalog",
+                    "fetch_status": "seed_catalog",
+                    "metadata": {"fallback_reason": "anti_bot_gate"},
+                }
+            ]
+            mock_store.get_transform_runs.return_value = [
+                {
+                    "source_system": "zera_seed_catalog",
+                    "transform_version": "zera_seed_catalog.v1",
+                    "mapping": {"title": {"source": "title"}},
+                }
+            ]
+            mock_store_cls.return_value = mock_store
+
+            response = client.get("/api/regulatory/provenance?jurisdiction=ZW&source_system=zera_seed_catalog")
+            assert response.status_code == 200
+            payload = response.get_json()
+            assert payload["raw_document_count"] == 1
+            assert payload["transform_run_count"] == 1
+            assert payload["raw_documents"][0]["fetch_status"] == "seed_catalog"
+            assert payload["transform_runs"][0]["transform_version"] == "zera_seed_catalog.v1"
+            mock_store.get_raw_documents.assert_called_once_with(jurisdiction="ZW", source_system="zera_seed_catalog")
+            mock_store.get_transform_runs.assert_called_once_with(jurisdiction="ZW", source_system="zera_seed_catalog")
+
 
 def test_template_has_regulatory_mode():
     mod = _import_app_module()
@@ -865,3 +894,8 @@ def test_template_has_regulatory_mode():
     assert "data-mode=\"regulatory\"" in html
     assert "Regulatory" in html
     assert "regulatorySection" in html
+    assert "regJurisdiction" in html
+    assert "/api/regulatory/events" in html
+    assert "/api/regulatory/provenance" in html
+    assert "Recent Regulatory Events" in html
+    assert "Cache Provenance" in html
