@@ -3724,103 +3724,115 @@
                 rpsParams.set('year', year);
             }
 
-            try {
-                const [eventsRes, provenanceRes, rpsRes, capacityRes, generationRes, ratesRes] = await Promise.all([
-                    fetch(`/api/regulatory/events?${eventParams}`),
-                    fetch(`/api/regulatory/provenance?${provenanceParams}`),
-                    fetch(`/api/regulatory/rps?${rpsParams}`),
-                    fetch(`/api/regulatory/eia/capacity?${eiaParams}`),
-                    fetch(`/api/regulatory/eia/generation?${eiaParams}`),
-                    fetch(`/api/regulatory/rates?${rateParams}`),
-                ]);
-                const eventsData = eventsRes.ok ? await eventsRes.json() : { items: [] };
-                const provenanceData = provenanceRes.ok ? await provenanceRes.json() : { raw_documents: [], transform_runs: [] };
-                const rpsData = rpsRes.ok ? await rpsRes.json() : { items: [] };
-                const capacityData = capacityRes.ok ? await capacityRes.json() : { items: [] };
-                const generationData = generationRes.ok ? await generationRes.json() : { items: [] };
-                const ratesData = ratesRes.ok ? await ratesRes.json() : { items: [] };
+            eventParams.set('limit', '20');
+            rpsParams.set('limit', '10');
+            eiaParams.set('limit', '10');
+            rateParams.set('limit', '10');
 
-                const events = eventsData.items || [];
-                const rawDocuments = provenanceData.raw_documents || [];
-                const transformRuns = provenanceData.transform_runs || [];
+            const cards = document.getElementById('regulatoryCardsGrid');
+            const body = document.getElementById('regulatoryBody');
+            if (cards) cards.innerHTML = '<div class="dataset-card"><div class="dataset-card-name">Loading regulatory data...</div></div>';
+            if (body) body.innerHTML = '<tr><td colspan="3">Loading regulatory data...</td></tr>';
 
-                const cards = document.getElementById('regulatoryCardsGrid');
-                if (cards) {
-                    const latestEvent = events[0];
-                    const jurisdictionCounts = Object.entries(
-                        events.reduce((acc, item) => {
-                            const key = item.jurisdiction || 'NA';
-                            acc[key] = (acc[key] || 0) + 1;
-                            return acc;
-                        }, {})
-                    );
-                    const jurisdictionSummary = jurisdictionCounts.length
-                        ? jurisdictionCounts.map(([key, count]) => `${key} ${count}`).join(' | ')
-                        : 'No jurisdictions cached';
-                    const sourceSystems = [...new Set([
-                        ...events.map(item => item.source_system),
-                        ...rawDocuments.map(item => item.source_system),
-                    ].filter(Boolean))];
-                    const okSources = rawDocuments.filter(item => item.fetch_status === 'ok').length;
-                    const fallbackSources = rawDocuments.filter(item => (item.metadata || {}).fallback_reason || item.fetch_status === 'seed_catalog').length;
-                    const rpsCount = Number(rpsData.count || (rpsData.items || []).length || 0);
-                    const capacityCount = Number(capacityData.count || (capacityData.items || []).length || 0);
-                    const generationCount = Number(generationData.count || (generationData.items || []).length || 0);
-                    const rateCount = Number(ratesData.count || (ratesData.items || []).length || 0);
-                    cards.innerHTML = `
-                        <div class="dataset-card">
-                            <div class="dataset-card-name">Cached Events</div>
-                            <div class="dataset-card-value">${events.length.toLocaleString()}</div>
-                            <div class="dataset-card-meta">${escapeHtml(jurisdictionSummary)}</div>
-                        </div>
-                        <div class="dataset-card">
-                            <div class="dataset-card-name">Latest Event</div>
-                            <div class="dataset-card-value">${escapeHtml(formatRegulatoryDate(latestEvent?.published_date || ''))}</div>
-                            <div class="dataset-card-meta">${latestEvent ? `${escapeHtml(latestEvent.regulator || '')} | ${escapeHtml(latestEvent.jurisdiction || '')}` : 'No cached regulatory events'}</div>
-                        </div>
-                        <div class="dataset-card">
-                            <div class="dataset-card-name">Active Sources</div>
-                            <div class="dataset-card-value">${sourceSystems.length}</div>
-                            <div class="dataset-card-meta">${escapeHtml(sourceSystems.slice(0, 3).join(', ') || 'No source systems cached')}</div>
-                        </div>
-                        <div class="dataset-card">
-                            <div class="dataset-card-name">Cache Status</div>
-                            <div class="dataset-card-value">${rawDocuments.length}</div>
-                            <div class="dataset-card-meta">${escapeHtml(`${okSources} ok | ${fallbackSources} fallback | ${transformRuns.length} transforms`)}</div>
-                        </div>
-                        <div class="dataset-card">
-                            <div class="dataset-card-name">US RPS Cache</div>
-                            <div class="dataset-card-value">${rpsCount.toLocaleString()}</div>
-                            <div class="dataset-card-meta">${state || 'All states'} | ${year || 'All years'}</div>
-                        </div>
-                        <div class="dataset-card">
-                            <div class="dataset-card-name">US Power Cache</div>
-                            <div class="dataset-card-value">${capacityCount.toLocaleString()} / ${generationCount.toLocaleString()}</div>
-                            <div class="dataset-card-meta">${escapeHtml(`${fuelType || 'All fuels'} | ${rateCount} rate rows`)}</div>
-                        </div>
-                    `;
-                }
+            const results = await Promise.allSettled([
+                fetch(`/api/regulatory/events?${eventParams}`).then(r => r.ok ? r.json() : Promise.reject(r.statusText)),
+                fetch(`/api/regulatory/provenance?${provenanceParams}`).then(r => r.ok ? r.json() : Promise.reject(r.statusText)),
+                fetch(`/api/regulatory/rps?${rpsParams}`).then(r => r.ok ? r.json() : Promise.reject(r.statusText)),
+                fetch(`/api/regulatory/eia/capacity?${eiaParams}`).then(r => r.ok ? r.json() : Promise.reject(r.statusText)),
+                fetch(`/api/regulatory/eia/generation?${eiaParams}`).then(r => r.ok ? r.json() : Promise.reject(r.statusText)),
+                fetch(`/api/regulatory/rates?${rateParams}`).then(r => r.ok ? r.json() : Promise.reject(r.statusText)),
+            ]);
 
-                const body = document.getElementById('regulatoryBody');
-                if (body) {
-                    const rpsItems = rpsData.items || [];
-                    const capacityItems = capacityData.items || [];
-                    const generationItems = generationData.items || [];
-                    const rateItems = ratesData.items || [];
-                    body.innerHTML = `
-                        <tr>
-                            <td>${renderRegulatoryEvents(events)}</td>
-                            <td>${renderRegulatoryProvenance(rawDocuments, transformRuns)}</td>
-                            <td>${renderRegulatoryQuantCache(rpsItems, capacityItems, generationItems, rateItems)}</td>
-                        </tr>
-                    `;
-                }
-            } catch (err) {
-                console.error('Regulatory view load error:', err);
+            const val = (i, fallback) => results[i].status === 'fulfilled' ? results[i].value : fallback;
+            const errors = results.map((r, i) => r.status === 'rejected' ? r.reason : null).filter(Boolean);
+
+            const eventsData = val(0, { items: [], count: 0 });
+            const provenanceData = val(1, { raw_documents: [], transform_runs: [] });
+            const rpsData = val(2, { items: [], count: 0 });
+            const capacityData = val(3, { items: [], count: 0 });
+            const generationData = val(4, { items: [], count: 0 });
+            const ratesData = val(5, { items: [], count: 0 });
+
+            const events = eventsData.items || [];
+            const rawDocuments = provenanceData.raw_documents || [];
+            const transformRuns = provenanceData.transform_runs || [];
+
+            if (cards) {
+                const eventsTotal = eventsData.count || events.length;
+                const latestEvent = events[0];
+                const jurisdictionCounts = Object.entries(
+                    events.reduce((acc, item) => {
+                        const key = item.jurisdiction || 'NA';
+                        acc[key] = (acc[key] || 0) + 1;
+                        return acc;
+                    }, {})
+                );
+                const jurisdictionSummary = jurisdictionCounts.length
+                    ? jurisdictionCounts.map(([key, count]) => `${key} ${count}`).join(' | ')
+                    : 'No jurisdictions cached';
+                const sourceSystems = [...new Set([
+                    ...events.map(item => item.source_system),
+                    ...rawDocuments.map(item => item.source_system),
+                ].filter(Boolean))];
+                const okSources = rawDocuments.filter(item => item.fetch_status === 'ok').length;
+                const fallbackSources = rawDocuments.filter(item => (item.metadata || {}).fallback_reason || item.fetch_status === 'seed_catalog').length;
+                const rpsCount = Number(rpsData.count || (rpsData.items || []).length || 0);
+                const capacityCount = Number(capacityData.count || (capacityData.items || []).length || 0);
+                const generationCount = Number(generationData.count || (generationData.items || []).length || 0);
+                const rateCount = Number(ratesData.count || (ratesData.items || []).length || 0);
+                cards.innerHTML = `
+                    ${errors.length ? `<div class="dataset-card" style="border-color:#ef4444"><div class="dataset-card-name" style="color:#ef4444">Fetch Errors</div><div class="dataset-card-meta">${errors.length} endpoint(s) failed to load</div></div>` : ''}
+                    <div class="dataset-card">
+                        <div class="dataset-card-name">Cached Events</div>
+                        <div class="dataset-card-value">${eventsTotal.toLocaleString()}</div>
+                        <div class="dataset-card-meta">${escapeHtml(jurisdictionSummary)}</div>
+                    </div>
+                    <div class="dataset-card">
+                        <div class="dataset-card-name">Latest Event</div>
+                        <div class="dataset-card-value">${escapeHtml(formatRegulatoryDate(latestEvent?.published_date || ''))}</div>
+                        <div class="dataset-card-meta">${latestEvent ? `${escapeHtml(latestEvent.regulator || '')} | ${escapeHtml(latestEvent.jurisdiction || '')}` : 'No cached regulatory events'}</div>
+                    </div>
+                    <div class="dataset-card">
+                        <div class="dataset-card-name">Active Sources</div>
+                        <div class="dataset-card-value">${sourceSystems.length}</div>
+                        <div class="dataset-card-meta">${escapeHtml(sourceSystems.slice(0, 3).join(', ') || 'No source systems cached')}</div>
+                    </div>
+                    <div class="dataset-card">
+                        <div class="dataset-card-name">Cache Status</div>
+                        <div class="dataset-card-value">${rawDocuments.length}</div>
+                        <div class="dataset-card-meta">${escapeHtml(`${okSources} ok | ${fallbackSources} fallback | ${transformRuns.length} transforms`)}</div>
+                    </div>
+                    <div class="dataset-card">
+                        <div class="dataset-card-name">US RPS Cache</div>
+                        <div class="dataset-card-value">${rpsCount.toLocaleString()}</div>
+                        <div class="dataset-card-meta">${state || 'All states'} | ${year || 'All years'}</div>
+                    </div>
+                    <div class="dataset-card">
+                        <div class="dataset-card-name">US Power Cache</div>
+                        <div class="dataset-card-value">${capacityCount.toLocaleString()} / ${generationCount.toLocaleString()}</div>
+                        <div class="dataset-card-meta">${escapeHtml(`${fuelType || 'All fuels'} | ${rateCount} rate rows`)}</div>
+                    </div>
+                `;
+            }
+
+            if (body) {
+                const rpsItems = rpsData.items || [];
+                const capacityItems = capacityData.items || [];
+                const generationItems = generationData.items || [];
+                const rateItems = ratesData.items || [];
+                body.innerHTML = `
+                    <tr>
+                        <td>${renderRegulatoryEvents(events)}</td>
+                        <td>${renderRegulatoryProvenance(rawDocuments, transformRuns)}</td>
+                        <td>${renderRegulatoryQuantCache(rpsItems, capacityItems, generationItems, rateItems)}</td>
+                    </tr>
+                `;
             }
         }
 
         async function refreshRegulatoryView() {
+            const btn = document.querySelector('[onclick="refreshRegulatoryView()"]');
+            if (btn) { btn.disabled = true; btn.textContent = 'Refreshing...'; }
             try {
                 const response = await fetch('/api/regulatory/refresh', { method: 'POST' });
                 if (!response.ok) {
@@ -3830,6 +3842,8 @@
                 await loadRegulatoryView();
             } catch (err) {
                 alert('Failed to refresh regulatory data: ' + err.message);
+            } finally {
+                if (btn) { btn.disabled = false; btn.textContent = 'Refresh Cache'; }
             }
         }
 

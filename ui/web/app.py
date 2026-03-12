@@ -870,6 +870,12 @@ def get_market_latest():
         return jsonify({"error": str(e)}), 500
 
 
+def _strip_bulk_fields(items, extra_keys=()):
+    """Remove *_json bulk fields and any extra keys from response dicts."""
+    strip = {"properties_json", "metadata_json", "mapping_json"} | set(extra_keys)
+    return [{k: v for k, v in item.items() if k not in strip} for item in items]
+
+
 @app.route('/api/regulatory/rps', methods=['GET'])
 def get_regulatory_rps():
     """Return parsed RPS/CES targets with optional state/year filters."""
@@ -877,10 +883,14 @@ def get_regulatory_rps():
         state = request.args.get("state")
         year = request.args.get("year", type=int)
         standard_type = request.args.get("standard_type")
+        limit = request.args.get("limit", type=int)
         store = RegulatoryDataStore()
         items = store.get_rps_targets(state=state, year=year, standard_type=standard_type)
         store.close()
-        return jsonify({"count": len(items), "items": items})
+        total = len(items)
+        if limit is not None:
+            items = items[:limit]
+        return jsonify({"count": total, "items": _strip_bulk_fields(items)})
     except Exception as e:
         logger.error(f"Regulatory RPS error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
@@ -892,10 +902,14 @@ def get_regulatory_capacity():
     try:
         state = request.args.get("state")
         fuel_type = request.args.get("fuel_type")
+        limit = request.args.get("limit", type=int)
         store = RegulatoryDataStore()
         items = store.get_eia_series("operating-generator-capacity", state=state, fuel_type=fuel_type)
         store.close()
-        return jsonify({"count": len(items), "items": items})
+        total = len(items)
+        if limit is not None:
+            items = items[:limit]
+        return jsonify({"count": total, "items": _strip_bulk_fields(items)})
     except Exception as e:
         logger.error(f"Regulatory capacity error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
@@ -907,10 +921,14 @@ def get_regulatory_generation():
     try:
         state = request.args.get("state")
         fuel_type = request.args.get("fuel_type")
+        limit = request.args.get("limit", type=int)
         store = RegulatoryDataStore()
         items = store.get_eia_series("electric-power-operational-data", state=state, fuel_type=fuel_type)
         store.close()
-        return jsonify({"count": len(items), "items": items})
+        total = len(items)
+        if limit is not None:
+            items = items[:limit]
+        return jsonify({"count": total, "items": _strip_bulk_fields(items)})
     except Exception as e:
         logger.error(f"Regulatory generation error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
@@ -922,10 +940,14 @@ def get_regulatory_rates():
     try:
         state = request.args.get("state")
         sector = request.args.get("sector")
+        limit = request.args.get("limit", type=int)
         store = RegulatoryDataStore()
         items = store.get_utility_rates(state=state, sector=sector)
         store.close()
-        return jsonify({"count": len(items), "items": items})
+        total = len(items)
+        if limit is not None:
+            items = items[:limit]
+        return jsonify({"count": total, "items": _strip_bulk_fields(items)})
     except Exception as e:
         logger.error(f"Regulatory rates error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
@@ -938,6 +960,7 @@ def get_regulatory_events():
         jurisdiction = request.args.get("jurisdiction")
         event_type = request.args.get("event_type")
         source_system = request.args.get("source_system")
+        limit = request.args.get("limit", type=int)
         store = RegulatoryDataStore()
         query_args = {}
         if jurisdiction:
@@ -948,7 +971,10 @@ def get_regulatory_events():
             query_args["source_system"] = source_system
         items = store.get_regulatory_events(**query_args)
         store.close()
-        return jsonify({"count": len(items), "items": items})
+        total = len(items)
+        if limit is not None:
+            items = items[:limit]
+        return jsonify({"count": total, "items": _strip_bulk_fields(items)})
     except Exception as e:
         logger.error(f"Regulatory events error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
@@ -970,8 +996,8 @@ def get_regulatory_provenance():
         transform_runs = store.get_transform_runs(**query_args)
         store.close()
         return jsonify({
-            "raw_documents": raw_documents,
-            "transform_runs": transform_runs,
+            "raw_documents": _strip_bulk_fields(raw_documents, extra_keys=("payload_text",)),
+            "transform_runs": _strip_bulk_fields(transform_runs),
             "raw_document_count": len(raw_documents),
             "transform_run_count": len(transform_runs),
         })

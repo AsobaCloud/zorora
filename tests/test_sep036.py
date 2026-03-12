@@ -899,3 +899,131 @@ def test_template_has_regulatory_mode():
     assert "/api/regulatory/provenance" in html
     assert "Recent Regulatory Events" in html
     assert "Cache Provenance" in html
+
+
+# ---------------------------------------------------------------------------
+# SEP-035: limit param, stripped fields, loading/error UX
+# ---------------------------------------------------------------------------
+
+
+def test_store_limit_parameter(tmp_path):
+    """get_regulatory_events(limit=2) returns only 2 rows when 5 exist."""
+    from tools.regulatory.store import RegulatoryDataStore
+
+    store = RegulatoryDataStore(db_path=str(tmp_path / "regulatory.db"))
+    events = [
+        {
+            "jurisdiction": "US",
+            "regulator": "FERC",
+            "event_type": "rulemaking",
+            "title": f"Order {i}",
+            "summary": f"Test event {i}",
+            "published_date": f"2026-03-0{i}",
+            "effective_date": None,
+            "deadline_date": None,
+            "source_url": f"https://example.com/order{i}",
+            "properties": {"docket": f"RM-{i}"},
+        }
+        for i in range(1, 6)
+    ]
+    store.upsert_regulatory_events(events)
+    result = store.get_regulatory_events(limit=2)
+    assert len(result) == 2
+    all_result = store.get_regulatory_events()
+    assert len(all_result) == 5
+    store.close()
+
+
+def test_api_events_accepts_limit_and_returns_total_count():
+    """GET /api/regulatory/events?limit=1 returns 1 item but count reflects total."""
+    mod = _import_app_module()
+    client = mod.app.test_client()
+
+    with patch("ui.web.app.RegulatoryDataStore") as mock_store_cls:
+        mock_store = MagicMock()
+        all_items = [
+            {"jurisdiction": "US", "title": f"Order {i}", "properties_json": '{}'}
+            for i in range(5)
+        ]
+        mock_store.get_regulatory_events.return_value = all_items
+        mock_store_cls.return_value = mock_store
+
+        response = client.get("/api/regulatory/events?limit=1")
+        assert response.status_code == 200
+        payload = response.get_json()
+        assert payload["count"] == 5
+        assert len(payload["items"]) == 1
+
+
+def test_api_events_strips_properties_json():
+    """properties_json should not appear in API response items."""
+    mod = _import_app_module()
+    client = mod.app.test_client()
+
+    with patch("ui.web.app.RegulatoryDataStore") as mock_store_cls:
+        mock_store = MagicMock()
+        mock_store.get_regulatory_events.return_value = [
+            {
+                "jurisdiction": "US",
+                "title": "Order 1",
+                "properties_json": '{"docket": "RM-1"}',
+                "properties": {"docket": "RM-1"},
+            }
+        ]
+        mock_store_cls.return_value = mock_store
+
+        response = client.get("/api/regulatory/events")
+        assert response.status_code == 200
+        payload = response.get_json()
+        item = payload["items"][0]
+        assert "properties_json" not in item
+        assert "properties" in item
+
+
+def test_api_provenance_strips_payload_text():
+    """payload_text should not appear in provenance raw_documents response."""
+    mod = _import_app_module()
+    client = mod.app.test_client()
+
+    with patch("ui.web.app.RegulatoryDataStore") as mock_store_cls:
+        mock_store = MagicMock()
+        mock_store.get_raw_documents.return_value = [
+            {
+                "source_system": "nersa",
+                "fetch_status": "ok",
+                "payload_text": "<html>huge page</html>",
+                "metadata_json": '{}',
+                "metadata": {},
+            }
+        ]
+        mock_store.get_transform_runs.return_value = [
+            {
+                "source_system": "nersa",
+                "transform_version": "v1",
+                "mapping_json": '{}',
+                "mapping": {},
+            }
+        ]
+        mock_store_cls.return_value = mock_store
+
+        response = client.get("/api/regulatory/provenance")
+        assert response.status_code == 200
+        payload = response.get_json()
+        raw_doc = payload["raw_documents"][0]
+        assert "payload_text" not in raw_doc
+        assert "metadata_json" not in raw_doc
+        assert "metadata" in raw_doc
+        transform = payload["transform_runs"][0]
+        assert "mapping_json" not in transform
+        assert "mapping" in transform
+
+
+def test_template_has_loading_and_allsettled():
+    """Frontend JS should use Promise.allSettled and show loading state."""
+    mod = _import_app_module()
+    client = mod.app.test_client()
+    response = client.get("/")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "Promise.allSettled" in html
+    assert "Loading regulatory data" in html

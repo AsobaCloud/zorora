@@ -533,6 +533,7 @@ class RegulatoryDataStore:
         jurisdiction: Optional[str] = None,
         event_type: Optional[str] = None,
         source_system: Optional[str] = None,
+        limit: Optional[int] = None,
     ) -> list[dict]:
         query = "SELECT * FROM regulatory_events WHERE 1=1"
         params: list = []
@@ -546,6 +547,9 @@ class RegulatoryDataStore:
             query += " AND source_system = ?"
             params.append(source_system)
         query += " ORDER BY published_date DESC, title"
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(int(limit))
         rows = self.conn.execute(query, params).fetchall()
         return [dict(row) | {"properties": self._decode_json(row["properties_json"])} for row in rows]
 
