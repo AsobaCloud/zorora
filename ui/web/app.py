@@ -937,12 +937,46 @@ def get_regulatory_events():
     try:
         jurisdiction = request.args.get("jurisdiction")
         event_type = request.args.get("event_type")
+        source_system = request.args.get("source_system")
         store = RegulatoryDataStore()
-        items = store.get_regulatory_events(jurisdiction=jurisdiction, event_type=event_type)
+        query_args = {}
+        if jurisdiction:
+            query_args["jurisdiction"] = jurisdiction
+        if event_type:
+            query_args["event_type"] = event_type
+        if source_system:
+            query_args["source_system"] = source_system
+        items = store.get_regulatory_events(**query_args)
         store.close()
         return jsonify({"count": len(items), "items": items})
     except Exception as e:
         logger.error(f"Regulatory events error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/regulatory/provenance', methods=['GET'])
+def get_regulatory_provenance():
+    """Return raw-document and transform-run provenance for regulatory event sources."""
+    try:
+        jurisdiction = request.args.get("jurisdiction")
+        source_system = request.args.get("source_system")
+        store = RegulatoryDataStore()
+        query_args = {}
+        if jurisdiction:
+            query_args["jurisdiction"] = jurisdiction
+        if source_system:
+            query_args["source_system"] = source_system
+        raw_documents = store.get_raw_documents(**query_args)
+        transform_runs = store.get_transform_runs(**query_args)
+        store.close()
+        return jsonify({
+            "raw_documents": raw_documents,
+            "transform_runs": transform_runs,
+            "raw_document_count": len(raw_documents),
+            "transform_run_count": len(transform_runs),
+        })
+    except Exception as e:
+        logger.error(f"Regulatory provenance error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 

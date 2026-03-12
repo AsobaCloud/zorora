@@ -1,4 +1,4 @@
-"""SQLite cache for regulatory data."""
+"""SQLite cache for regulatory data and normalization provenance."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import hashlib
 import json
 import sqlite3
 import threading
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -13,6 +14,15 @@ from typing import Optional
 
 class RegulatoryDataStore:
     """Local SQLite store for regulatory records with staleness tracking."""
+
+    _EVENT_COLUMN_DEFINITIONS = {
+        "source_system": "TEXT",
+        "source_record_id": "TEXT",
+        "schema_version": "TEXT",
+        "transform_version": "TEXT",
+        "transform_run_id": "TEXT",
+        "raw_document_id": "TEXT",
+    }
 
     def __init__(self, db_path: Optional[str] = None):
         self.db_path = Path(db_path or (Path.home() / ".zorora" / "regulatory_data.db"))
@@ -53,8 +63,48 @@ class RegulatoryDataStore:
                 deadline_date TEXT,
                 published_date TEXT NOT NULL,
                 source_url TEXT,
+                source_system TEXT,
+                source_record_id TEXT,
+                schema_version TEXT,
+                transform_version TEXT,
+                transform_run_id TEXT,
+                raw_document_id TEXT,
                 properties_json TEXT,
                 fetched_at TEXT NOT NULL
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS regulatory_raw_documents (
+                id TEXT PRIMARY KEY,
+                jurisdiction TEXT,
+                source_system TEXT NOT NULL,
+                source_url TEXT,
+                content_type TEXT,
+                fetch_status TEXT NOT NULL,
+                http_status INTEGER,
+                document_hash TEXT,
+                payload_text TEXT,
+                metadata_json TEXT,
+                fetched_at TEXT NOT NULL
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS regulatory_transform_runs (
+                id TEXT PRIMARY KEY,
+                jurisdiction TEXT,
+                source_system TEXT NOT NULL,
+                raw_document_id TEXT,
+                transform_name TEXT NOT NULL,
+                schema_version TEXT NOT NULL,
+                transform_version TEXT NOT NULL,
+                mapping_json TEXT,
+                notes TEXT,
+                record_count INTEGER DEFAULT 0,
+                ran_at TEXT NOT NULL
             )
             """
         )
@@ -118,7 +168,19 @@ class RegulatoryDataStore:
             )
             """
         )
+        self._ensure_columns("regulatory_events", self._EVENT_COLUMN_DEFINITIONS)
         self.conn.commit()
+
+    def _ensure_columns(self, table_name: str, definitions: dict[str, str]):
+        columns = {
+            row["name"]
+            for row in self.conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        }
+        for column_name, column_type in definitions.items():
+            if column_name not in columns:
+                self.conn.execute(
+                    f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"
+                )
 
     def _update_metadata(self, source: str, count: int):
         now_utc = datetime.now(timezone.utc).isoformat()
@@ -134,6 +196,26 @@ class RegulatoryDataStore:
     def _make_id(self, *parts) -> str:
         raw = "|".join("" if part is None else str(part) for part in parts)
         return hashlib.md5(raw.encode("utf-8")).hexdigest()
+
+    def _decode_json(self, raw_value: Optional[str]) -> dict:
+        if not raw_value:
+            return {}
+        try:
+            value = json.loads(raw_value)
+        except (TypeError, ValueError):
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    def _coerce_time(self, value: Optional[str], default_value: str) -> str:
+        return value or default_value
+
+    def _source_counts(self, rows: list[dict], key: str) -> Counter:
+        counts: Counter = Counter()
+        for row in rows:
+            source = row.get(key)
+            if source:
+                counts[str(source)] += 1
+        return counts
 
     def upsert_rps_targets(self, records: list[dict]):
         if not records:
@@ -169,7 +251,7 @@ class RegulatoryDataStore:
                     record.get("compliance_cost_per_kwh"),
                     record.get("capacity_additions_mw"),
                     record.get("notes"),
-                    json.dumps(record.get("properties", {})),
+                    json.dumps(record.get("properties", {}), sort_keys=True),
                     now_utc,
                 ),
             )
@@ -203,7 +285,7 @@ class RegulatoryDataStore:
                     record.get("period"),
                     record.get("value"),
                     record.get("unit"),
-                    json.dumps(record.get("properties", {})),
+                    json.dumps(record.get("properties", {}), sort_keys=True),
                     now_utc,
                 ),
             )
@@ -236,12 +318,81 @@ class RegulatoryDataStore:
                     record.get("rate_kwh"),
                     record.get("lat"),
                     record.get("lon"),
-                    json.dumps(record.get("properties", {})),
+                    json.dumps(record.get("properties", {}), sort_keys=True),
                     now_utc,
                 ),
             )
         self.conn.commit()
         self._update_metadata("utility_rates", len(records))
+
+    def upsert_raw_documents(self, documents: list[dict]):
+        if not documents:
+            return
+        now_utc = datetime.now(timezone.utc).isoformat()
+        cur = self.conn.cursor()
+        for document in documents:
+            cur.execute(
+                """
+                INSERT OR REPLACE INTO regulatory_raw_documents
+                (id, jurisdiction, source_system, source_url, content_type, fetch_status, http_status,
+                 document_hash, payload_text, metadata_json, fetched_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    document.get("id") or self._make_id(
+                        document.get("source_system"),
+                        document.get("source_url"),
+                        document.get("document_hash"),
+                    ),
+                    document.get("jurisdiction"),
+                    document.get("source_system"),
+                    document.get("source_url"),
+                    document.get("content_type"),
+                    document.get("fetch_status") or "ok",
+                    document.get("http_status"),
+                    document.get("document_hash"),
+                    document.get("payload_text"),
+                    json.dumps(document.get("metadata", {}), sort_keys=True),
+                    self._coerce_time(document.get("fetched_at"), now_utc),
+                ),
+            )
+        self.conn.commit()
+        for source_system, count in self._source_counts(documents, "source_system").items():
+            self._update_metadata(source_system, count)
+
+    def upsert_transform_runs(self, runs: list[dict]):
+        if not runs:
+            return
+        now_utc = datetime.now(timezone.utc).isoformat()
+        cur = self.conn.cursor()
+        for run in runs:
+            cur.execute(
+                """
+                INSERT OR REPLACE INTO regulatory_transform_runs
+                (id, jurisdiction, source_system, raw_document_id, transform_name, schema_version,
+                 transform_version, mapping_json, notes, record_count, ran_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run.get("id") or self._make_id(
+                        run.get("source_system"),
+                        run.get("raw_document_id"),
+                        run.get("transform_name"),
+                        run.get("transform_version"),
+                    ),
+                    run.get("jurisdiction"),
+                    run.get("source_system"),
+                    run.get("raw_document_id"),
+                    run.get("transform_name"),
+                    run.get("schema_version"),
+                    run.get("transform_version"),
+                    json.dumps(run.get("mapping", {}), sort_keys=True),
+                    run.get("notes"),
+                    int(run.get("record_count", 0) or 0),
+                    self._coerce_time(run.get("ran_at"), now_utc),
+                ),
+            )
+        self.conn.commit()
 
     def upsert_regulatory_events(self, events: list[dict]):
         if not events:
@@ -249,10 +400,10 @@ class RegulatoryDataStore:
         now_utc = datetime.now(timezone.utc).isoformat()
         cur = self.conn.cursor()
         for event in events:
-            rec_id = self._make_id(
+            rec_id = event.get("id") or self._make_id(
+                event.get("source_system"),
+                event.get("source_record_id"),
                 event.get("jurisdiction"),
-                event.get("regulator"),
-                event.get("event_type"),
                 event.get("title"),
                 event.get("published_date"),
             )
@@ -260,8 +411,9 @@ class RegulatoryDataStore:
                 """
                 INSERT OR REPLACE INTO regulatory_events
                 (id, jurisdiction, regulator, event_type, title, summary, effective_date, deadline_date,
-                 published_date, source_url, properties_json, fetched_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 published_date, source_url, source_system, source_record_id, schema_version,
+                 transform_version, transform_run_id, raw_document_id, properties_json, fetched_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     rec_id,
@@ -274,8 +426,14 @@ class RegulatoryDataStore:
                     event.get("deadline_date"),
                     event.get("published_date"),
                     event.get("source_url"),
-                    json.dumps(event.get("properties", {})),
-                    now_utc,
+                    event.get("source_system"),
+                    event.get("source_record_id"),
+                    event.get("schema_version"),
+                    event.get("transform_version"),
+                    event.get("transform_run_id"),
+                    event.get("raw_document_id"),
+                    json.dumps(event.get("properties", {}), sort_keys=True),
+                    self._coerce_time(event.get("fetched_at"), now_utc),
                 ),
             )
         self.conn.commit()
@@ -300,7 +458,7 @@ class RegulatoryDataStore:
             params.append(standard_type)
         query += " ORDER BY state, year, tier"
         rows = self.conn.execute(query, params).fetchall()
-        return [dict(row) | {"properties": json.loads(row["properties_json"] or "{}")} for row in rows]
+        return [dict(row) | {"properties": self._decode_json(row["properties_json"])} for row in rows]
 
     def get_eia_series(self, endpoint: str, state: Optional[str] = None, fuel_type: Optional[str] = None) -> list[dict]:
         query = "SELECT * FROM eia_series WHERE endpoint = ?"
@@ -313,7 +471,7 @@ class RegulatoryDataStore:
             params.append(fuel_type)
         query += " ORDER BY period DESC"
         rows = self.conn.execute(query, params).fetchall()
-        return [dict(row) | {"properties": json.loads(row["properties_json"] or "{}")} for row in rows]
+        return [dict(row) | {"properties": self._decode_json(row["properties_json"])} for row in rows]
 
     def get_utility_rates(self, state: Optional[str] = None, sector: Optional[str] = None) -> list[dict]:
         query = "SELECT * FROM utility_rates WHERE 1=1"
@@ -326,12 +484,55 @@ class RegulatoryDataStore:
             params.append(sector)
         query += " ORDER BY utility_name, sector"
         rows = self.conn.execute(query, params).fetchall()
-        return [dict(row) | {"properties": json.loads(row["properties_json"] or "{}")} for row in rows]
+        return [dict(row) | {"properties": self._decode_json(row["properties_json"])} for row in rows]
+
+    def get_raw_documents(
+        self,
+        source_system: Optional[str] = None,
+        jurisdiction: Optional[str] = None,
+        fetch_status: Optional[str] = None,
+    ) -> list[dict]:
+        query = "SELECT * FROM regulatory_raw_documents WHERE 1=1"
+        params: list = []
+        if source_system:
+            query += " AND source_system = ?"
+            params.append(source_system)
+        if jurisdiction:
+            query += " AND jurisdiction = ?"
+            params.append(jurisdiction)
+        if fetch_status:
+            query += " AND fetch_status = ?"
+            params.append(fetch_status)
+        query += " ORDER BY fetched_at DESC, source_url"
+        rows = self.conn.execute(query, params).fetchall()
+        return [dict(row) | {"metadata": self._decode_json(row["metadata_json"])} for row in rows]
+
+    def get_transform_runs(
+        self,
+        source_system: Optional[str] = None,
+        jurisdiction: Optional[str] = None,
+        transform_name: Optional[str] = None,
+    ) -> list[dict]:
+        query = "SELECT * FROM regulatory_transform_runs WHERE 1=1"
+        params: list = []
+        if source_system:
+            query += " AND source_system = ?"
+            params.append(source_system)
+        if jurisdiction:
+            query += " AND jurisdiction = ?"
+            params.append(jurisdiction)
+        if transform_name:
+            query += " AND transform_name = ?"
+            params.append(transform_name)
+        query += " ORDER BY ran_at DESC, transform_name"
+        rows = self.conn.execute(query, params).fetchall()
+        return [dict(row) | {"mapping": self._decode_json(row["mapping_json"])} for row in rows]
 
     def get_regulatory_events(
         self,
         jurisdiction: Optional[str] = None,
         event_type: Optional[str] = None,
+        source_system: Optional[str] = None,
     ) -> list[dict]:
         query = "SELECT * FROM regulatory_events WHERE 1=1"
         params: list = []
@@ -341,9 +542,12 @@ class RegulatoryDataStore:
         if event_type:
             query += " AND event_type = ?"
             params.append(event_type)
-        query += " ORDER BY published_date DESC"
+        if source_system:
+            query += " AND source_system = ?"
+            params.append(source_system)
+        query += " ORDER BY published_date DESC, title"
         rows = self.conn.execute(query, params).fetchall()
-        return [dict(row) | {"properties": json.loads(row["properties_json"] or "{}")} for row in rows]
+        return [dict(row) | {"properties": self._decode_json(row["properties_json"])} for row in rows]
 
     def get_staleness(self, source: str) -> Optional[float]:
         row = self.conn.execute(

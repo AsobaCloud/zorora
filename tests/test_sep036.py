@@ -362,6 +362,171 @@ def test_regulatory_store_upsert_and_query(tmp_path):
     store.close()
 
 
+def test_africa_regulatory_parsers_emit_common_contract_and_transform_metadata():
+    from tools.regulatory.africa_client import (
+        parse_ippo_press_releases,
+        parse_nersa_homepage,
+        normalize_zera_seed_catalog,
+    )
+    from tools.regulatory.normalization import REGULATORY_EVENT_SCHEMA_VERSION
+
+    nersa_html = """
+    <div id="latest_news">
+        <a href="file/8399" target="_blank" class="home-section-article">
+            Media Statement - NERSA approves Eskom Retail Tariffs and Structural Adjustment application for 2026/27
+            <span>10 March 2026</span>
+        </a>
+    </div>
+    <div id="recent_decisions">
+        <ul>
+            <li class="listing-li">
+                <a href="file/8375" target="_blank" class="listing">
+                    Update on the MRP and Risk-Free Rate calculation for the period ended 31 December 2025
+                    <span>17 February 2026</span>
+                </a>
+            </li>
+        </ul>
+    </div>
+    """
+    ippo_payload = [
+        {
+            "id": "94e36e92-1adb-f011-8544-7c1e52501ab8",
+            "detail": "",
+            "headline": "ANNOUNCEMENT OF ADDITIONAL PREFERRED BIDDERS UNDER BID WINDOW 7 OF THE RENEWABLE ENERGY INDEPENDENT POWER PRODUCER PROCUREMENT PROGRAMME",
+            "date": "12/16/2025 10:00:00 PM",
+            "year": 2025,
+            "month": 12,
+            "monthname": "December",
+            "thumbnail": "/Image/download.aspx?Entity=ippo_webpressrelease&Attribute=ippo_thumbnail&Id=94e36e92-1adb-f011-8544-7c1e52501ab8",
+            "noteid": "613d59d6-de10-d6db-83a6-86b1a2031c32",
+            "filename": "Final Media Statement Announcement ITP PQBs and REIPPPP BW7 15122025.pdf",
+            "websiteid": "f46a9fe7-567a-ee11-8179-6045bd8c528e",
+            "websitename": "ipp-renewables - ipp-renewables",
+        }
+    ]
+    zera_seed = [
+        {
+            "title": "Public Notice - Fuel Notice 4 October 2025",
+            "published_date": "2025-10-06",
+            "source_url": "https://www.zera.co.zw/press-releases-public-notices/",
+            "summary": "PUBLIC NOTICE: NOTIFICATION OF PETROLEUM PRODUCT PRICES",
+            "category": "Press Releases",
+        }
+    ]
+
+    bundles = [
+        parse_nersa_homepage(nersa_html),
+        parse_ippo_press_releases(ippo_payload),
+        normalize_zera_seed_catalog(zera_seed),
+    ]
+
+    required_event_fields = {
+        "jurisdiction",
+        "regulator",
+        "event_type",
+        "title",
+        "summary",
+        "published_date",
+        "source_url",
+        "source_system",
+        "source_record_id",
+        "schema_version",
+        "transform_version",
+        "transform_run_id",
+        "raw_document_id",
+    }
+
+    for bundle in bundles:
+        assert bundle["events"]
+        assert bundle["raw_documents"]
+        assert bundle["transform_runs"]
+
+        event = bundle["events"][0]
+        run = bundle["transform_runs"][0]
+        raw_document = bundle["raw_documents"][0]
+
+        assert required_event_fields.issubset(event.keys())
+        assert event["schema_version"] == REGULATORY_EVENT_SCHEMA_VERSION
+        assert event["transform_run_id"] == run["id"]
+        assert event["raw_document_id"] == raw_document["id"]
+        assert run["schema_version"] == REGULATORY_EVENT_SCHEMA_VERSION
+        assert "title" in run["mapping"]
+        assert raw_document["source_system"] == event["source_system"]
+
+
+def test_regulatory_store_tracks_raw_documents_transform_runs_and_lineage(tmp_path):
+    from tools.regulatory.store import RegulatoryDataStore
+
+    store = RegulatoryDataStore(db_path=str(tmp_path / "regulatory.db"))
+    store.upsert_raw_documents([
+        {
+            "id": "raw-za-1",
+            "jurisdiction": "ZA",
+            "source_system": "nersa_recent_decisions",
+            "source_url": "https://www.nersa.org.za/",
+            "content_type": "text/html",
+            "fetch_status": "ok",
+            "http_status": 200,
+            "document_hash": "sha256:abc123",
+            "payload_text": "<html>sample</html>",
+            "metadata": {"selector": "#recent_decisions"},
+        }
+    ])
+    store.upsert_transform_runs([
+        {
+            "id": "run-za-1",
+            "jurisdiction": "ZA",
+            "source_system": "nersa_recent_decisions",
+            "raw_document_id": "raw-za-1",
+            "transform_name": "nersa_recent_decision_v1",
+            "schema_version": "regulatory-event.v1",
+            "transform_version": "nersa_recent_decision.v1",
+            "mapping": {
+                "title": {"source": "a.listing"},
+                "published_date": {"source": "span"},
+                "event_type": {"value": "decision"},
+            },
+            "notes": "Parses #recent_decisions on the NERSA homepage.",
+            "record_count": 1,
+        }
+    ])
+    store.upsert_regulatory_events([
+        {
+            "jurisdiction": "ZA",
+            "regulator": "NERSA",
+            "event_type": "decision",
+            "title": "Update on the MRP and Risk-Free Rate calculation",
+            "summary": "Recent Regulator Decision",
+            "published_date": "2026-02-17",
+            "effective_date": None,
+            "deadline_date": None,
+            "source_url": "https://www.nersa.org.za/file/8375",
+            "source_system": "nersa_recent_decisions",
+            "source_record_id": "8375",
+            "schema_version": "regulatory-event.v1",
+            "transform_version": "nersa_recent_decision.v1",
+            "transform_run_id": "run-za-1",
+            "raw_document_id": "raw-za-1",
+            "properties": {"section": "recent_decisions"},
+        }
+    ])
+
+    raw_documents = store.get_raw_documents(source_system="nersa_recent_decisions")
+    transform_runs = store.get_transform_runs(source_system="nersa_recent_decisions")
+    events = store.get_regulatory_events(jurisdiction="ZA", event_type="decision")
+
+    assert len(raw_documents) == 1
+    assert raw_documents[0]["fetch_status"] == "ok"
+    assert raw_documents[0]["metadata"]["selector"] == "#recent_decisions"
+    assert len(transform_runs) == 1
+    assert transform_runs[0]["mapping"]["title"]["source"] == "a.listing"
+    assert len(events) == 1
+    assert events[0]["schema_version"] == "regulatory-event.v1"
+    assert events[0]["transform_run_id"] == "run-za-1"
+    assert events[0]["raw_document_id"] == "raw-za-1"
+    store.close()
+
+
 def test_regulatory_workflow_updates_all_sources(tmp_path):
     from workflows.regulatory_workflow import RegulatoryWorkflow
     from tools.regulatory.store import RegulatoryDataStore
@@ -394,6 +559,197 @@ def test_regulatory_workflow_updates_all_sources(tmp_path):
     assert len(store.get_rps_targets(state="CA")) == 1
     assert len(store.get_eia_series("operating-generator-capacity", state="CA")) == 1
     assert len(store.get_utility_rates(state="CO")) == 2
+    store.close()
+
+
+def test_regulatory_workflow_updates_africa_event_sources_with_lineage(tmp_path):
+    from workflows.regulatory_workflow import RegulatoryWorkflow
+    from tools.regulatory.store import RegulatoryDataStore
+
+    store = RegulatoryDataStore(db_path=str(tmp_path / "regulatory.db"))
+    workflow = RegulatoryWorkflow(store=store)
+
+    nersa_bundle = {
+        "events": [
+            {
+                "jurisdiction": "ZA",
+                "regulator": "NERSA",
+                "event_type": "decision",
+                "title": "NERSA tariff decision",
+                "summary": "Recent Regulator Decision",
+                "published_date": "2026-02-17",
+                "effective_date": None,
+                "deadline_date": None,
+                "source_url": "https://www.nersa.org.za/file/8375",
+                "source_system": "nersa_recent_decisions",
+                "source_record_id": "8375",
+                "schema_version": "regulatory-event.v1",
+                "transform_version": "nersa_recent_decision.v1",
+                "transform_run_id": "run-nersa-1",
+                "raw_document_id": "raw-nersa-1",
+                "properties": {"section": "recent_decisions"},
+            }
+        ],
+        "raw_documents": [
+            {
+                "id": "raw-nersa-1",
+                "jurisdiction": "ZA",
+                "source_system": "nersa_recent_decisions",
+                "source_url": "https://www.nersa.org.za/",
+                "content_type": "text/html",
+                "fetch_status": "ok",
+                "http_status": 200,
+                "document_hash": "sha256:nersa",
+                "payload_text": "<html>nersa</html>",
+                "metadata": {"selector": "#recent_decisions"},
+            }
+        ],
+        "transform_runs": [
+            {
+                "id": "run-nersa-1",
+                "jurisdiction": "ZA",
+                "source_system": "nersa_recent_decisions",
+                "raw_document_id": "raw-nersa-1",
+                "transform_name": "nersa_recent_decision_v1",
+                "schema_version": "regulatory-event.v1",
+                "transform_version": "nersa_recent_decision.v1",
+                "mapping": {"title": {"source": "a.listing"}},
+                "notes": "NERSA homepage recent decisions",
+                "record_count": 1,
+            }
+        ],
+    }
+    ippo_bundle = {
+        "events": [
+            {
+                "jurisdiction": "ZA",
+                "regulator": "IPP Office",
+                "event_type": "procurement_update",
+                "title": "Additional preferred bidders announced",
+                "summary": "IPP Office press release",
+                "published_date": "2025-12-16",
+                "effective_date": None,
+                "deadline_date": None,
+                "source_url": "https://www.ipp-projects.co.za/_entity/annotation/613d59d6-de10-d6db-83a6-86b1a2031c32",
+                "source_system": "ippo_oldnews",
+                "source_record_id": "94e36e92-1adb-f011-8544-7c1e52501ab8",
+                "schema_version": "regulatory-event.v1",
+                "transform_version": "ippo_press_release.v1",
+                "transform_run_id": "run-ippo-1",
+                "raw_document_id": "raw-ippo-1",
+                "properties": {"filename": "Final Media Statement Announcement ITP PQBs and REIPPPP BW7 15122025.pdf"},
+            }
+        ],
+        "raw_documents": [
+            {
+                "id": "raw-ippo-1",
+                "jurisdiction": "ZA",
+                "source_system": "ippo_oldnews",
+                "source_url": "https://www.ipp-projects.co.za/PortalAPI/?etn=oldnews",
+                "content_type": "application/json",
+                "fetch_status": "ok",
+                "http_status": 200,
+                "document_hash": "sha256:ippo",
+                "payload_text": "[]",
+                "metadata": {"record_count": 1},
+            }
+        ],
+        "transform_runs": [
+            {
+                "id": "run-ippo-1",
+                "jurisdiction": "ZA",
+                "source_system": "ippo_oldnews",
+                "raw_document_id": "raw-ippo-1",
+                "transform_name": "ippo_press_release_v1",
+                "schema_version": "regulatory-event.v1",
+                "transform_version": "ippo_press_release.v1",
+                "mapping": {"headline": {"target": "title"}},
+                "notes": "IPP Office oldnews portal feed",
+                "record_count": 1,
+            }
+        ],
+    }
+    zera_bundle = {
+        "events": [
+            {
+                "jurisdiction": "ZW",
+                "regulator": "ZERA",
+                "event_type": "public_notice",
+                "title": "Public Notice - Fuel Notice 4 October 2025",
+                "summary": "PUBLIC NOTICE: NOTIFICATION OF PETROLEUM PRODUCT PRICES",
+                "published_date": "2025-10-06",
+                "effective_date": None,
+                "deadline_date": None,
+                "source_url": "https://www.zera.co.zw/press-releases-public-notices/",
+                "source_system": "zera_seed_catalog",
+                "source_record_id": "Public-Notice-Fuel-Notice-4-October-2025",
+                "schema_version": "regulatory-event.v1",
+                "transform_version": "zera_seed_catalog.v1",
+                "transform_run_id": "run-zera-1",
+                "raw_document_id": "raw-zera-1",
+                "properties": {"category": "Press Releases"},
+            }
+        ],
+        "raw_documents": [
+            {
+                "id": "raw-zera-1",
+                "jurisdiction": "ZW",
+                "source_system": "zera_seed_catalog",
+                "source_url": "https://www.zera.co.zw/press-releases-public-notices/",
+                "content_type": "application/json",
+                "fetch_status": "seed_catalog",
+                "http_status": 200,
+                "document_hash": "sha256:zera",
+                "payload_text": "[]",
+                "metadata": {"catalog": "zera_seed_events"},
+            }
+        ],
+        "transform_runs": [
+            {
+                "id": "run-zera-1",
+                "jurisdiction": "ZW",
+                "source_system": "zera_seed_catalog",
+                "raw_document_id": "raw-zera-1",
+                "transform_name": "zera_seed_catalog_v1",
+                "schema_version": "regulatory-event.v1",
+                "transform_version": "zera_seed_catalog.v1",
+                "mapping": {"title": {"source": "title"}},
+                "notes": "Seeded fallback catalog for ZERA notices.",
+                "record_count": 1,
+            }
+        ],
+    }
+
+    with patch("workflows.regulatory_workflow.fetch_generator_capacity", return_value=[
+        {"endpoint": "operating-generator-capacity", "period": "2025-12", "state": "CA", "fuel_type": "SUN", "value": 20.0, "unit": "MW", "properties": {"plantName": "Sunray 2"}}
+    ]), patch("workflows.regulatory_workflow.fetch_operational_data", return_value=[
+        {"endpoint": "electric-power-operational-data", "period": "2025-12", "state": "CA", "fuel_type": "SUN", "value": 2536.0, "unit": "thousand megawatthours", "properties": {"stateDescription": "California"}}
+    ]), patch("workflows.regulatory_workflow.fetch_retail_sales", return_value=[
+        {"endpoint": "retail-sales", "period": "2025-12", "state": "CA", "fuel_type": "RES", "value": 15555.0, "unit": "million kilowatt hours", "properties": {"stateDescription": "California"}}
+    ]), patch("workflows.regulatory_workflow.fetch_utility_rates", return_value={
+        "utility_name": "Public Service Co of Colorado",
+        "state": "CO",
+        "lat": 39.7392,
+        "lon": -104.9903,
+        "rates": {"residential": 0.05951, "commercial": 0.08123},
+        "properties": {"source": "OpenEI"},
+    }), patch("workflows.regulatory_workflow.load_rps_data", return_value=[
+        {"state": "CA", "standard_type": "RPS", "tier": "Total RPS", "year": 2025, "target_pct": 0.60,
+         "demand_gwh": 150000.0, "applicable_sales_gwh": 250000.0, "statewide_sales_gwh": 285000.0,
+         "achievement_ratio": 0.98, "compliance_cost_per_kwh": 0.012, "capacity_additions_mw": 4200.0,
+         "notes": "On track", "properties": {"source": "test"}}
+    ]), patch("workflows.regulatory_workflow.fetch_nersa_events", return_value=nersa_bundle), patch(
+        "workflows.regulatory_workflow.fetch_ippo_press_releases", return_value=ippo_bundle
+    ), patch("workflows.regulatory_workflow.fetch_zera_events", return_value=zera_bundle):
+        updated = workflow.update_all(force=True)
+
+    assert updated == 8
+    za_events = store.get_regulatory_events(jurisdiction="ZA")
+    zw_events = store.get_regulatory_events(jurisdiction="ZW")
+    assert len(za_events) == 2
+    assert len(zw_events) == 1
+    assert store.get_transform_runs(source_system="ippo_oldnews")[0]["transform_version"] == "ippo_press_release.v1"
+    assert store.get_raw_documents(source_system="zera_seed_catalog")[0]["fetch_status"] == "seed_catalog"
     store.close()
 
 
@@ -466,6 +822,38 @@ class TestRegulatoryApi:
             payload = response.get_json()
             assert payload["updated_sources"] == 6
             mock_workflow.update_all.assert_called_once_with(force=True)
+
+    def test_events_endpoint_returns_lineage_fields(self, client):
+        with patch("ui.web.app.RegulatoryDataStore") as mock_store_cls:
+            mock_store = MagicMock()
+            mock_store.get_regulatory_events.return_value = [
+                {
+                    "jurisdiction": "ZW",
+                    "regulator": "ZERA",
+                    "event_type": "public_notice",
+                    "title": "Public Notice - Fuel Notice 4 October 2025",
+                    "published_date": "2025-10-06",
+                    "source_url": "https://www.zera.co.zw/press-releases-public-notices/",
+                    "source_system": "zera_seed_catalog",
+                    "source_record_id": "Public-Notice-Fuel-Notice-4-October-2025",
+                    "schema_version": "regulatory-event.v1",
+                    "transform_version": "zera_seed_catalog.v1",
+                    "transform_run_id": "run-zera-1",
+                    "raw_document_id": "raw-zera-1",
+                    "properties": {"category": "Press Releases"},
+                }
+            ]
+            mock_store_cls.return_value = mock_store
+
+            response = client.get("/api/regulatory/events?jurisdiction=ZW")
+            assert response.status_code == 200
+            payload = response.get_json()
+            assert payload["count"] == 1
+            item = payload["items"][0]
+            assert item["schema_version"] == "regulatory-event.v1"
+            assert item["transform_version"] == "zera_seed_catalog.v1"
+            assert item["source_system"] == "zera_seed_catalog"
+            mock_store.get_regulatory_events.assert_called_once_with(jurisdiction="ZW")
 
 
 def test_template_has_regulatory_mode():

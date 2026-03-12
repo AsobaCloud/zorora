@@ -6,6 +6,11 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import config
+from tools.regulatory.africa_client import (
+    fetch_ippo_press_releases,
+    fetch_nersa_events,
+    fetch_zera_events,
+)
 from tools.regulatory.eia_client import (
     fetch_generator_capacity,
     fetch_operational_data,
@@ -17,7 +22,7 @@ from tools.regulatory.store import RegulatoryDataStore
 
 
 class RegulatoryWorkflow:
-    """Refreshes EIA, OpenEI, and RPS data on a staleness basis."""
+    """Refreshes quantitative US sources and normalized ZA/ZW event sources."""
 
     def __init__(self, store: Optional[RegulatoryDataStore] = None):
         self.store = store or RegulatoryDataStore()
@@ -28,6 +33,19 @@ class RegulatoryWorkflow:
             "utility_rate_locations",
             [{"name": "Denver", "state": "CO", "lat": 39.7392, "lon": -104.9903}],
         )
+
+    def _store_event_bundle(self, bundle: dict[str, list[dict]]) -> bool:
+        events = bundle.get("events") or []
+        raw_documents = bundle.get("raw_documents") or []
+        transform_runs = bundle.get("transform_runs") or []
+        if not events:
+            return False
+        if raw_documents:
+            self.store.upsert_raw_documents(raw_documents)
+        if transform_runs:
+            self.store.upsert_transform_runs(transform_runs)
+        self.store.upsert_regulatory_events(events)
+        return True
 
     def _should_refresh(self, source: str, force: bool) -> bool:
         if force:
@@ -92,6 +110,18 @@ class RegulatoryWorkflow:
             rows = load_rps_data(workbook_dir=self.rps_workbook_dir)
             if rows:
                 self.store.upsert_rps_targets(rows)
+                updated += 1
+
+        if self._should_refresh("nersa_recent_decisions", force):
+            if self._store_event_bundle(fetch_nersa_events()):
+                updated += 1
+
+        if self._should_refresh("ippo_oldnews", force):
+            if self._store_event_bundle(fetch_ippo_press_releases()):
+                updated += 1
+
+        if self._should_refresh("zera_seed_catalog", force):
+            if self._store_event_bundle(fetch_zera_events()):
                 updated += 1
 
         return updated
