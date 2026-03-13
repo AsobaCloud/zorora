@@ -1561,3 +1561,459 @@ def test_diligence_variant_suppression():
     # With 6 intents × 1 variant = 6 total search calls
     assert len(captured_variants) == 6, \
         f"Expected 6 search calls (6 intents × 1 variant), got {len(captured_variants)}"
+
+
+def test_diligence_sources_tagged_with_intent_domain():
+    """Sources returned during diligence search must have intent_domain set
+    to the domain of the intent that found them, so the deterministic fallback
+    can group them into the correct report sections."""
+    from engine.models import Source
+    from engine.deep_research_service import run_deep_research
+
+    call_count = [0]
+
+    def mock_aggregate(query, **kwargs):
+        call_count[0] += 1
+        # Return a unique source per call so we can verify domain tagging
+        return [Source(
+            source_id=f"src_{call_count[0]}",
+            url=f"https://example.com/{call_count[0]}",
+            title=f"Result {call_count[0]}",
+            content_snippet=f"Content for call {call_count[0]}",
+            content_full=f"Content for call {call_count[0]}",
+            relevance_score=0.8,
+            credibility_score=0.6,
+        )]
+
+    captured_state = [None]
+    def mock_synthesize(state, **kwargs):
+        captured_state[0] = state
+        return "test synthesis"
+
+    def passthrough_score(intent_query, sources, variants, max_sources, relevance_min):
+        return sources
+
+    with patch("engine.deep_research_service.aggregate_sources", side_effect=mock_aggregate), \
+         patch("engine.deep_research_service._score_and_filter_intent_sources", side_effect=passthrough_score), \
+         patch("engine.deep_research_service.synthesize", side_effect=mock_synthesize):
+        run_deep_research(
+            "Diligence for Test Solar Farm",
+            depth=1,
+            research_type="diligence",
+            asset_metadata=_ZA_SOLAR_ASSET,
+        )
+
+    assert captured_state[0] is not None, "synthesize_direct was not called"
+    sources = captured_state[0].sources_checked
+    assert len(sources) > 0, "No sources in state"
+
+    # Every source must have a non-empty intent_domain
+    for s in sources:
+        assert s.intent_domain, f"Source {s.source_id} has empty intent_domain"
+
+    # All 6 domains must be present (6 intents each returning 1 source)
+    domains = {s.intent_domain for s in sources}
+    expected_domains = {"commercial", "licensing", "environmental", "performance", "counterparty", "asset_specific"}
+    assert domains == expected_domains, f"Expected all 6 domains, got {domains}"
+
+
+# ---------------------------------------------------------------------------
+# SEP-038: Domain-aware diligence synthesis
+# ---------------------------------------------------------------------------
+
+# Helpers that create domain-tagged sources with distinct, identifiable content
+# so tests can verify that the RIGHT source content lands in the RIGHT section.
+
+def _make_tagged_sources(domains=None):
+    """Create sources tagged with intent_domain.
+
+    Each source has unique title and content tied to its domain so tests can
+    assert cross-contamination doesn't happen (e.g., licensing content must
+    NOT appear under the tariff section).
+    """
+    from engine.models import Source
+
+    if domains is None:
+        domains = ["commercial", "licensing", "environmental", "performance", "counterparty", "asset_specific"]
+
+    # Domain-specific content that would NOT appear under other domains
+    domain_content = {
+        "commercial": "NERSA approved Eskom MYPD5 tariff increase of 12.7% for 2025/26 fiscal year, average retail rate 1.78 ZAR/kWh",
+        "licensing": "Generation license application to NERSA requires Schedule 2 exemption for plants under 100MW per Electricity Regulation Act",
+        "environmental": "Environmental impact assessment under NEMA requires Basic Assessment for solar PV on previously disturbed land",
+        "performance": "Measured capacity factor of 22.3% at De Aar solar park over 2023-2024 operating period with 0.5% annual degradation",
+        "counterparty": "Eskom Holdings SOC Ltd is sole offtaker under REIPPP bid window 5 with 20-year PPA term",
+        "asset_specific": "TestCorp acquired 49% stake in Test Solar Farm from previous developer in 2024 for undisclosed amount",
+    }
+    sources = []
+    for i, domain in enumerate(domains, 1):
+        sources.append(Source(
+            source_id=f"src_{domain}_{i}",
+            url=f"https://example.com/{domain}/{i}",
+            title=f"{domain.replace('_', ' ').title()} Report {i}",
+            content_snippet=domain_content.get(domain, f"Content about {domain}."),
+            content_full=domain_content.get(domain, f"Full content about {domain}."),
+            relevance_score=0.75,
+            credibility_score=0.6,
+            intent_domain=domain,
+        ))
+    return sources
+
+
+def test_format_sources_by_domain_isolates_each_domains_sources():
+    """_format_sources_by_domain must put each source under its own domain key ONLY.
+
+    The behavioral requirement: commercial sources appear under "commercial",
+    licensing sources under "licensing", and neither leaks into the other.
+    This is the foundation of per-chapter source grouping."""
+    from workflows.deep_research.synthesizer import _format_sources_by_domain
+
+    sources = _make_tagged_sources()
+    grouped = _format_sources_by_domain(sources)
+
+    # All 6 domains must be present
+    expected_domains = {"commercial", "licensing", "environmental", "performance", "counterparty", "asset_specific"}
+    assert set(grouped.keys()) >= expected_domains, \
+        f"Missing domains: {expected_domains - set(grouped.keys())}"
+
+    # Cross-contamination check: each domain's formatted text must contain
+    # its own source title and must NOT contain other domains' source titles
+    for domain in expected_domains:
+        own_title = f"{domain.replace('_', ' ').title()} Report"
+        assert own_title in grouped[domain], \
+            f"Domain '{domain}' missing its own source: expected '{own_title}'"
+        for other_domain in expected_domains - {domain}:
+            other_title = f"{other_domain.replace('_', ' ').title()} Report"
+            assert other_title not in grouped[domain], \
+                f"Cross-contamination: '{other_title}' found under '{domain}' group"
+
+    # Sources with no intent_domain must go to "other", not pollute a domain group
+    from engine.models import Source
+    orphan = Source(
+        source_id="orphan_1", url="https://example.com/orphan", title="Orphan Doc",
+        content_snippet="Untagged content", content_full="Untagged content",
+        relevance_score=0.5, credibility_score=0.5, intent_domain="",
+    )
+    grouped_with_orphan = _format_sources_by_domain(sources + [orphan])
+    assert "Orphan Doc" not in grouped_with_orphan.get("commercial", ""), \
+        "Untagged source leaked into commercial domain"
+    assert "Orphan Doc" in grouped_with_orphan.get("other", ""), \
+        "Untagged source should be in 'other' bucket"
+
+
+def test_build_diligence_prompt_v2_puts_right_sources_under_right_sections():
+    """The v2 prompt must place each domain's sources under its corresponding
+    section header — not dump them all in one block.
+
+    Validates behavioral criterion: 'Each section contains only that domain's
+    sources + an analytical question.'"""
+    from workflows.deep_research.synthesizer import _build_diligence_synthesis_prompt_v2
+    from engine.deep_research_service import ResearchState
+
+    sources = _make_tagged_sources()
+    state = ResearchState(
+        original_query="Diligence for Test Solar Farm",
+        refined_query="Diligence for Test Solar Farm",
+        sources_checked=sources,
+        research_type="diligence",
+    )
+
+    prompt = _build_diligence_synthesis_prompt_v2(
+        state,
+        diligence_context="EIA data: retail prices 0.08 USD/kWh",
+        asset_metadata=_ZA_SOLAR_ASSET,
+    )
+
+    # Split the prompt by section headers to verify per-section source placement
+    import re
+    section_pattern = re.compile(r"^##\s+(.+)$", re.MULTILINE)
+    headers = [(m.group(1), m.start()) for m in section_pattern.finditer(prompt)]
+
+    def _section_text(idx):
+        start = headers[idx][1]
+        end = headers[idx + 1][1] if idx + 1 < len(headers) else len(prompt)
+        return prompt[start:end]
+
+    # Find each domain section and verify its sources
+    section_map = {title: _section_text(i) for i, (title, _) in enumerate(headers)}
+
+    # Tariff section must have commercial source, not licensing source
+    tariff_section = next((v for k, v in section_map.items() if "Tariff" in k or "Revenue" in k), None)
+    assert tariff_section is not None, "Missing Tariff & Revenue section"
+    assert "Commercial Report" in tariff_section, \
+        "Tariff section missing commercial source"
+    assert "Licensing Report" not in tariff_section, \
+        "Tariff section contains licensing source (cross-contamination)"
+    assert "Performance Report" not in tariff_section, \
+        "Tariff section contains performance source (cross-contamination)"
+
+    # Regulatory section must have licensing source, not commercial source
+    reg_section = next((v for k, v in section_map.items() if "Regulatory" in k or "Licensing" in k), None)
+    assert reg_section is not None, "Missing Regulatory & Licensing section"
+    assert "Licensing Report" in reg_section, \
+        "Regulatory section missing licensing source"
+    assert "Commercial Report" not in reg_section, \
+        "Regulatory section contains commercial source (cross-contamination)"
+
+    # Performance section must have performance source
+    perf_section = next((v for k, v in section_map.items() if "Performance" in k), None)
+    assert perf_section is not None, "Missing Performance section"
+    assert "Performance Report" in perf_section, \
+        "Performance section missing performance source"
+    assert "Counterparty Report" not in perf_section, \
+        "Performance section contains counterparty source (cross-contamination)"
+
+    # Each domain section must have an analytical question with asset metadata
+    assert "South Africa" in tariff_section, "Tariff question missing country"
+    assert "tariff" in tariff_section.lower(), "Tariff section missing tariff question"
+    assert "license" in reg_section.lower() or "permit" in reg_section.lower(), \
+        "Regulatory section missing licensing question"
+    assert "capacity factor" in perf_section.lower() or "performance ratio" in perf_section.lower(), \
+        "Performance section missing performance question"
+
+    # Must NOT have a flat "RANKED SOURCES:" block (the old v1 pattern)
+    assert "RANKED SOURCES:" not in prompt, \
+        "v2 prompt still has flat source dump from v1"
+
+
+def test_quality_gate_accepts_diligence_format_rejects_direct_answer_format():
+    """The diligence quality gate must accept reports with domain sections and
+    NO 'Direct Answer' — the exact format that the regular gate rejects.
+
+    This is the core behavioral fix: the regular gate at line 2511 requires
+    'Direct Answer', which diligence reports never have. The new gate must
+    NOT check for 'Direct Answer'."""
+    from workflows.deep_research.synthesizer import _passes_diligence_quality_gate
+    from engine.deep_research_service import ResearchState
+
+    sources = _make_tagged_sources()
+    state = ResearchState(
+        original_query="Diligence for Test Solar Farm",
+        sources_checked=sources,
+    )
+
+    # A valid diligence report — has domain sections, NO "Direct Answer"
+    valid_report = "\n\n".join([
+        "## Executive Summary",
+        "This report analyzes a 100MW solar acquisition in South Africa [Commercial Report 1].",
+        "## Tariff & Revenue Potential",
+        "NERSA approved 12.7% tariff increase for 2025/26 [Commercial Report 1].",
+        "## Regulatory & Licensing Requirements",
+        "IPP license required under Electricity Regulation Act [Licensing Report 2].",
+        "## Environmental & Grid Connection",
+        "Basic Assessment required under NEMA [Environmental Report 3].",
+        "## Performance Gap Analysis",
+        "De Aar solar park measured 22.3% CF [Performance Report 4].",
+        "## Vendor & Counterparty Relationships",
+        "Eskom is sole offtaker under REIPPP [Counterparty Report 5].",
+        "## Risk Summary & Recommendation",
+        "Primary risk is regulatory uncertainty around tariff adjustments [Licensing Report 2].",
+    ])
+
+    assert _passes_diligence_quality_gate(valid_report, state), \
+        "Diligence gate rejected a valid report — likely still checking for 'Direct Answer'"
+
+    # Verify the regular gate WOULD reject the same report (proving the fix matters)
+    from workflows.deep_research.synthesizer import _passes_direct_synthesis_quality_gate
+    assert not _passes_direct_synthesis_quality_gate(valid_report, state), \
+        "Regular gate should reject diligence format (no 'Direct Answer') — " \
+        "if it passes, the gates are not differentiated"
+
+
+def test_quality_gate_rejects_actually_bad_diligence_reports():
+    """The diligence quality gate must reject reports that are genuinely
+    incomplete — not just missing 'Direct Answer'."""
+    from workflows.deep_research.synthesizer import _passes_diligence_quality_gate
+    from engine.deep_research_service import ResearchState
+
+    sources = _make_tagged_sources()
+    state = ResearchState(
+        original_query="Diligence for Test Solar Farm",
+        sources_checked=sources,
+    )
+
+    # Only 2 sections — below the minimum 4
+    too_short = "\n\n".join([
+        "## Executive Summary",
+        "Brief summary [Commercial Report 1].",
+        "## Tariff & Revenue Potential",
+        "Some tariff info [Commercial Report 1].",
+    ])
+    assert not _passes_diligence_quality_gate(too_short, state), \
+        "Gate should reject report with only 2 sections"
+
+    # No Executive Summary — wrong structure entirely
+    no_exec = "\n\n".join([
+        "## Introduction",
+        "This is an introduction [Commercial Report 1].",
+        "## Tariff & Revenue Potential",
+        "Tariff info [Commercial Report 1].",
+        "## Regulatory & Licensing Requirements",
+        "License info [Licensing Report 2].",
+        "## Performance Gap Analysis",
+        "Performance data [Performance Report 4].",
+    ])
+    assert not _passes_diligence_quality_gate(no_exec, state), \
+        "Gate should reject report without Executive Summary"
+
+    # No source citations at all — ungrounded
+    no_citations = "\n\n".join([
+        "## Executive Summary",
+        "Solar energy is growing in South Africa.",
+        "## Tariff & Revenue Potential",
+        "Tariffs are regulated by NERSA.",
+        "## Regulatory & Licensing Requirements",
+        "Licenses are required.",
+        "## Performance Gap Analysis",
+        "Performance varies by location.",
+        "## Risk Summary & Recommendation",
+        "There are various risks to consider.",
+    ])
+    assert not _passes_diligence_quality_gate(no_citations, state), \
+        "Gate should reject report with zero source citations"
+
+    # Empty string
+    assert not _passes_diligence_quality_gate("", state), \
+        "Gate should reject empty output"
+
+
+def test_repair_diligence_preserves_all_sections_unlike_regular_repair():
+    """_repair_diligence_synthesis_output must NOT cap sections at 3.
+
+    This validates the exact bug: _repair_direct_synthesis_output has
+    `thematic_sections_kept >= 3` (line 2488) which drops sections 4+.
+    Diligence needs 5+ domain sections. The regular repair provably
+    destroys diligence reports."""
+    from workflows.deep_research.synthesizer import (
+        _repair_diligence_synthesis_output,
+        _repair_direct_synthesis_output,
+    )
+    from engine.deep_research_service import ResearchState
+
+    sources = _make_tagged_sources()
+    state = ResearchState(
+        original_query="Diligence for Test Solar Farm",
+        sources_checked=sources,
+    )
+
+    report = "\n\n".join([
+        "## Executive Summary",
+        "Summary [Commercial Report 1].",
+        "## Tariff & Revenue Potential",
+        "NERSA tariff info [Commercial Report 1].",
+        "## Regulatory & Licensing Requirements",
+        "License requirements [Licensing Report 2].",
+        "## Environmental & Grid Connection",
+        "EIA requirements [Environmental Report 3].",
+        "## Performance Gap Analysis",
+        "Capacity factor data [Performance Report 4].",
+        "## Vendor & Counterparty Relationships",
+        "Offtaker details [Counterparty Report 5].",
+        "## Risk Summary & Recommendation",
+        "Risk assessment [Asset Specific Report 6].",
+    ])
+
+    # Diligence repair must preserve all 7 sections
+    diligence_repaired = _repair_diligence_synthesis_output(report, state)
+    for section in ["Executive Summary", "Tariff & Revenue", "Regulatory & Licensing",
+                     "Environmental & Grid", "Performance Gap", "Vendor & Counterparty",
+                     "Risk Summary"]:
+        assert section in diligence_repaired, \
+            f"Diligence repair dropped '{section}' — must keep all domain sections"
+
+    # Prove the regular repair WOULD drop sections (validating why the fix matters)
+    regular_repaired = _repair_direct_synthesis_output(report, state)
+    import re
+    regular_sections = re.findall(r"^##\s+(.+)$", regular_repaired, re.MULTILINE)
+    # Regular repair caps thematic sections at 3, so total ≤ 5 (Exec Summary + Direct Answer + 3 thematic)
+    # Our report has no "Direct Answer", so regular repair keeps Exec Summary + 3 thematic = 4
+    assert len(regular_sections) <= 5, \
+        f"Regular repair should cap at ~5 sections, got {len(regular_sections)}: {regular_sections}"
+    assert len(regular_sections) < 7, \
+        "Regular repair kept all 7 sections — the cap-at-3 bug may be fixed, " \
+        "re-evaluate whether diligence repair is still needed"
+
+
+def test_synthesize_direct_diligence_path_uses_correct_gate_and_prompt():
+    """End-to-end: synthesize_direct for diligence must use:
+    1. The diligence system prompt (not the regular analyst prompt)
+    2. The v2 prompt builder (with per-section sources)
+    3. The diligence quality gate (not the Direct Answer gate)
+
+    This test mocks the LLM to return a valid diligence report and verifies
+    the output is NOT replaced by the deterministic fallback — proving the
+    quality gate accepted it."""
+    from workflows.deep_research.synthesizer import (
+        synthesize_direct,
+        _DILIGENCE_ANALYST_SYSTEM_PROMPT,
+        _DIRECT_RESEARCH_ANALYST_SYSTEM_PROMPT,
+    )
+    from engine.deep_research_service import ResearchState
+
+    sources = _make_tagged_sources()
+    state = ResearchState(
+        original_query="Diligence for Test Solar Farm",
+        sources_checked=sources,
+        research_type="diligence",
+    )
+
+    captured_calls = []
+
+    def mock_call(prompt, system_prompt=None):
+        captured_calls.append({"system_prompt": system_prompt, "prompt": prompt})
+        # Return a report with all domain sections and citations
+        return "\n\n".join([
+            "## Executive Summary",
+            "Analysis of 100MW solar acquisition in South Africa [Commercial Report 1].",
+            "## Tariff & Revenue Potential",
+            "NERSA-regulated tariffs: 1.78 ZAR/kWh retail [Commercial Report 1].",
+            "## Regulatory & Licensing Requirements",
+            "IPP license required under Electricity Regulation Act [Licensing Report 2].",
+            "## Environmental & Grid Connection",
+            "Basic Assessment required under NEMA [Environmental Report 3].",
+            "## Performance Gap Analysis",
+            "Capacity factor of 22.3% at De Aar benchmark [Performance Report 4].",
+            "## Vendor & Counterparty Relationships",
+            "Eskom Holdings is sole offtaker under REIPPP [Counterparty Report 5].",
+            "## Risk Summary & Recommendation",
+            "Regulatory uncertainty is primary risk [Asset Specific Report 6].",
+        ])
+
+    with patch(
+        "workflows.deep_research.synthesizer._call_research_synthesis_model",
+        side_effect=mock_call,
+    ):
+        result = synthesize_direct(
+            state,
+            asset_metadata=_ZA_SOLAR_ASSET,
+            diligence_context="EIA data: South Africa solar irradiance 1800 kWh/m2/yr",
+        )
+
+    # 1. Must use diligence system prompt, not the regular one
+    assert len(captured_calls) >= 1, "LLM was never called"
+    assert captured_calls[0]["system_prompt"] == _DILIGENCE_ANALYST_SYSTEM_PROMPT, \
+        f"Wrong system prompt. Got: {captured_calls[0]['system_prompt'][:80]}..."
+    assert captured_calls[0]["system_prompt"] != _DIRECT_RESEARCH_ANALYST_SYSTEM_PROMPT, \
+        "Used the regular analyst prompt — diligence path not wired"
+
+    # 2. The prompt must have per-section source blocks (v2), not flat dump (v1)
+    prompt_sent = captured_calls[0]["prompt"]
+    assert "Sources for this section" in prompt_sent, \
+        "Prompt lacks per-section sources — still using v1 flat dump"
+    assert "RANKED SOURCES:" not in prompt_sent, \
+        "Prompt still has v1 flat source block"
+
+    # 3. Result must be the LLM output, NOT the deterministic fallback
+    assert "Deterministic diligence report" not in result, \
+        "Quality gate rejected the LLM output and fell back to deterministic — " \
+        "gate is likely still checking for 'Direct Answer'"
+
+    # 4. All domain sections must survive in the final output
+    for section_title in ["Tariff & Revenue", "Regulatory & Licensing",
+                          "Performance Gap", "Vendor & Counterparty", "Risk Summary"]:
+        assert section_title in result, \
+            f"Final output missing '{section_title}' — repair may have dropped it"
+
+    # 5. LLM was called at most twice (initial + one retry), not in an infinite loop
+    assert len(captured_calls) <= 2, \
+        f"LLM called {len(captured_calls)} times — retry logic may be looping"

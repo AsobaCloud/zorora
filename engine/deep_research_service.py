@@ -955,6 +955,11 @@ def run_deep_research(
             relevance_min,
         )
 
+        if is_diligence and intent.domain:
+            for src in intent_relevant_sources:
+                if not src.intent_domain:
+                    src.intent_domain = intent.domain
+
         merged_relevant_sources.extend(intent_relevant_sources)
 
     # Deduplicate across intents and apply final source budget.

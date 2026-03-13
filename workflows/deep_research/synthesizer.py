@@ -177,6 +177,16 @@ _DIRECT_RESEARCH_ANALYST_SYSTEM_PROMPT = (
     "Do not produce planning steps, meta commentary, or procedural narration."
 )
 
+_DILIGENCE_ANALYST_SYSTEM_PROMPT = (
+    "You are a senior renewable energy due diligence analyst specializing in "
+    "acquisition advisory for power generation assets in emerging markets. "
+    "You produce structured diligence reports for investment committees. "
+    "For each report section, synthesize the domain-specific sources provided, "
+    "quantify where data permits, flag material gaps, and cite inline using "
+    "exact source titles in square brackets. "
+    "Do not produce planning steps, meta commentary, or procedural narration."
+)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -2040,6 +2050,98 @@ Begin:
 """
 
 
+def _build_diligence_synthesis_prompt_v2(
+    state: ResearchState,
+    diligence_context: str = "",
+    asset_metadata: Optional[dict] = None,
+) -> str:
+    """Build a diligence prompt with per-section source grouping and analytical questions."""
+    today = date.today().isoformat()
+    search_topic = state.refined_query or state.original_query
+    meta = asset_metadata or {}
+
+    asset_block = (
+        f"**ASSET UNDER REVIEW:**\n"
+        f"- Name: {meta.get('name', 'Unknown')}\n"
+        f"- Technology: {meta.get('technology', 'Unknown')}\n"
+        f"- Capacity: {meta.get('capacity_mw', 'Unknown')} MW\n"
+        f"- Country: {meta.get('country', 'Unknown')}\n"
+        f"- Operator: {meta.get('operator', 'Unknown')}\n"
+        f"- Owner: {meta.get('owner', 'Unknown')}\n"
+        f"- Status: {meta.get('status', 'Unknown')}\n"
+    )
+
+    context_block = ""
+    if diligence_context:
+        context_block = (
+            "\n**LOCAL DATA CONTEXT (use for quantitative analysis; do not cite as a source):**\n"
+            f"{diligence_context}\n"
+        )
+
+    # Format parameters for question templates
+    fmt = {
+        "country": meta.get("country", "the target country"),
+        "technology": meta.get("technology", "power"),
+        "capacity_mw": meta.get("capacity_mw", ""),
+        "name": meta.get("name", "the target asset"),
+        "operator": meta.get("operator", "the operator"),
+    }
+
+    # Group sources by domain
+    grouped = _format_sources_by_domain(state.sources_checked or [])
+
+    # Build per-section blocks
+    section_blocks: List[str] = []
+
+    section_blocks.append(
+        "## Executive Summary\n"
+        "[2-4 sentences summarizing the diligence findings with key risk/opportunity highlights]"
+    )
+
+    for domain_key, section_title in _DILIGENCE_DOMAIN_SECTIONS.items():
+        question_template = _DILIGENCE_SECTION_QUESTIONS.get(domain_key, "")
+        question = question_template.format(**fmt) if question_template else ""
+        sources_text = grouped.get(domain_key, "")
+        if not sources_text:
+            sources_text = (
+                "No sources were retrieved for this domain. State this gap explicitly "
+                "and provide brief [Background Knowledge] if possible."
+            )
+
+        block = f"## {section_title}\n"
+        if question:
+            block += f"**Question:** {question}\n"
+        block += f"**Sources for this section:**\n{sources_text}"
+        section_blocks.append(block)
+
+    section_blocks.append(
+        "## Risk Summary & Recommendation\n"
+        "[Synthesize across all domains: key risks, mitigants, acquisition recommendation]"
+    )
+
+    sections_text = "\n\n".join(section_blocks)
+
+    return f"""Today's date is {today}. Produce a structured acquisition diligence report for the asset described below.
+
+{asset_block}
+**RESEARCH QUESTION:** {state.original_query}
+**SEARCH TOPIC / REFINEMENT:** {search_topic}
+{context_block}
+**Instructions:**
+1. For each section below, analyze ONLY the domain-specific sources listed under that section.
+2. Cite evidence inline using exact source titles in square brackets.
+3. If a section has no sources, supplement with concise general knowledge marked as [Background Knowledge].
+4. Use today's date ({today}) when interpreting relative dates.
+5. No planning language, no meta-commentary, no boilerplate caveats.
+
+**Output format (follow exactly; use ## for all headers):**
+
+{sections_text}
+
+Begin:
+"""
+
+
 def generate_diligence_charts(
     asset_metadata: dict,
     diligence_context: str = "",
@@ -2557,6 +2659,90 @@ def _passes_direct_synthesis_quality_gate(text: str, state: ResearchState) -> bo
     return True
 
 
+def _passes_diligence_quality_gate(text: str, state: ResearchState) -> bool:
+    """Quality gate for diligence reports — does NOT require 'Direct Answer'."""
+    normalized = (text or "").strip()
+    if not normalized:
+        return False
+
+    sections = _parse_markdown_sections(normalized)
+    if len(sections) < 4:
+        return False
+    if sections[0][0].strip().lower() != "executive summary":
+        return False
+
+    # Must have at least 3 of the 6 diligence section titles
+    diligence_titles = list(_DILIGENCE_DOMAIN_SECTIONS.values())
+    matched = 0
+    for title, _ in sections[1:]:
+        cleaned = re.sub(r"\s+", " ", title).strip()
+        if any(dt.lower() in cleaned.lower() for dt in diligence_titles):
+            matched += 1
+    if matched < 3:
+        return False
+
+    # Minimum source citations
+    min_source_citations = 2 if len(state.sources_checked) >= 2 else 1
+    if _count_ranked_source_citations(normalized, state.sources_checked) < min_source_citations:
+        return False
+
+    # Executive summary must not be generic
+    executive_summary = sections[0][1]
+    if executive_summary and _summary_needs_rewrite(executive_summary):
+        return False
+
+    return True
+
+
+def _repair_diligence_synthesis_output(text: str, state: ResearchState) -> str:
+    """Lighter repair for diligence — does NOT cap thematic sections at 3."""
+    sections = _parse_markdown_sections(text)
+    if not sections:
+        return text
+
+    source_lookup = _build_source_lookup(state.sources_checked)
+    repaired: List[str] = []
+    seen_titles = set()
+    dropped_titles = {
+        "sources",
+        "gaps",
+        "uncertainty",
+        "background knowledge",
+        "caveats",
+    }
+
+    for index, (title, body) in enumerate(sections, start=1):
+        fixed_title = _normalize_direct_section_title(title)
+        if fixed_title.lower() in dropped_titles:
+            continue
+
+        fixed_body = (body or "").strip()
+        if fixed_title.lower() != "executive summary":
+            fixed_body = _mark_background_knowledge_sentences(
+                fixed_body,
+                query=state.original_query,
+                sources_define_term=False,
+            )
+            if not _has_ranked_source_citation(fixed_body, state.sources_checked):
+                fixed_body = _salvage_inline_citations(
+                    paragraph=fixed_body,
+                    routed_findings=[],
+                    routed_sources=state.sources_checked,
+                    source_lookup=source_lookup,
+                )
+
+        normalized_title = fixed_title.lower()
+        if normalized_title in seen_titles and normalized_title != "executive summary":
+            continue
+        seen_titles.add(normalized_title)
+
+        repaired.append(f"## {fixed_title}")
+        repaired.append(fixed_body)
+        repaired.append("")
+
+    return "\n".join(repaired).strip()
+
+
 def _definition_term_from_query(query: str) -> str:
     match = re.search(r"\bwhat\s+is\s+([^?,.]+)", query or "", re.IGNORECASE)
     if not match:
@@ -2642,6 +2828,53 @@ _DILIGENCE_DOMAIN_SECTIONS = {
     "counterparty": "Vendor & Counterparty",
     "asset_specific": "Asset Intelligence",
 }
+
+_DILIGENCE_SECTION_QUESTIONS = {
+    "commercial": (
+        "What are the specific electricity tariff rates, PPA terms, and feed-in tariff "
+        "structures in {country}? Estimate annual revenue for a {capacity_mw}MW "
+        "{technology} plant using the local data context."
+    ),
+    "licensing": (
+        "What specific permits, licenses, and regulatory approvals are required to "
+        "develop and operate a {technology} power plant in {country}? Identify the "
+        "regulator and licensing process."
+    ),
+    "environmental": (
+        "What environmental impact assessment requirements and grid connection "
+        "procedures apply to a {capacity_mw}MW {technology} plant in {country}?"
+    ),
+    "performance": (
+        "What are measured capacity factors and performance ratios for operational "
+        "{technology} plants in {country} or comparable markets? How does this asset "
+        "compare to the benchmark?"
+    ),
+    "counterparty": (
+        "Who are the key counterparties — offtaker, grid operator, developer — "
+        "and what is their track record in {country}?"
+    ),
+    "asset_specific": (
+        "What is known about {name} specifically — ownership changes, financing, "
+        "operational history, recent news?"
+    ),
+}
+
+
+def _format_sources_by_domain(sources: List[Source]) -> dict:
+    """Group sources by intent_domain and format each group.
+
+    Returns ``{domain_key: formatted_text}``.  Sources with empty/missing
+    ``intent_domain`` are placed under ``"other"``.
+    """
+    domain_buckets: dict[str, List[Source]] = {}
+    for s in sources:
+        key = s.intent_domain or "other"
+        domain_buckets.setdefault(key, []).append(s)
+
+    result = {}
+    for domain_key, bucket in domain_buckets.items():
+        result[domain_key] = _format_direct_sources_for_prompt(bucket)
+    return result
 
 
 def _deterministic_diligence_synthesis(state: ResearchState, asset_metadata: Optional[dict] = None) -> str:
@@ -2791,17 +3024,16 @@ def synthesize_direct(
 
     is_diligence = state.research_type == "diligence" and asset_metadata
     if is_diligence:
-        prompt = _build_diligence_synthesis_prompt(
+        prompt = _build_diligence_synthesis_prompt_v2(
             state, diligence_context=diligence_context, asset_metadata=asset_metadata,
         )
+        system_prompt = _DILIGENCE_ANALYST_SYSTEM_PROMPT
     else:
         prompt = _build_direct_synthesis_prompt(state, market_context=market_context)
+        system_prompt = _DIRECT_RESEARCH_ANALYST_SYSTEM_PROMPT
 
     try:
-        raw = _call_research_synthesis_model(
-            prompt,
-            system_prompt=_DIRECT_RESEARCH_ANALYST_SYSTEM_PROMPT,
-        )
+        raw = _call_research_synthesis_model(prompt, system_prompt=system_prompt)
     except Exception as exc:
         logger.error("Direct synthesis failed: %s", exc)
         raw = None
@@ -2814,7 +3046,10 @@ def synthesize_direct(
 
     normalized = _normalize_outline_headers(raw).strip()
     normalized = _normalize_direct_citation_labels(normalized)
-    normalized = _repair_direct_synthesis_output(normalized, state)
+    if is_diligence:
+        normalized = _repair_diligence_synthesis_output(normalized, state)
+    else:
+        normalized = _repair_direct_synthesis_output(normalized, state)
     executive_summary = _extract_markdown_section(normalized, "Executive Summary")
     if executive_summary and _summary_needs_rewrite(executive_summary):
         normalized = _replace_markdown_section(
@@ -2823,20 +3058,21 @@ def synthesize_direct(
             _deterministic_executive_summary(state),
         )
 
-    if not _passes_direct_synthesis_quality_gate(normalized, state):
+    _quality_gate = _passes_diligence_quality_gate if is_diligence else _passes_direct_synthesis_quality_gate
+    if not _quality_gate(normalized, state):
         retry_prompt = _build_direct_synthesis_retry_prompt(
             base_prompt=prompt,
             rejected_output=normalized,
             failure_reason="direct_synthesis_quality_failure",
         )
-        retry_raw = _call_research_synthesis_model(
-            retry_prompt,
-            system_prompt=_DIRECT_RESEARCH_ANALYST_SYSTEM_PROMPT,
-        )
+        retry_raw = _call_research_synthesis_model(retry_prompt, system_prompt=system_prompt)
         if retry_raw:
             normalized = _normalize_outline_headers(retry_raw).strip()
             normalized = _normalize_direct_citation_labels(normalized)
-            normalized = _repair_direct_synthesis_output(normalized, state)
+            if is_diligence:
+                normalized = _repair_diligence_synthesis_output(normalized, state)
+            else:
+                normalized = _repair_direct_synthesis_output(normalized, state)
             executive_summary = _extract_markdown_section(normalized, "Executive Summary")
             if executive_summary and _summary_needs_rewrite(executive_summary):
                 normalized = _replace_markdown_section(
@@ -2845,7 +3081,7 @@ def synthesize_direct(
                     _deterministic_executive_summary(state),
                 )
 
-    if not _passes_direct_synthesis_quality_gate(normalized, state):
+    if not _quality_gate(normalized, state):
         logger.warning("Direct synthesis failed quality gate after retry; using deterministic fallback")
         if is_diligence:
             return _deterministic_diligence_synthesis(state, asset_metadata=asset_metadata)
@@ -2858,7 +3094,7 @@ def synthesize_direct(
             for chart_title, data_uri in charts:
                 img_md = f"\n\n![{chart_title}]({data_uri})\n"
                 if "Revenue" in chart_title:
-                    normalized = _insert_after_section(normalized, "Tariff & Revenue Potential", img_md)
+                    normalized = _insert_after_section(normalized, "Tariff & Revenue", img_md)
                 elif "Benchmark" in chart_title or "Capacity" in chart_title:
                     normalized = _insert_after_section(normalized, "Performance Gap Analysis", img_md)
         except Exception as exc:

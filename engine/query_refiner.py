@@ -22,6 +22,7 @@ class SearchIntent:
     intent_query: str
     parent_query: str
     is_primary: bool = False
+    domain: str = ""
 
 # ---------------------------------------------------------------------------
 # Keyword / regex definitions for each dimension
@@ -570,36 +571,42 @@ def decompose_diligence_query(query: str, asset_metadata: dict) -> List[SearchIn
             intent_query=f"{country} independent power producer power purchase agreement {technology} tariff rates feed-in tariff 2025 2026",
             parent_query=query,
             is_primary=True,
+            domain="commercial",
         ),
         # 2. Licensing: regulator permits
         SearchIntent(
             intent_query=f"{country} {technology} power generation license application requirements electricity regulator permits",
             parent_query=query,
             is_primary=False,
+            domain="licensing",
         ),
         # 3. Environmental/Grid connection
         SearchIntent(
             intent_query=f"{country} environmental impact assessment grid connection requirements {technology} power plant {cap_str}",
             parent_query=query,
             is_primary=False,
+            domain="environmental",
         ),
         # 4. Technical/Performance benchmarks
         SearchIntent(
             intent_query=f"{technology} power plant capacity factor performance ratio measured data {country} operational",
             parent_query=query,
             is_primary=False,
+            domain="performance",
         ),
         # 5. Counterparty/Vendor
         SearchIntent(
             intent_query=f"{country} {technology} power project developer IPP {operator} offtake agreement utility grid operator",
             parent_query=query,
             is_primary=False,
+            domain="counterparty",
         ),
         # 6. Asset-specific news and deals
         SearchIntent(
             intent_query=f"{operator} {name} {country} {technology} acquisition renewable energy investment",
             parent_query=query,
             is_primary=False,
+            domain="asset_specific",
         ),
     ]
     return intents
