@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
+from zipfile import ZipFile
 
 import pytest
 
@@ -68,11 +70,205 @@ SAMPLE_MRDS_GEOJSON = {
     ],
 }
 
+SAMPLE_MRDS_GML = """<?xml version="1.0" encoding="UTF-8"?>
+<wfs:FeatureCollection
+   xmlns:ms="http://mapserver.gis.umn.edu/mapserver"
+   xmlns:gml="http://www.opengis.net/gml"
+   xmlns:wfs="http://www.opengis.net/wfs"
+   xmlns:ogc="http://www.opengis.net/ogc"
+   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <gml:featureMember>
+    <ms:mrds gml:id="mrds.37628">
+      <gml:boundedBy><gml:Envelope srsName="EPSG:4326"><gml:lowerCorner>-24.31834 29.8428</gml:lowerCorner><gml:upperCorner>-24.31834 29.8428</gml:upperCorner></gml:Envelope></gml:boundedBy>
+      <ms:msGeometry><gml:Point srsName="EPSG:4326"><gml:pos>-24.318340 29.842800</gml:pos></gml:Point></ms:msGeometry>
+      <ms:site_name>Atok</ms:site_name>
+      <ms:dep_id>10038814</ms:dep_id>
+      <ms:dev_stat>Producer</ms:dev_stat>
+      <ms:code_list>PGE_PT NI CU CO</ms:code_list>
+      <ms:fips_code>fSF</ms:fips_code>
+      <ms:url>https://mrdata.usgs.gov/mrds/show-mrds.php?dep_id=10038814</ms:url>
+      <ms:huc_code></ms:huc_code>
+      <ms:quad_code></ms:quad_code>
+    </ms:mrds>
+  </gml:featureMember>
+  <gml:featureMember>
+    <ms:mrds gml:id="mrds.37629">
+      <gml:boundedBy><gml:Envelope srsName="EPSG:4326"><gml:lowerCorner>-20.15 30.05</gml:lowerCorner><gml:upperCorner>-20.15 30.05</gml:upperCorner></gml:Envelope></gml:boundedBy>
+      <ms:msGeometry><gml:Point srsName="EPSG:4326"><gml:pos>-20.150000 30.050000</gml:pos></gml:Point></ms:msGeometry>
+      <ms:site_name>Dorowa</ms:site_name>
+      <ms:dep_id>10038815</ms:dep_id>
+      <ms:dev_stat>Occurrence</ms:dev_stat>
+      <ms:code_list>REE</ms:code_list>
+      <ms:fips_code>fZI</ms:fips_code>
+      <ms:url>https://mrdata.usgs.gov/mrds/show-mrds.php?dep_id=10038815</ms:url>
+      <ms:huc_code></ms:huc_code>
+      <ms:quad_code></ms:quad_code>
+    </ms:mrds>
+  </gml:featureMember>
+</wfs:FeatureCollection>"""
+
 SAMPLE_CONCESSION_CSV = (
     "mine_name,operator,mineral_type,status,latitude,longitude\n"
     "Mogalakwena,Anglo American Platinum,PGM,Operating,-23.68,28.73\n"
     "Sishen,Kumba Iron Ore,Iron Ore,Operating,-27.73,22.98\n"
 )
+
+SAMPLE_GENERATION_GEOJSON = {
+    "type": "FeatureCollection",
+    "features": [
+        {
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [22.5, -27.1]},
+            "properties": {
+                "site_id": "solar:L1001",
+                "gem_location_id": "L1001",
+                "name": "Kathu Solar Park",
+                "technology": "solar",
+                "capacity_mw": 150.0,
+                "status": "operating",
+                "operator": "ACME Operations",
+                "owner": "ACME Owner",
+                "country": "South Africa",
+                "location_accuracy": "exact",
+                "source_sheet": "Solar",
+                "wiki_url": "https://www.gem.wiki/Kathu_Solar_Park",
+                "unit_count": 2,
+                "phase_names": ["Phase 1", "Phase 2"],
+                "statuses": ["construction", "operating"],
+            },
+        },
+        {
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [16.1, -22.4]},
+            "properties": {
+                "site_id": "wind:L3003",
+                "gem_location_id": "L3003",
+                "name": "Luderitz Wind Farm",
+                "technology": "wind",
+                "capacity_mw": 80.0,
+                "status": "announced",
+                "operator": "WindCo Operations",
+                "owner": "WindCo Owner",
+                "country": "Namibia",
+                "location_accuracy": "approximate",
+                "source_sheet": "Wind",
+                "wiki_url": "https://www.gem.wiki/Luderitz_Wind_Farm",
+                "unit_count": 1,
+                "phase_names": ["--"],
+                "statuses": ["announced"],
+            },
+        },
+    ],
+}
+
+
+def _xlsx_col_name(index: int) -> str:
+    """Convert zero-based column index to Excel column letters."""
+    index += 1
+    out = []
+    while index:
+        index, rem = divmod(index - 1, 26)
+        out.append(chr(65 + rem))
+    return "".join(reversed(out))
+
+
+def _xlsx_inline_cell(ref: str, value) -> str:
+    """Build a minimal XLSX cell XML snippet."""
+    if value is None or value == "":
+        return ""
+    if isinstance(value, (int, float)):
+        return f'<c r="{ref}"><v>{value}</v></c>'
+    escaped = (
+        str(value)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+    return (
+        f'<c r="{ref}" t="inlineStr"><is><t>{escaped}</t></is></c>'
+    )
+
+
+def _build_sheet_xml(rows: list[list[object]]) -> str:
+    """Create a minimal worksheet XML document."""
+    xml_rows = []
+    for row_idx, row in enumerate(rows, start=1):
+        cells = []
+        for col_idx, value in enumerate(row):
+            cell = _xlsx_inline_cell(f"{_xlsx_col_name(col_idx)}{row_idx}", value)
+            if cell:
+                cells.append(cell)
+        xml_rows.append(f'<row r="{row_idx}">{"".join(cells)}</row>')
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        f'<sheetData>{"".join(xml_rows)}</sheetData>'
+        '</worksheet>'
+    )
+
+
+def create_test_generation_workbook(path: Path) -> Path:
+    """Write a minimal XLSX workbook with renewable GEM sheets."""
+    solar_rows = [
+        [
+            "Country/Area", "Project Name", "Phase Name", "Capacity (MW)", "Status",
+            "Operator", "Owner", "Latitude", "Longitude", "Location accuracy",
+            "GEM location ID", "GEM phase ID", "Wiki URL",
+        ],
+        [
+            "South Africa", "Kathu Solar Park", "Phase 1", 100.0, "construction",
+            "ACME Operations", "ACME Owner", -27.1, 22.5, "exact",
+            "L1001", "G1001", "https://www.gem.wiki/Kathu_Solar_Park",
+        ],
+        [
+            "South Africa", "Kathu Solar Park", "Phase 2", 50.0, "operating",
+            "ACME Operations", "ACME Owner", -27.1, 22.5, "exact",
+            "L1001", "G1002", "https://www.gem.wiki/Kathu_Solar_Park",
+        ],
+        [
+            "Kenya", "Turkana Solar", "--", 30.0, "operating",
+            "Solar Kenya", "Solar Kenya", 0.2, 36.1, "exact",
+            "L2002", "G2001", "https://www.gem.wiki/Turkana_Solar",
+        ],
+    ]
+    wind_rows = [
+        [
+            "Country/Area", "Project Name", "Phase Name", "Capacity (MW)",
+            "Installation Type", "Status", "Operator", "Owner", "Latitude",
+            "Longitude", "Location accuracy", "GEM location ID", "GEM phase ID",
+            "Wiki URL",
+        ],
+        [
+            "Namibia", "Luderitz Wind Farm", "--", 80.0, "Onshore", "announced",
+            "WindCo Operations", "WindCo Owner", -22.4, 16.1, "approximate",
+            "L3003", "G3001", "https://www.gem.wiki/Luderitz_Wind_Farm",
+        ],
+    ]
+
+    workbook_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        '<sheets>'
+        '<sheet name="Solar" sheetId="1" r:id="rId1"/>'
+        '<sheet name="Wind" sheetId="2" r:id="rId2"/>'
+        '</sheets>'
+        '</workbook>'
+    )
+    rels_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+        '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/>'
+        '</Relationships>'
+    )
+
+    with ZipFile(path, "w") as zf:
+        zf.writestr("xl/workbook.xml", workbook_xml)
+        zf.writestr("xl/_rels/workbook.xml.rels", rels_xml)
+        zf.writestr("xl/worksheets/sheet1.xml", _build_sheet_xml(solar_rows))
+        zf.writestr("xl/worksheets/sheet2.xml", _build_sheet_xml(wind_rows))
+    return path
 
 
 # ===========================================================================
@@ -84,11 +280,11 @@ class TestMRDSClient:
     """Tests for tools/imaging/mrds_client.py."""
 
     @patch("tools.imaging.mrds_client.requests.get")
-    def test_mrds_client_parses_geojson(self, mock_get):
-        """Verify fetch_deposits returns FeatureCollection with expected properties."""
+    def test_mrds_client_parses_gml(self, mock_get):
+        """Verify fetch_deposits parses real GML WFS response into GeoJSON."""
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_resp.json.return_value = SAMPLE_MRDS_GEOJSON
+        mock_resp.text = SAMPLE_MRDS_GML
         mock_resp.raise_for_status = MagicMock()
         mock_get.return_value = mock_resp
 
@@ -96,30 +292,58 @@ class TestMRDSClient:
 
         result = fetch_deposits()
         assert result["type"] == "FeatureCollection"
-        assert len(result["features"]) == 3
+        assert len(result["features"]) == 2
         props = result["features"][0]["properties"]
-        assert "name" in props
-        assert "dep_type" in props
-        assert "commod1" in props
-        assert "dev_stat" in props
-        assert "country" in props
+        assert props["name"] == "Atok"
+        assert props["commod1"] == "Platinum"
+        assert props["dev_stat"] == "Producer"
+        assert props["country"] == "South Africa"
+        assert "latitude" in props
+        assert "longitude" in props
 
     @patch("tools.imaging.mrds_client.requests.get")
     def test_mrds_client_filters_by_commodity(self, mock_get):
         """Verify commodity filter is passed in WFS request params."""
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_resp.json.return_value = {"type": "FeatureCollection", "features": []}
+        mock_resp.text = '<wfs:FeatureCollection xmlns:wfs="http://www.opengis.net/wfs"></wfs:FeatureCollection>'
         mock_resp.raise_for_status = MagicMock()
         mock_get.return_value = mock_resp
 
         from tools.imaging.mrds_client import fetch_deposits
 
-        fetch_deposits(commodity="Rare earths")
-        call_kwargs = mock_get.call_args
-        # Commodity filter should appear in params or URL
-        call_str = str(call_kwargs)
-        assert "Rare earths" in call_str
+        fetch_deposits(commodity="Platinum")
+        call_str = str(mock_get.call_args)
+        # Reverse lookup maps Platinum -> PGE or PGE_PT; both match via LIKE
+        assert "PGE" in call_str
+
+    def test_mrds_live_fetch(self):
+        """Integration test: fetch real deposits from USGS MRDS WFS endpoint.
+
+        Hits the real endpoint with a small bbox around Bushveld Complex.
+        Proves the client can actually retrieve and parse deposit data.
+        """
+        from tools.imaging.mrds_client import fetch_deposits
+
+        # Small bbox around Bushveld Complex, SA — known deposit-rich area
+        result = fetch_deposits(bbox=[28, -26, 30, -24], max_features=5)
+        assert result["type"] == "FeatureCollection"
+        assert len(result["features"]) >= 1, (
+            "Expected at least 1 deposit in Bushveld bbox, got 0. "
+            "Either WFS endpoint is down or request params are wrong."
+        )
+        feat = result["features"][0]
+        props = feat["properties"]
+        # Verify all required fields are populated
+        assert props.get("name"), "name should not be empty"
+        assert props.get("commod1"), "commod1 should not be empty"
+        assert props.get("country") == "South Africa", (
+            f"Expected South Africa, got {props.get('country')}"
+        )
+        assert feat["geometry"]["type"] == "Point"
+        coords = feat["geometry"]["coordinates"]
+        assert 28 <= coords[0] <= 30, f"lon {coords[0]} outside bbox"
+        assert -26 <= coords[1] <= -24, f"lat {coords[1]} outside bbox"
 
 
 # ===========================================================================
@@ -149,6 +373,42 @@ class TestConcessionsClient:
         assert props["operator"] == "Anglo American Platinum"
         assert props["mineral_type"] == "PGM"
         assert props["country"] == "South Africa"
+
+
+# ===========================================================================
+# 2b. GEM renewable generation client tests
+# ===========================================================================
+
+
+class TestGenerationClient:
+    """Tests for tools/imaging/generation_client.py."""
+
+    def test_generation_client_aggregates_sites_from_workbook(self, tmp_path):
+        """Renewable workbook rows should collapse to site-level assets."""
+        workbook = create_test_generation_workbook(tmp_path / "gem.xlsx")
+
+        from tools.imaging.generation_client import load_generation_assets
+
+        result = load_generation_assets(workbook_path=str(workbook))
+        assert result["type"] == "FeatureCollection"
+        assert len(result["features"]) == 2
+
+        by_id = {
+            feat["properties"]["site_id"]: feat
+            for feat in result["features"]
+        }
+        solar = by_id["solar:L1001"]
+        solar_props = solar["properties"]
+        assert solar_props["technology"] == "solar"
+        assert solar_props["capacity_mw"] == 150.0
+        assert solar_props["status"] == "operating"
+        assert solar_props["country"] == "South Africa"
+        assert solar_props["operator"] == "ACME Operations"
+        assert solar_props["owner"] == "ACME Owner"
+        assert solar_props["unit_count"] == 2
+        assert solar_props["phase_names"] == ["Phase 1", "Phase 2"]
+        assert sorted(solar_props["statuses"]) == ["construction", "operating"]
+        assert solar["geometry"]["coordinates"] == [22.5, -27.1]
 
 
 # ===========================================================================
@@ -285,6 +545,30 @@ class TestImagingStore:
         assert result["features"][0]["properties"]["country"] == "Zimbabwe"
         store.close()
 
+    def test_generation_store_filters(self, tmp_path):
+        """Generation assets should support technology, status, country, and capacity filters."""
+        from tools.imaging.store import ImagingDataStore
+
+        store = ImagingDataStore(db_path=str(tmp_path / "test.db"))
+        store.upsert_generation_assets(SAMPLE_GENERATION_GEOJSON["features"])
+
+        solar = store.get_generation_assets(technology="solar")
+        assert len(solar["features"]) == 1
+        assert solar["features"][0]["properties"]["site_id"] == "solar:L1001"
+
+        namibia = store.get_generation_assets(country="Namibia")
+        assert len(namibia["features"]) == 1
+        assert namibia["features"][0]["properties"]["technology"] == "wind"
+
+        operating = store.get_generation_assets(status="operating")
+        assert len(operating["features"]) == 1
+        assert operating["features"][0]["properties"]["name"] == "Kathu Solar Park"
+
+        large = store.get_generation_assets(min_capacity_mw=100)
+        assert len(large["features"]) == 1
+        assert large["features"][0]["properties"]["capacity_mw"] == 150.0
+        store.close()
+
 
 # ===========================================================================
 # 5. API endpoint tests
@@ -348,3 +632,96 @@ class TestImagingEndpoints:
             data = resp.get_json()
             assert data["type"] == "FeatureCollection"
             assert len(data["features"]) >= 1
+
+    def test_generation_api_endpoint(self, client):
+        """GET /api/imaging/generation returns GeoJSON and forwards filters."""
+        with patch("ui.web.app.ImagingDataStore") as MockStore:
+            mock_instance = MagicMock()
+            mock_instance.get_generation_assets.return_value = SAMPLE_GENERATION_GEOJSON
+            mock_instance.get_staleness.return_value = 0.5
+            MockStore.return_value = mock_instance
+
+            resp = client.get(
+                "/api/imaging/generation?technology=solar&country=South%20Africa&status=operating&min_capacity_mw=100"
+            )
+            assert resp.status_code == 200
+            data = resp.get_json()
+            assert data["type"] == "FeatureCollection"
+            assert len(data["features"]) == 2
+            mock_instance.get_generation_assets.assert_called_once_with(
+                technology="solar",
+                status="operating",
+                country="South Africa",
+                min_capacity_mw=100.0,
+            )
+
+    def test_deposits_endpoint_auto_fetches_when_empty(self, client, tmp_path):
+        """GET /api/imaging/deposits auto-fetches from MRDS when store is empty."""
+        from tools.imaging.store import ImagingDataStore
+
+        db_path = str(tmp_path / "autofetch.db")
+        real_store = ImagingDataStore(db_path=db_path)
+
+        with patch("ui.web.app.ImagingDataStore", return_value=real_store), \
+             patch("ui.web.app.fetch_deposits") as mock_fetch:
+            mock_fetch.return_value = SAMPLE_MRDS_GEOJSON
+            resp = client.get("/api/imaging/deposits")
+            assert resp.status_code == 200
+            # Auto-fetch should have been triggered since store was empty
+            mock_fetch.assert_called_once()
+            data = resp.get_json()
+            assert data["type"] == "FeatureCollection"
+            assert len(data["features"]) >= 1
+            # Viability scores should be injected
+            for feat in data["features"]:
+                assert "viability" in feat["properties"]
+        real_store.close()
+
+    def test_generation_endpoint_auto_imports_when_empty(self, client, tmp_path):
+        """GET /api/imaging/generation loads GEM assets when store is empty."""
+        from tools.imaging.store import ImagingDataStore
+
+        db_path = str(tmp_path / "autofetch_generation.db")
+        real_store = ImagingDataStore(db_path=db_path)
+
+        with patch("ui.web.app.ImagingDataStore", return_value=real_store), \
+             patch("ui.web.app.load_generation_assets") as mock_load:
+            mock_load.return_value = SAMPLE_GENERATION_GEOJSON
+            resp = client.get("/api/imaging/generation")
+            assert resp.status_code == 200
+            mock_load.assert_called_once()
+            data = resp.get_json()
+            assert data["type"] == "FeatureCollection"
+            assert len(data["features"]) == 2
+        real_store.close()
+
+    def test_webui_uses_reference_borders_overlay(self, client):
+        """Rendered imaging map should use a reference border overlay for satellite view."""
+        resp = client.get("/")
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+        assert "World_Boundaries_and_Places" in html
+        assert "dark_all/{z}/{x}/{y}.png" not in html
+        assert "blend-screen" not in html
+
+    def test_webui_includes_generation_overlay(self, client):
+        """Rendered imaging page should include distinct marker shapes and a full legend."""
+        resp = client.get("/")
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+        assert "/api/imaging/generation" in html
+        assert "Generation" in html
+        assert "imgGenerationCount" in html
+        assert "generation-triangle-marker" in html
+        assert "concession-square-marker" in html
+        assert "Marker legend" in html
+        assert "Mineral deposits" in html
+        assert "Concessions" in html
+        assert "Generation assets" in html
+        assert "Deposit viability" in html
+        assert "Generation technology" in html
+        assert "Solar" in html
+        assert "Wind" in html
+        assert "Hydropower" in html
+        assert "Bioenergy" in html
+        assert "Geothermal" in html

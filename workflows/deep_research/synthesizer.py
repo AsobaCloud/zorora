@@ -1,4 +1,4 @@
-"""Synthesizer - two-stage synthesis pipeline (outline → per-section expansion)."""
+"""Synthesizer for deep research output assembly and quality gating."""
 
 import logging
 import re
@@ -152,6 +152,11 @@ _RESEARCH_TYPE_LENSES = {
     "policy_review": "Emphasize regulatory mechanism, implementation status, and market pass-through effects.",
     "comparative": "Emphasize explicit contrasts, trade-offs, and relative outcomes across subjects.",
     "impact_assessment": "Emphasize causal chain from event/policy to prices, supply-demand balance, and risk.",
+    "diligence": "Produce a structured acquisition diligence report. Estimate revenue potential, identify regulatory requirements, benchmark performance against targets, and assess vendor/counterparty relationships.",
+}
+
+_BACKGROUND_TERM_DEFINITIONS = {
+    "lng": "LNG is liquefied natural gas, meaning natural gas cooled into a liquid so it can be shipped by sea.",
 }
 
 _RESEARCH_ANALYST_SYSTEM_PROMPT = (
@@ -159,6 +164,26 @@ _RESEARCH_ANALYST_SYSTEM_PROMPT = (
     "Write concise, evidence-grounded synthesis from supplied records only. "
     "Lead with conclusions, explain causal links, note conflicts, and cite inline "
     "using the provided source titles in square brackets. "
+    "Do not produce planning steps, meta commentary, or procedural narration."
+)
+
+_DIRECT_RESEARCH_ANALYST_SYSTEM_PROMPT = (
+    "You are a senior energy and electricity market research analyst. "
+    "Answer the user's research question directly using the supplied records as primary evidence. "
+    "Lead with conclusions, explain causal links, note conflicts, and cite inline "
+    "using the provided source titles in square brackets. "
+    "If the records leave a material gap, add concise general context marked "
+    "[Background Knowledge]. "
+    "Do not produce planning steps, meta commentary, or procedural narration."
+)
+
+_DILIGENCE_ANALYST_SYSTEM_PROMPT = (
+    "You are a senior renewable energy due diligence analyst specializing in "
+    "acquisition advisory for power generation assets in emerging markets. "
+    "You produce structured diligence reports for investment committees. "
+    "For each report section, synthesize the domain-specific sources provided, "
+    "quantify where data permits, flag material gaps, and cite inline using "
+    "exact source titles in square brackets. "
     "Do not produce planning steps, meta commentary, or procedural narration."
 )
 
@@ -172,7 +197,10 @@ def _emit_progress(callback, phase: str, message: str):
         callback("running", phase, message)
 
 
-def _call_research_synthesis_model(prompt: str) -> Optional[str]:
+def _call_research_synthesis_model(
+    prompt: str,
+    system_prompt: Optional[str] = None,
+) -> Optional[str]:
     """Call the reasoning endpoint with a synthesis-specific analyst persona."""
     if not prompt or not prompt.strip():
         return None
@@ -187,9 +215,10 @@ def _call_research_synthesis_model(prompt: str) -> Optional[str]:
 
         model_config = config.SPECIALIZED_MODELS["reasoning"]
         client = create_specialist_client("reasoning", model_config)
+        analyst_system_prompt = system_prompt or _RESEARCH_ANALYST_SYSTEM_PROMPT
 
         messages = [
-            {"role": "system", "content": _RESEARCH_ANALYST_SYSTEM_PROMPT},
+            {"role": "system", "content": analyst_system_prompt},
             {"role": "user", "content": prompt},
         ]
         # Cold-start-aware retries for hosted inference endpoints.
@@ -533,9 +562,15 @@ def _salvage_inline_citations(
     if not sentences:
         return f"{text} {''.join(citations)}".strip()
 
-    for idx in range(min(len(sentences), len(citations))):
-        if not _has_inline_citation(sentences[idx]):
-            sentences[idx] = f"{sentences[idx]} {citations[idx]}"
+    citation_index = 0
+    for idx, sentence in enumerate(sentences):
+        if citation_index >= len(citations):
+            break
+        if sentence.startswith("[Background Knowledge]"):
+            continue
+        if not _has_inline_citation(sentence):
+            sentences[idx] = f"{sentence} {citations[citation_index]}"
+            citation_index += 1
 
     rebuilt = " ".join(sentences).strip()
     if not _has_inline_citation(rebuilt):
@@ -1137,6 +1172,7 @@ def _normalize_outline_headers(raw: str) -> str:
             header_text = match.group(2).strip()
             # Strip bold/italic markers: **text** → text, *text* → text
             header_text = re.sub(r"\*{1,2}(.*?)\*{1,2}", r"\1", header_text)
+            header_text = header_text.rstrip(":").strip()
             lines.append(f"## {header_text}")
         else:
             lines.append(line)
@@ -1858,6 +1894,1215 @@ def assemble_synthesis(outline: OutlineResult, expanded_sections: List[Optional[
     parts.append("**Gaps:** Further investigation needed on dimensions not covered by available sources.")
 
     return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Direct synthesis
+# ---------------------------------------------------------------------------
+
+def _direct_synthesis_content_budget() -> int:
+    budgets = [
+        int(config.SYNTHESIS.get("content_budget", 0) or 0),
+        int(config.SYNTHESIS.get("clustering_char_budget", 0) or 0),
+        int(config.CONTENT_FETCH.get("prompt_content_budget", 0) or 0),
+    ]
+    return max([budget for budget in budgets if budget > 0] + [12000])
+
+
+def _prompt_excerpt(text: str, max_chars: int) -> str:
+    cleaned = re.sub(r"\s+", " ", (text or "").strip())
+    if len(cleaned) <= max_chars:
+        return cleaned
+    return cleaned[: max_chars - 3].rstrip() + "..."
+
+
+def _format_direct_sources_for_prompt(sources: List[Source]) -> str:
+    """Format ranked sources into a single prompt block within a shared char budget."""
+    if not sources:
+        return "No ranked sources were retrieved."
+
+    total_budget = _direct_synthesis_content_budget()
+    min_chars_per_source = int(config.SYNTHESIS.get("min_chars_per_source", 500) or 500)
+    per_source_cap = max(min_chars_per_source, total_budget // max(len(sources), 1))
+    per_source_cap = min(per_source_cap, 1200)
+
+    entries: List[str] = []
+    chars_used = 0
+
+    for idx, source in enumerate(sources, start=1):
+        title = (source.title or "").strip() or f"Source {idx}"
+        url = (source.url or "").strip() or "N/A"
+        source_type = (source.source_type or "unknown").strip() or "unknown"
+        content = source.content_full or source.content_snippet or source.title or ""
+        excerpt = _prompt_excerpt(content, max_chars=per_source_cap)
+
+        entry = "\n".join(
+            [
+                f"{idx}. {title}",
+                f"   URL: {url}",
+                f"   Source Type: {source_type}",
+                f"   Credibility Score: {float(source.credibility_score or 0.0):.2f}",
+                f"   Relevance Score: {float(source.relevance_score or 0.0):.2f}",
+                f"   Evidence: {excerpt or 'No usable excerpt available.'}",
+            ]
+        )
+
+        if chars_used + len(entry) > total_budget and entries:
+            remaining = total_budget - chars_used
+            if remaining < 240:
+                entries.append(
+                    f"... {len(sources) - idx + 1} additional ranked sources omitted due to context budget."
+                )
+                break
+
+            fixed_chars = len(entry) - len(excerpt)
+            excerpt_cap = max(120, remaining - fixed_chars - 3)
+            trimmed_excerpt = _prompt_excerpt(content, max_chars=excerpt_cap)
+            entry = "\n".join(
+                [
+                    f"{idx}. {title}",
+                    f"   URL: {url}",
+                    f"   Source Type: {source_type}",
+                    f"   Credibility Score: {float(source.credibility_score or 0.0):.2f}",
+                    f"   Relevance Score: {float(source.relevance_score or 0.0):.2f}",
+                    f"   Evidence: {trimmed_excerpt or 'No usable excerpt available.'}",
+                ]
+            )
+            if chars_used + len(entry) > total_budget:
+                entries.append(
+                    f"... {len(sources) - idx + 1} additional ranked sources omitted due to context budget."
+                )
+                break
+
+        entries.append(entry)
+        chars_used += len(entry)
+
+    return "\n\n".join(entries)
+
+
+def _build_diligence_synthesis_prompt(
+    state: ResearchState,
+    diligence_context: str = "",
+    asset_metadata: Optional[dict] = None,
+) -> str:
+    """Build a diligence-specific synthesis prompt with fixed report sections."""
+    today = date.today().isoformat()
+    search_topic = state.refined_query or state.original_query
+    sources_text = _format_direct_sources_for_prompt(state.sources_checked)
+    meta = asset_metadata or {}
+
+    asset_block = (
+        f"**ASSET UNDER REVIEW:**\n"
+        f"- Name: {meta.get('name', 'Unknown')}\n"
+        f"- Technology: {meta.get('technology', 'Unknown')}\n"
+        f"- Capacity: {meta.get('capacity_mw', 'Unknown')} MW\n"
+        f"- Country: {meta.get('country', 'Unknown')}\n"
+        f"- Operator: {meta.get('operator', 'Unknown')}\n"
+        f"- Owner: {meta.get('owner', 'Unknown')}\n"
+        f"- Status: {meta.get('status', 'Unknown')}\n"
+    )
+
+    context_block = ""
+    if diligence_context:
+        context_block = (
+            "\n**LOCAL DATA CONTEXT (use for quantitative analysis; do not cite as a source):**\n"
+            f"{diligence_context}\n"
+        )
+
+    return f"""Today's date is {today}. Produce a structured acquisition diligence report for the asset described below.
+
+{asset_block}
+**RESEARCH QUESTION:** {state.original_query}
+**SEARCH TOPIC / REFINEMENT:** {search_topic}
+
+**RANKED SOURCES:**
+{sources_text}
+{context_block}
+**Instructions:**
+1. Use the local data context for quantitative analysis (tariff rates, capacity benchmarks, RPS targets).
+2. Use the ranked sources for qualitative context (regulatory environment, vendor intelligence, market trends).
+3. Cite evidence inline using exact source titles in square brackets.
+4. If the sources leave a material gap, supplement with concise general knowledge marked as [Background Knowledge].
+5. Use today's date ({today}) when interpreting relative dates.
+6. No planning language, no meta-commentary, no boilerplate caveats.
+
+**Output format (follow exactly; use ## for all headers):**
+
+## Executive Summary
+[2-4 sentences summarizing the diligence findings with key risk/opportunity highlights]
+
+## Tariff & Revenue Potential
+[Analysis of electricity tariffs, pricing mechanisms, and estimated revenue potential with inline citations]
+
+## Regulatory & Licensing Requirements
+[Required permits, regulatory approvals, compliance obligations with inline citations]
+
+## Performance Gap Analysis
+[Benchmarking against comparable plants, capacity factor analysis, performance targets with inline citations]
+
+## Vendor & Counterparty Relationships
+[Known offtake agreements, vendor dependencies, counterparty risk assessment with inline citations]
+
+## Risk Summary & Recommendation
+[Key risks, mitigants, and overall acquisition recommendation with inline citations]
+
+Begin:
+"""
+
+
+def _build_diligence_synthesis_prompt_v2(
+    state: ResearchState,
+    diligence_context: str = "",
+    asset_metadata: Optional[dict] = None,
+) -> str:
+    """Build a diligence prompt with per-section source grouping and analytical questions."""
+    today = date.today().isoformat()
+    search_topic = state.refined_query or state.original_query
+    meta = asset_metadata or {}
+
+    asset_block = (
+        f"**ASSET UNDER REVIEW:**\n"
+        f"- Name: {meta.get('name', 'Unknown')}\n"
+        f"- Technology: {meta.get('technology', 'Unknown')}\n"
+        f"- Capacity: {meta.get('capacity_mw', 'Unknown')} MW\n"
+        f"- Country: {meta.get('country', 'Unknown')}\n"
+        f"- Operator: {meta.get('operator', 'Unknown')}\n"
+        f"- Owner: {meta.get('owner', 'Unknown')}\n"
+        f"- Status: {meta.get('status', 'Unknown')}\n"
+    )
+
+    context_block = ""
+    if diligence_context:
+        context_block = (
+            "\n**LOCAL DATA CONTEXT (use for quantitative analysis; do not cite as a source):**\n"
+            f"{diligence_context}\n"
+        )
+
+    # Format parameters for question templates
+    fmt = {
+        "country": meta.get("country", "the target country"),
+        "technology": meta.get("technology", "power"),
+        "capacity_mw": meta.get("capacity_mw", ""),
+        "name": meta.get("name", "the target asset"),
+        "operator": meta.get("operator", "the operator"),
+    }
+
+    # Group sources by domain
+    grouped = _format_sources_by_domain(state.sources_checked or [])
+
+    # Build per-section blocks
+    section_blocks: List[str] = []
+
+    section_blocks.append(
+        "## Executive Summary\n"
+        "[2-4 sentences summarizing the diligence findings with key risk/opportunity highlights]"
+    )
+
+    for domain_key, section_title in _DILIGENCE_DOMAIN_SECTIONS.items():
+        question_template = _DILIGENCE_SECTION_QUESTIONS.get(domain_key, "")
+        question = question_template.format(**fmt) if question_template else ""
+        sources_text = grouped.get(domain_key, "")
+        if not sources_text:
+            sources_text = (
+                "No sources were retrieved for this domain. State this gap explicitly "
+                "and provide brief [Background Knowledge] if possible."
+            )
+
+        block = f"## {section_title}\n"
+        if question:
+            block += f"**Question:** {question}\n"
+        block += f"**Sources for this section:**\n{sources_text}"
+        section_blocks.append(block)
+
+    section_blocks.append(
+        "## Risk Summary & Recommendation\n"
+        "[Synthesize across all domains: key risks, mitigants, acquisition recommendation]"
+    )
+
+    sections_text = "\n\n".join(section_blocks)
+
+    return f"""Today's date is {today}. Produce a structured acquisition diligence report for the asset described below.
+
+{asset_block}
+**RESEARCH QUESTION:** {state.original_query}
+**SEARCH TOPIC / REFINEMENT:** {search_topic}
+{context_block}
+**Instructions:**
+1. For each section below, analyze ONLY the domain-specific sources listed under that section.
+2. Cite evidence inline using exact source titles in square brackets.
+3. If a section has no sources, supplement with concise general knowledge marked as [Background Knowledge].
+4. Use today's date ({today}) when interpreting relative dates.
+5. No planning language, no meta-commentary, no boilerplate caveats.
+
+**Output format (follow exactly; use ## for all headers):**
+
+{sections_text}
+
+Begin:
+"""
+
+
+def generate_diligence_charts(
+    asset_metadata: dict,
+    diligence_context: str = "",
+) -> list:
+    """Generate diligence charts as base64-encoded PNGs.
+
+    Returns list of (section_title, data_uri) tuples.
+    """
+    import base64
+    import io
+
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        logger.warning("matplotlib not available for diligence charts")
+        return []
+
+    charts = []
+    capacity_mw = float(asset_metadata.get("capacity_mw", 0) or 0)
+    technology = asset_metadata.get("technology", "Power")
+    country = asset_metadata.get("country", "")
+
+    # Chart 1: Revenue estimate at low/mid/high tariff rates
+    if capacity_mw > 0:
+        try:
+            capacity_factors = {"Solar": 0.20, "Wind": 0.30, "Coal": 0.70, "Gas": 0.50}
+            cf = capacity_factors.get(technology, 0.35)
+            annual_mwh = capacity_mw * cf * 8760
+
+            low_rate, mid_rate, high_rate = 0.04, 0.07, 0.12
+            revenues = [annual_mwh * r for r in (low_rate, mid_rate, high_rate)]
+
+            fig, ax = plt.subplots(figsize=(8, 4))
+            bars = ax.bar(
+                ["Low ($0.04/kWh)", "Mid ($0.07/kWh)", "High ($0.12/kWh)"],
+                [r / 1e6 for r in revenues],
+                color=["#94a3b8", "#3b82f6", "#22c55e"],
+            )
+            ax.set_ylabel("Annual Revenue ($M)")
+            ax.set_title(f"Estimated Annual Revenue — {capacity_mw:.0f} MW {technology} (CF={cf:.0%})")
+            ax.grid(True, alpha=0.3, axis="y")
+            for bar, rev in zip(bars, revenues):
+                ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.1,
+                        f"${rev / 1e6:.1f}M", ha="center", va="bottom", fontsize=9)
+            fig.tight_layout()
+
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png", dpi=100)
+            plt.close(fig)
+            buf.seek(0)
+            b64 = base64.b64encode(buf.read()).decode("ascii")
+            charts.append(("Revenue Estimate", f"data:image/png;base64,{b64}"))
+        except Exception as exc:
+            logger.warning("Revenue chart generation failed: %s", exc)
+
+    # Chart 2: Capacity benchmark vs comparable plants
+    try:
+        from tools.imaging.store import ImagingDataStore
+        img_store = ImagingDataStore()
+        comparable = img_store.get_generation_assets(technology=technology or None, country=country or None)
+        features = comparable.get("features", []) if isinstance(comparable, dict) else []
+        capacities = [
+            f.get("properties", {}).get("capacity_mw", 0)
+            for f in features
+            if f.get("properties", {}).get("capacity_mw")
+        ]
+        if capacities and capacity_mw > 0:
+            import statistics
+            avg_cap = statistics.mean(capacities)
+            med_cap = statistics.median(capacities)
+
+            fig, ax = plt.subplots(figsize=(8, 4))
+            labels = ["This Asset", f"Average ({len(capacities)} plants)", "Median"]
+            values = [capacity_mw, avg_cap, med_cap]
+            colors = ["#f59e0b", "#3b82f6", "#8b5cf6"]
+            ax.barh(labels, values, color=colors)
+            ax.set_xlabel("Capacity (MW)")
+            ax.set_title(f"Capacity Benchmark — {technology} in {country}")
+            ax.grid(True, alpha=0.3, axis="x")
+            for i, v in enumerate(values):
+                ax.text(v + max(values) * 0.02, i, f"{v:.0f} MW", va="center", fontsize=9)
+            fig.tight_layout()
+
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png", dpi=100)
+            plt.close(fig)
+            buf.seek(0)
+            b64 = base64.b64encode(buf.read()).decode("ascii")
+            charts.append(("Capacity Benchmark", f"data:image/png;base64,{b64}"))
+    except Exception as exc:
+        logger.warning("Capacity benchmark chart generation failed: %s", exc)
+
+    return charts
+
+
+def _build_direct_synthesis_prompt(state: ResearchState, market_context: str = "") -> str:
+    """Build a single-pass question-answering prompt over the ranked source set."""
+    today = date.today().isoformat()
+    search_topic = state.refined_query or state.original_query
+    lens_block = _research_lens_text(state.research_type)
+    sources_text = _format_direct_sources_for_prompt(state.sources_checked)
+
+    market_block = ""
+    if market_context:
+        market_block = (
+            "\n**Market Context (context only; do not cite as a source):**\n"
+            f"{market_context}\n"
+        )
+
+    return f"""Today's date is {today}. Answer the research question directly using the ranked source set below.
+
+**RESEARCH QUESTION:** {state.original_query}
+**SEARCH TOPIC / REFINEMENT:** {search_topic}
+{lens_block}
+**RANKED SOURCES:**
+{sources_text}
+{market_block}
+**Instructions:**
+1. Answer the research question directly in the executive summary and throughout the report.
+2. Use the full ranked source set below as primary evidence; do not narrow to a routed subset.
+3. Synthesize across sources instead of summarizing one source at a time.
+4. Cite evidence inline using the exact source titles in square brackets, e.g. [Grid Operations Update].
+5. If the sources leave a material gap, supplement with concise general knowledge and mark every such addition as [Background Knowledge].
+6. Preserve uncertainty, disagreement, and evidence gaps when sources conflict or remain incomplete.
+7. No planning language, no meta-commentary, no boilerplate caveats, and no procedural narration.
+8. Do not invent sourced statistics, dates, or claims that are not supported by the ranked records.
+9. Do not cite the market-context block as a source.
+10. Use today's date ({today}) when interpreting relative dates in the evidence.
+
+**Output format (follow exactly; use ## for all headers):**
+
+## Executive Summary
+[2-4 sentences that directly answer the question with inline citations]
+
+## Direct Answer
+[1 concise paragraph that synthesizes the main answer with inline citations]
+
+## [Thematic Section Title]
+[1 concise paragraph with inline citations]
+
+## [Thematic Section Title]
+[1 concise paragraph with inline citations]
+
+[Use 2-4 thematic sections total, driven by the question rather than by individual sources.]
+
+Begin:
+"""
+
+
+def _extract_markdown_section(text: str, title: str) -> str:
+    pattern = re.compile(
+        rf"(?ms)^##\s+{re.escape(title)}\s*\n(.*?)(?=^##\s+|\Z)"
+    )
+    match = pattern.search(text or "")
+    if not match:
+        return ""
+    return match.group(1).strip()
+
+
+def _replace_markdown_section(text: str, title: str, replacement: str) -> str:
+    pattern = re.compile(
+        rf"(?ms)^##\s+{re.escape(title)}\s*\n(.*?)(?=^##\s+|\Z)"
+    )
+    return pattern.sub(f"## {title}\n{replacement.strip()}\n\n", text, count=1).rstrip()
+
+
+def _insert_after_section(text: str, title: str, content: str) -> str:
+    """Insert content at the end of a named markdown section."""
+    pattern = re.compile(
+        rf"(?ms)(^##\s+{re.escape(title)}\s*\n.*?)(?=^##\s+|\Z)"
+    )
+    match = pattern.search(text or "")
+    if not match:
+        return text + content
+    end = match.end()
+    return text[:end].rstrip() + content + "\n" + text[end:]
+
+
+def _parse_markdown_sections(text: str) -> List[Tuple[str, str]]:
+    sections: List[Tuple[str, str]] = []
+    matches = list(re.finditer(r"(?m)^##\s+(.+)$", text or ""))
+    for idx, match in enumerate(matches):
+        title = match.group(1).strip()
+        start = match.end()
+        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text or "")
+        body = (text or "")[start:end].strip()
+        sections.append((title, body))
+    return sections
+
+
+def _has_ranked_source_citation(text: str, sources: List[Source]) -> bool:
+    titles = {
+        (source.title or "").strip()
+        for source in sources
+        if (source.title or "").strip()
+    }
+    if not titles:
+        return False
+    citations = re.findall(r"\[([^\]]+)\]", text or "")
+    return any(citation.strip() in titles for citation in citations)
+
+
+def _count_ranked_source_citations(text: str, sources: List[Source]) -> int:
+    titles = {
+        (source.title or "").strip()
+        for source in sources
+        if (source.title or "").strip()
+    }
+    citations = {citation.strip() for citation in re.findall(r"\[([^\]]+)\]", text or "")}
+    return len(citations & titles)
+
+
+def _build_direct_synthesis_retry_prompt(base_prompt: str, rejected_output: str, failure_reason: str) -> str:
+    rejected = _normalize_sentence(rejected_output or "", max_chars=1200)
+    reason_label = failure_reason.replace("_", " ")
+    return (
+        f"{base_prompt}\n\n"
+        "REWRITE REQUIRED:\n"
+        f"- Previous draft failed quality checks because: {reason_label}.\n"
+        "- Replace placeholder headers with specific analytical section titles.\n"
+        "- Every section paragraph, including ## Direct Answer, must contain at least one inline source-title citation.\n"
+        "- Do not say that further research is needed, that sources are incomplete, or that the answer is only partial.\n"
+        "- Keep the report focused on directly answering the question from the supplied evidence.\n"
+        "- If you add general context beyond the sources, mark it [Background Knowledge].\n"
+        f"- Rejected draft snippet: {rejected}\n\n"
+        "Rewrite now:\n"
+    )
+
+
+def _normalize_direct_citation_labels(text: str) -> str:
+    normalized = re.sub(
+        r"\[\s*Source\s+\d+\s*:\s*([^\]]+?)\s*\]",
+        r"[\1]",
+        text or "",
+        flags=re.IGNORECASE,
+    )
+    normalized = re.sub(
+        r"\[\s*Sources?\s+\d+\s*:\s*([^\]]+?)\s*\]",
+        r"[\1]",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    return normalized
+
+
+def _derive_direct_section_title(body: str, index: int) -> str:
+    first_sentence = re.split(r"(?<=[.!?])\s+", (body or "").strip())[0]
+    cleaned = re.sub(r"\[[^\]]+\]", "", first_sentence)
+    cleaned = re.sub(
+        r"^(?:the sources?|these sources?)\s+"
+        r"(?:provide insights into|highlight|offer insights into|indicate|show|suggest)\s+",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"^here are the key points:\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = cleaned.strip(" .:-")
+    words = re.findall(r"[A-Za-z0-9/&-]+", cleaned)
+    if not words:
+        return f"Section {index}"
+
+    title = " ".join(words[:6]).title()
+    title = title.replace("Lng", "LNG").replace("Eu", "EU").replace("Iea", "IEA")
+    return title
+
+
+def _normalize_direct_section_title(title: str) -> str:
+    fixed = re.sub(r"\*{1,2}(.*?)\*{1,2}", r"\1", title or "").strip()
+    fixed = fixed.rstrip(":").strip()
+
+    match = re.match(
+        r"^(?:thematic\s+)?(?:section|theme|topic|dimension)\s*:\s*(.+)$",
+        fixed,
+        re.IGNORECASE,
+    )
+    if match:
+        fixed = match.group(1).strip()
+
+    return fixed
+
+
+def _mark_background_knowledge_sentences(
+    body: str,
+    query: str = "",
+    sources_define_term: bool = False,
+) -> str:
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", body or "") if s.strip()]
+    if not sentences:
+        return (body or "").strip()
+
+    term = _definition_term_from_query(query)
+    term_lower = term.lower()
+
+    rebuilt: List[str] = []
+    mark_next_uncited = False
+    for sentence in sentences:
+        if (
+            term_lower
+            and not sources_define_term
+            and not _has_inline_citation(sentence)
+            and (
+                re.search(rf"\b{re.escape(term_lower)}\s+(?:is|stands for|refers to)\b", sentence, re.IGNORECASE)
+                or (term_lower == "lng" and "liquefied natural gas" in sentence.lower())
+            )
+            and not sentence.startswith("[Background Knowledge]")
+        ):
+            sentence = f"[Background Knowledge] {sentence}"
+
+        if re.search(
+            r"\b(?:sources?|documents?|records?)\s+do\s+not\b|\bdo\s+not\s+(?:specifically\s+)?define\b",
+            sentence,
+            re.IGNORECASE,
+        ):
+            if not _has_inline_citation(sentence) and not sentence.startswith("[Background Knowledge]"):
+                sentence = f"[Background Knowledge] {sentence}"
+            rebuilt.append(sentence)
+            mark_next_uncited = True
+            continue
+
+        if mark_next_uncited and not _has_inline_citation(sentence):
+            if not sentence.startswith("[Background Knowledge]"):
+                sentence = f"[Background Knowledge] {sentence}"
+            mark_next_uncited = False
+
+        rebuilt.append(sentence)
+
+    return " ".join(rebuilt).strip()
+
+
+def _is_background_knowledge_only_section(body: str) -> bool:
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", body or "") if s.strip()]
+    if not sentences:
+        return False
+    return all(sentence.startswith("[Background Knowledge]") for sentence in sentences)
+
+
+def _definition_sentence_from_sections(sections: List[Tuple[str, str]], query: str) -> str:
+    term = _definition_term_from_query(query)
+    if not term:
+        return ""
+
+    term_lower = term.lower()
+    for _title, body in sections:
+        for sentence in [s.strip() for s in re.split(r"(?<=[.!?])\s+", body or "") if s.strip()]:
+            lowered = sentence.lower()
+            if re.search(rf"\b{re.escape(term_lower)}\s+(?:is|stands for|refers to)\b", lowered):
+                return sentence
+            if term_lower == "lng" and "liquefied natural gas" in lowered:
+                return sentence
+    return ""
+
+
+def _ensure_direct_answer_definition(text: str, state: ResearchState) -> str:
+    if _direct_answer_covers_definition(text, state.original_query):
+        return text
+
+    term = _definition_term_from_query(state.original_query)
+    if not term:
+        return text
+
+    definition_fact, definition_title = _find_definition_fact(term, state.sources_checked)
+    if definition_fact and definition_title:
+        definition_sentence = f"{definition_fact.rstrip('.')} [{definition_title}]."
+    else:
+        definition_sentence = _definition_sentence_from_sections(
+            _parse_markdown_sections(text),
+            state.original_query,
+        )
+        if definition_sentence and not _has_inline_citation(definition_sentence):
+            definition_sentence = f"[Background Knowledge] {definition_sentence}"
+
+    if not definition_sentence:
+        return text
+
+    direct_answer = _extract_markdown_section(text, "Direct Answer")
+    if not direct_answer:
+        return text
+
+    if definition_sentence in direct_answer:
+        return text
+
+    return _replace_markdown_section(
+        text,
+        "Direct Answer",
+        f"{definition_sentence} {direct_answer}".strip(),
+    )
+
+
+def _repair_direct_synthesis_output(text: str, state: ResearchState) -> str:
+    sections = _parse_markdown_sections(text)
+    if not sections:
+        return text
+
+    source_lookup = _build_source_lookup(state.sources_checked)
+    definition_term = _definition_term_from_query(state.original_query)
+    sources_define_term = bool(
+        _find_definition_fact(definition_term, state.sources_checked)[0]
+    )
+    repaired: List[str] = []
+    seen_titles = set()
+    thematic_sections_kept = 0
+    dropped_titles = {
+        "sources",
+        "gaps",
+        "uncertainty",
+        "background knowledge",
+        "caveats",
+        "conclusion",
+        "conclusions",
+    }
+
+    for index, (title, body) in enumerate(sections, start=1):
+        fixed_title = _normalize_direct_section_title(title)
+        if re.fullmatch(r"\[Thematic Section Title\]|Thematic Section \d+", fixed_title):
+            fixed_title = _derive_direct_section_title(body, index=index)
+        if fixed_title.lower() in dropped_titles:
+            continue
+
+        fixed_body = (body or "").strip()
+        if fixed_title.lower() != "executive summary":
+            fixed_body = _mark_background_knowledge_sentences(
+                fixed_body,
+                query=state.original_query,
+                sources_define_term=sources_define_term,
+            )
+            fixed_body = _normalize_section_output(fixed_body, max_sentences=5, max_words=190)
+            if not _has_ranked_source_citation(fixed_body, state.sources_checked):
+                fixed_body = _salvage_inline_citations(
+                    paragraph=fixed_body,
+                    routed_findings=[],
+                    routed_sources=state.sources_checked,
+                    source_lookup=source_lookup,
+                )
+
+        normalized_title = fixed_title.lower()
+        if normalized_title == "executive summary":
+            pass
+        elif normalized_title == "direct answer":
+            if normalized_title in seen_titles:
+                continue
+        else:
+            if normalized_title in seen_titles:
+                continue
+            if thematic_sections_kept >= 3:
+                continue
+            thematic_sections_kept += 1
+
+        seen_titles.add(normalized_title)
+        repaired.append(f"## {fixed_title}")
+        repaired.append(fixed_body)
+        repaired.append("")
+
+    repaired_text = "\n".join(repaired).strip()
+    return _ensure_direct_answer_definition(repaired_text, state)
+
+
+def _passes_direct_synthesis_quality_gate(text: str, state: ResearchState) -> bool:
+    normalized = (text or "").strip()
+    if not normalized:
+        return False
+
+    sections = _parse_markdown_sections(normalized)
+    if len(sections) < 3:
+        return False
+    if sections[0][0].strip().lower() != "executive summary":
+        return False
+    if not any(title.strip().lower() == "direct answer" for title, _ in sections[1:]):
+        return False
+    min_source_citations = 2 if len(state.sources_checked) >= 2 else 1
+    if _count_ranked_source_citations(normalized, state.sources_checked) < min_source_citations:
+        return False
+
+    executive_summary = sections[0][1]
+    if executive_summary and _summary_needs_rewrite(executive_summary):
+        return False
+    if not _direct_answer_covers_definition(normalized, state.original_query):
+        return False
+
+    for title, body in sections[1:]:
+        cleaned_title = re.sub(r"\s+", " ", title).strip()
+        if not cleaned_title:
+            return False
+        if cleaned_title == "[Thematic Section Title]":
+            return False
+        if cleaned_title.lower() in {
+            "market data context",
+            "market context",
+            "commodities",
+            "treasuries",
+            "fx",
+            "rates",
+            "metals",
+        }:
+            return False
+        if _is_generic_outline_title(cleaned_title):
+            return False
+        if cleaned_title.lower() in {"conclusion", "conclusions"}:
+            return False
+        if (
+            not _has_ranked_source_citation(body, state.sources_checked)
+            and not _is_background_knowledge_only_section(body)
+        ):
+            return False
+        if re.search(r"\bdoes not address the specific question\b", body, re.IGNORECASE):
+            return False
+        if re.search(r"\bdoes not provide any information\b", body, re.IGNORECASE):
+            return False
+        if any(pattern.search(body) for pattern in _LOW_VALUE_SENTENCE_PATTERNS):
+            return False
+        if any(pattern.search(body) for pattern in _LOW_QUALITY_SECTION_PATTERNS):
+            return False
+
+    return True
+
+
+def _passes_diligence_quality_gate(text: str, state: ResearchState) -> bool:
+    """Quality gate for diligence reports — does NOT require 'Direct Answer'."""
+    normalized = (text or "").strip()
+    if not normalized:
+        return False
+
+    sections = _parse_markdown_sections(normalized)
+    if len(sections) < 4:
+        return False
+    if sections[0][0].strip().lower() != "executive summary":
+        return False
+
+    # Must have at least 3 of the 6 diligence section titles
+    diligence_titles = list(_DILIGENCE_DOMAIN_SECTIONS.values())
+    matched = 0
+    for title, _ in sections[1:]:
+        cleaned = re.sub(r"\s+", " ", title).strip()
+        if any(dt.lower() in cleaned.lower() for dt in diligence_titles):
+            matched += 1
+    if matched < 3:
+        return False
+
+    # Minimum source citations
+    min_source_citations = 2 if len(state.sources_checked) >= 2 else 1
+    if _count_ranked_source_citations(normalized, state.sources_checked) < min_source_citations:
+        return False
+
+    # Executive summary must not be generic
+    executive_summary = sections[0][1]
+    if executive_summary and _summary_needs_rewrite(executive_summary):
+        return False
+
+    return True
+
+
+def _repair_diligence_synthesis_output(text: str, state: ResearchState) -> str:
+    """Lighter repair for diligence — does NOT cap thematic sections at 3."""
+    sections = _parse_markdown_sections(text)
+    if not sections:
+        return text
+
+    source_lookup = _build_source_lookup(state.sources_checked)
+    repaired: List[str] = []
+    seen_titles = set()
+    dropped_titles = {
+        "sources",
+        "gaps",
+        "uncertainty",
+        "background knowledge",
+        "caveats",
+    }
+
+    for index, (title, body) in enumerate(sections, start=1):
+        fixed_title = _normalize_direct_section_title(title)
+        if fixed_title.lower() in dropped_titles:
+            continue
+
+        fixed_body = (body or "").strip()
+        if fixed_title.lower() != "executive summary":
+            fixed_body = _mark_background_knowledge_sentences(
+                fixed_body,
+                query=state.original_query,
+                sources_define_term=False,
+            )
+            if not _has_ranked_source_citation(fixed_body, state.sources_checked):
+                fixed_body = _salvage_inline_citations(
+                    paragraph=fixed_body,
+                    routed_findings=[],
+                    routed_sources=state.sources_checked,
+                    source_lookup=source_lookup,
+                )
+
+        normalized_title = fixed_title.lower()
+        if normalized_title in seen_titles and normalized_title != "executive summary":
+            continue
+        seen_titles.add(normalized_title)
+
+        repaired.append(f"## {fixed_title}")
+        repaired.append(fixed_body)
+        repaired.append("")
+
+    return "\n".join(repaired).strip()
+
+
+def _definition_term_from_query(query: str) -> str:
+    match = re.search(r"\bwhat\s+is\s+([^?,.]+)", query or "", re.IGNORECASE)
+    if not match:
+        return ""
+    return match.group(1).strip()
+
+
+def _direct_answer_covers_definition(text: str, query: str) -> bool:
+    term = _definition_term_from_query(query)
+    if not term:
+        return True
+
+    direct_answer = _extract_markdown_section(text, "Direct Answer").lower()
+    term_lower = term.lower()
+    if not direct_answer:
+        return False
+    if re.search(rf"\b{re.escape(term_lower)}\s+(?:is|stands for|refers to)\b", direct_answer):
+        return True
+    if term_lower == "lng" and "liquefied natural gas" in direct_answer:
+        return True
+    return False
+
+
+def _find_definition_fact(term: str, sources: List[Source]) -> Tuple[str, str]:
+    if not term:
+        return "", ""
+
+    term_pattern = re.escape(term.strip())
+    for source in sources:
+        text = source.content_snippet or source.content_full or ""
+        if not text:
+            continue
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+        for sentence in sentences:
+            lowered = sentence.lower()
+            if not re.search(term_pattern, sentence, re.IGNORECASE):
+                continue
+            if " stands for " in lowered or " is " in lowered or " refers to " in lowered:
+                return _normalize_sentence(sentence, max_chars=220), source.title or "Untitled Source"
+    return "", ""
+
+
+def _background_definition_fact(term: str) -> str:
+    if not term:
+        return ""
+    return _BACKGROUND_TERM_DEFINITIONS.get(term.strip().lower(), "")
+
+
+def _extractive_summarize(texts: List[str], query: str, max_sentences: int = 3) -> str:
+    """Select the most query-relevant sentences from *texts* using TF-IDF
+    cosine similarity.  Falls back to first *max_sentences* if scikit-learn
+    is unavailable."""
+    if not texts:
+        return ""
+    # Split each text into sentences and flatten
+    import re as _re
+    sentences: List[str] = []
+    for t in texts:
+        sentences.extend(s.strip() for s in _re.split(r'(?<=[.!?])\s+', t) if s.strip())
+    if not sentences:
+        return " ".join(texts[:max_sentences])
+    # Score sentences by keyword overlap with query (no external deps)
+    query_tokens = set(query.lower().split())
+    scored = []
+    for i, sent in enumerate(sentences):
+        sent_tokens = set(sent.lower().split())
+        overlap = len(query_tokens & sent_tokens)
+        scored.append((overlap, i, sent))
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    # Only include sentences with at least 1 query-term overlap
+    selected = [s for overlap, _, s in scored[:max_sentences] if overlap > 0]
+    if not selected:
+        selected = [scored[0][2]]
+    return " ".join(selected)
+
+
+# Domain label → report section header mapping for diligence fallback
+_DILIGENCE_DOMAIN_SECTIONS = {
+    "commercial": "Tariff & Revenue",
+    "licensing": "Regulatory & Licensing",
+    "environmental": "Environmental & Grid Connection",
+    "performance": "Performance",
+    "counterparty": "Vendor & Counterparty",
+    "asset_specific": "Asset Intelligence",
+}
+
+_DILIGENCE_SECTION_QUESTIONS = {
+    "commercial": (
+        "What are the specific electricity tariff rates, PPA terms, and feed-in tariff "
+        "structures in {country}? Estimate annual revenue for a {capacity_mw}MW "
+        "{technology} plant using the local data context."
+    ),
+    "licensing": (
+        "What specific permits, licenses, and regulatory approvals are required to "
+        "develop and operate a {technology} power plant in {country}? Identify the "
+        "regulator and licensing process."
+    ),
+    "environmental": (
+        "What environmental impact assessment requirements and grid connection "
+        "procedures apply to a {capacity_mw}MW {technology} plant in {country}?"
+    ),
+    "performance": (
+        "What are measured capacity factors and performance ratios for operational "
+        "{technology} plants in {country} or comparable markets? How does this asset "
+        "compare to the benchmark?"
+    ),
+    "counterparty": (
+        "Who are the key counterparties — offtaker, grid operator, developer — "
+        "and what is their track record in {country}?"
+    ),
+    "asset_specific": (
+        "What is known about {name} specifically — ownership changes, financing, "
+        "operational history, recent news?"
+    ),
+}
+
+
+def _format_sources_by_domain(sources: List[Source]) -> dict:
+    """Group sources by intent_domain and format each group.
+
+    Returns ``{domain_key: formatted_text}``.  Sources with empty/missing
+    ``intent_domain`` are placed under ``"other"``.
+    """
+    domain_buckets: dict[str, List[Source]] = {}
+    for s in sources:
+        key = s.intent_domain or "other"
+        domain_buckets.setdefault(key, []).append(s)
+
+    result = {}
+    for domain_key, bucket in domain_buckets.items():
+        result[domain_key] = _format_direct_sources_for_prompt(bucket)
+    return result
+
+
+def _deterministic_diligence_synthesis(state: ResearchState, asset_metadata: Optional[dict] = None) -> str:
+    """Structured diligence fallback when the LLM is unavailable.
+
+    Groups sources by ``intent_domain``, produces extractive summaries per
+    domain section, and assembles a report with the fixed diligence headers.
+    """
+    meta = asset_metadata or {}
+    query = state.original_query or ""
+    sources = state.sources_checked or []
+
+    # Group sources by domain
+    domain_sources: dict[str, List[Source]] = {}
+    for s in sources:
+        domain = s.intent_domain or "other"
+        domain_sources.setdefault(domain, []).append(s)
+
+    sections: List[str] = []
+
+    # Executive Summary
+    n_sources = len(sources)
+    domains_found = [d for d in _DILIGENCE_DOMAIN_SECTIONS if d in domain_sources]
+    exec_summary = (
+        f"Deterministic diligence report for {meta.get('name', 'the target asset')} "
+        f"({meta.get('technology', 'power')}, {meta.get('country', 'unknown country')}). "
+        f"Based on {n_sources} source(s) across {len(domains_found)} domain(s). "
+        f"LLM synthesis was unavailable; content below is extracted directly from sources."
+    )
+    sections.append(f"## Executive Summary\n{exec_summary}")
+
+    # Domain sections
+    for domain_key, section_title in _DILIGENCE_DOMAIN_SECTIONS.items():
+        ds = domain_sources.get(domain_key, [])
+        if not ds:
+            sections.append(f"## {section_title}\nNo sources found for this domain.")
+            continue
+        texts = [s.content_full or s.content_snippet for s in ds if (s.content_full or s.content_snippet)]
+        titles = [s.title or "Untitled" for s in ds]
+        summary = _extractive_summarize(texts, query, max_sentences=4)
+        citations = ", ".join(f"[{t}]" for t in titles[:3])
+        sections.append(f"## {section_title}\n{summary}\n\n*Sources: {citations}*")
+
+    # Risk Summary
+    sections.append(
+        "## Risk Summary & Recommendation\n"
+        "Unable to generate risk assessment without LLM synthesis. "
+        "Review the domain sections above for key findings."
+    )
+
+    synthesis = "\n\n".join(sections)
+    state.synthesis = synthesis
+    state.synthesis_model = "deterministic_diligence"
+    return synthesis
+
+
+def _deterministic_direct_synthesis(state: ResearchState, reason: str) -> str:
+    """Question-answer-oriented deterministic fallback for direct synthesis."""
+    ranked_sources = _summary_candidate_sources(state)
+    if not ranked_sources:
+        ranked_sources = sorted(
+            state.sources_checked,
+            key=lambda s: ((s.relevance_score or 0.0), (s.credibility_score or 0.0)),
+            reverse=True,
+        )
+    top_sources = ranked_sources[:5]
+
+    if not top_sources:
+        return _deterministic_evidence_synthesis(state, reason=reason)
+
+    direct_points: List[str] = []
+    seen = set()
+
+    term = _definition_term_from_query(state.original_query)
+    definition_fact, definition_title = _find_definition_fact(term, state.sources_checked or top_sources)
+    if definition_fact and definition_title:
+        sentence = f"{definition_fact.rstrip('.')} [{definition_title}]."
+        direct_points.append(sentence)
+        seen.add(sentence)
+    else:
+        background_definition = _background_definition_fact(term)
+        if background_definition:
+            sentence = f"[Background Knowledge] {background_definition.rstrip('.')}."
+            direct_points.append(sentence)
+            seen.add(sentence)
+
+    for source in top_sources:
+        fact = _extract_source_fact(source, max_chars=220)
+        title = source.title or "Untitled Source"
+        if not fact:
+            continue
+        sentence = f"{fact.rstrip('.')} [{title}]."
+        if sentence in seen:
+            continue
+        seen.add(sentence)
+        direct_points.append(sentence)
+        if len(direct_points) >= 3:
+            break
+
+    if not direct_points:
+        return _deterministic_evidence_synthesis(state, reason=reason)
+
+    summary = _truncate_to_words(" ".join(direct_points[:2]), max_words=75)
+    if term:
+        direct_answer = _truncate_to_words(" ".join(direct_points[:3]), max_words=150)
+    else:
+        question_text = (state.original_query or "the research question").strip().rstrip("?")
+        answer_intro = f"On the question of {question_text.lower()}, the strongest retrieved evidence indicates:"
+        direct_answer = _truncate_to_words(
+            f"{answer_intro} {' '.join(direct_points[:3])}",
+            max_words=150,
+        )
+    evidence_text = _truncate_to_words(" ".join(direct_points), max_words=180)
+    confidence_text = (
+        f"Confidence is limited by the quality and topical fit of {len(state.sources_checked)} retrieved sources; "
+        "this fallback answers the question directly from the strongest cited facts, without uncited extrapolation."
+    )
+
+    synthesis = "\n".join([
+        "## Executive Summary",
+        summary,
+        "",
+        "## Direct Answer",
+        direct_answer,
+        "",
+        "## Supporting Evidence",
+        evidence_text,
+        "",
+        "## Confidence and Gaps",
+        _normalize_sentence(confidence_text, max_chars=260),
+    ])
+    state.synthesis = synthesis
+    state.synthesis_model = "deterministic"
+    return synthesis
+
+
+def synthesize_direct(
+    state: ResearchState,
+    market_context: str = "",
+    progress_callback=None,
+    asset_metadata: Optional[dict] = None,
+    diligence_context: str = "",
+) -> str:
+    """Single-pass synthesis that answers the original research question directly."""
+    logger.info("Synthesizing ranked sources (direct-answer pipeline)...")
+    _emit_progress(progress_callback, "synthesis", "Preparing direct answer from ranked sources...")
+
+    is_diligence = state.research_type == "diligence" and asset_metadata
+    if is_diligence:
+        prompt = _build_diligence_synthesis_prompt_v2(
+            state, diligence_context=diligence_context, asset_metadata=asset_metadata,
+        )
+        system_prompt = _DILIGENCE_ANALYST_SYSTEM_PROMPT
+    else:
+        prompt = _build_direct_synthesis_prompt(state, market_context=market_context)
+        system_prompt = _DIRECT_RESEARCH_ANALYST_SYSTEM_PROMPT
+
+    try:
+        raw = _call_research_synthesis_model(prompt, system_prompt=system_prompt)
+    except Exception as exc:
+        logger.error("Direct synthesis failed: %s", exc)
+        raw = None
+
+    if not raw:
+        logger.warning("Direct synthesis returned empty output; using deterministic fallback")
+        if is_diligence:
+            return _deterministic_diligence_synthesis(state, asset_metadata=asset_metadata)
+        return _deterministic_direct_synthesis(state, reason="direct_synthesis_unavailable")
+
+    normalized = _normalize_outline_headers(raw).strip()
+    normalized = _normalize_direct_citation_labels(normalized)
+    if is_diligence:
+        normalized = _repair_diligence_synthesis_output(normalized, state)
+    else:
+        normalized = _repair_direct_synthesis_output(normalized, state)
+    executive_summary = _extract_markdown_section(normalized, "Executive Summary")
+    if executive_summary and _summary_needs_rewrite(executive_summary):
+        normalized = _replace_markdown_section(
+            normalized,
+            "Executive Summary",
+            _deterministic_executive_summary(state),
+        )
+
+    _quality_gate = _passes_diligence_quality_gate if is_diligence else _passes_direct_synthesis_quality_gate
+    if not _quality_gate(normalized, state):
+        retry_prompt = _build_direct_synthesis_retry_prompt(
+            base_prompt=prompt,
+            rejected_output=normalized,
+            failure_reason="direct_synthesis_quality_failure",
+        )
+        retry_raw = _call_research_synthesis_model(retry_prompt, system_prompt=system_prompt)
+        if retry_raw:
+            normalized = _normalize_outline_headers(retry_raw).strip()
+            normalized = _normalize_direct_citation_labels(normalized)
+            if is_diligence:
+                normalized = _repair_diligence_synthesis_output(normalized, state)
+            else:
+                normalized = _repair_direct_synthesis_output(normalized, state)
+            executive_summary = _extract_markdown_section(normalized, "Executive Summary")
+            if executive_summary and _summary_needs_rewrite(executive_summary):
+                normalized = _replace_markdown_section(
+                    normalized,
+                    "Executive Summary",
+                    _deterministic_executive_summary(state),
+                )
+
+    if not _quality_gate(normalized, state):
+        logger.warning("Direct synthesis failed quality gate after retry; using deterministic fallback")
+        if is_diligence:
+            return _deterministic_diligence_synthesis(state, asset_metadata=asset_metadata)
+        return _deterministic_direct_synthesis(state, reason="direct_synthesis_quality_failure")
+
+    # Insert diligence charts into the appropriate sections
+    if is_diligence:
+        try:
+            charts = generate_diligence_charts(asset_metadata, diligence_context)
+            for chart_title, data_uri in charts:
+                img_md = f"\n\n![{chart_title}]({data_uri})\n"
+                if "Revenue" in chart_title:
+                    normalized = _insert_after_section(normalized, "Tariff & Revenue", img_md)
+                elif "Benchmark" in chart_title or "Capacity" in chart_title:
+                    normalized = _insert_after_section(normalized, "Performance Gap Analysis", img_md)
+        except Exception as exc:
+            logger.warning("Diligence chart insertion failed (non-fatal): %s", exc)
+
+    state.synthesis = normalized
+    state.synthesis_model = "direct"
+    return normalized
 
 
 # ---------------------------------------------------------------------------

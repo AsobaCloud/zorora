@@ -22,6 +22,7 @@ class SearchIntent:
     intent_query: str
     parent_query: str
     is_primary: bool = False
+    domain: str = ""
 
 # ---------------------------------------------------------------------------
 # Keyword / regex definitions for each dimension
@@ -150,6 +151,7 @@ _GAP_DEFINITIONS = {
             "Trend analysis",
             "Policy review",
             "Impact assessment",
+            "Diligence search",
         ],
     },
     "scope": {
@@ -302,6 +304,8 @@ _ANALYSIS_TYPE_MAP = {
     "market_overview": "trend_analysis",
     "comparative": "comparative",
     "comparison": "comparative",
+    "diligence": "diligence",
+    "diligence search": "diligence",
 }
 
 
@@ -549,6 +553,63 @@ def detect_market_intent(query: str) -> bool:
 
     lowered = query.lower()
     return any(re.search(r"\b" + re.escape(term) + r"\b", lowered) for term in _MARKET_INTENT_KEYWORDS)
+
+
+def decompose_diligence_query(query: str, asset_metadata: dict) -> List[SearchIntent]:
+    """Decompose a diligence query into 6 analyst-style domain-specific intents."""
+    name = asset_metadata.get("name", "target asset")
+    technology = asset_metadata.get("technology", "power")
+    country = asset_metadata.get("country", "")
+    operator = asset_metadata.get("operator", "")
+    capacity = asset_metadata.get("capacity_mw", "")
+
+    cap_str = f"{capacity}MW" if capacity else ""
+
+    intents = [
+        # 1. Commercial/Revenue: PPA and tariff terms
+        SearchIntent(
+            intent_query=f"{country} independent power producer power purchase agreement {technology} tariff rates feed-in tariff 2025 2026",
+            parent_query=query,
+            is_primary=True,
+            domain="commercial",
+        ),
+        # 2. Licensing: regulator permits
+        SearchIntent(
+            intent_query=f"{country} {technology} power generation license application requirements electricity regulator permits",
+            parent_query=query,
+            is_primary=False,
+            domain="licensing",
+        ),
+        # 3. Environmental/Grid connection
+        SearchIntent(
+            intent_query=f"{country} environmental impact assessment grid connection requirements {technology} power plant {cap_str}",
+            parent_query=query,
+            is_primary=False,
+            domain="environmental",
+        ),
+        # 4. Technical/Performance benchmarks
+        SearchIntent(
+            intent_query=f"{technology} power plant capacity factor performance ratio measured data {country} operational",
+            parent_query=query,
+            is_primary=False,
+            domain="performance",
+        ),
+        # 5. Counterparty/Vendor
+        SearchIntent(
+            intent_query=f"{country} {technology} power project developer IPP {operator} offtake agreement utility grid operator",
+            parent_query=query,
+            is_primary=False,
+            domain="counterparty",
+        ),
+        # 6. Asset-specific news and deals
+        SearchIntent(
+            intent_query=f"{operator} {name} {country} {technology} acquisition renewable energy investment",
+            parent_query=query,
+            is_primary=False,
+            domain="asset_specific",
+        ),
+    ]
+    return intents
 
 
 def _passthrough(raw_query: str) -> dict:

@@ -215,6 +215,35 @@ class MarketDataStore:
         df.set_index("date", inplace=True)
         return df
 
+    def get_latest_point(self, series_id: str, provider: Optional[str] = None) -> Optional[dict]:
+        """Return the latest stored observation plus previous-point change for one series."""
+        from tools.market.series import SERIES_CATALOG
+
+        series = SERIES_CATALOG.get(series_id)
+        resolved_provider = provider or (series.provider if series else "fred")
+        df = self.get_series_df(series_id, provider=resolved_provider)
+        if df.empty:
+            return None
+
+        latest_value = float(df["value"].iloc[-1])
+        latest_date = str(df.index[-1].date())
+        prev_value = float(df["value"].iloc[-2]) if len(df) >= 2 else None
+        pct_change = None
+        if prev_value not in (None, 0):
+            pct_change = round(((latest_value - prev_value) / abs(prev_value)) * 100, 2)
+
+        return {
+            "series_id": series_id,
+            "name": series.label if series else series_id,
+            "group": series.group if series else None,
+            "unit": series.unit if series else None,
+            "source": resolved_provider,
+            "latest_value": latest_value,
+            "latest_date": latest_date,
+            "prev_value": prev_value,
+            "pct_change": pct_change,
+        }
+
     def get_multi_series_df(
         self, series_ids: List[str], start_date: Optional[str] = None
     ) -> pd.DataFrame:

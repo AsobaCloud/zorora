@@ -36,6 +36,180 @@
             flex-direction: column;
         }
 
+        .generation-triangle-icon {
+            background: transparent;
+            border: none;
+        }
+
+        .concession-square-icon {
+            background: transparent;
+            border: none;
+        }
+
+        .concession-square-marker {
+            display: block;
+            width: var(--square-size);
+            height: var(--square-size);
+            background: var(--square-color);
+            border: 1px solid var(--square-border, rgba(15, 23, 42, 0.2));
+            border-radius: 2px;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.25);
+        }
+
+        .generation-triangle-marker {
+            display: block;
+            width: 0;
+            height: 0;
+            border-left: calc(var(--triangle-size) * 0.58) solid transparent;
+            border-right: calc(var(--triangle-size) * 0.58) solid transparent;
+            border-bottom: var(--triangle-size) solid var(--triangle-color);
+            filter: drop-shadow(0 1px 2px rgba(15, 23, 42, 0.35));
+        }
+
+        .imaging-summary {
+            display: grid;
+            gap: 10px;
+            padding: 10px 0 4px;
+        }
+
+        .imaging-panel-grid {
+            display: grid;
+            gap: 14px;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            margin-top: 18px;
+        }
+
+        .imaging-subpanel {
+            background: rgba(255, 255, 255, 0.94);
+            border: 1px solid var(--border-grey);
+            border-radius: 14px;
+            padding: 16px;
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+        }
+
+        .imaging-subpanel h4 {
+            margin: 0 0 8px;
+            font-size: 0.98rem;
+            color: var(--text-dark);
+        }
+
+        .imaging-subpanel p {
+            margin: 0 0 12px;
+            font-size: 0.83rem;
+            color: var(--text-light);
+            line-height: 1.45;
+        }
+
+        .imaging-list {
+            display: grid;
+            gap: 10px;
+        }
+
+        .imaging-list-card {
+            border: 1px solid var(--border-grey);
+            border-radius: 12px;
+            padding: 12px;
+            background: #fff;
+        }
+
+        .imaging-list-card strong {
+            color: var(--text-dark);
+        }
+
+        .imaging-card-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .imaging-mini-btn {
+            border: 1px solid var(--border-grey);
+            background: #fff;
+            color: #374151;
+            padding: 6px 10px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.8rem;
+        }
+
+        .imaging-mini-btn.danger {
+            border-color: #fecaca;
+            color: #b91c1c;
+            background: #fef2f2;
+        }
+
+        .scout-factor-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 6px 0;
+            border-bottom: 1px solid #f3f4f6;
+            font-size: 0.82rem;
+        }
+
+        .generation-triangle-marker.pipeline {
+            filter: drop-shadow(0 0 5px rgba(245, 158, 11, 0.8));
+        }
+
+        .imaging-counts {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+            align-items: center;
+            font-size: 0.88rem;
+            color: var(--text-light);
+        }
+
+        .imaging-legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px 16px;
+            align-items: center;
+            font-size: 0.8rem;
+            color: var(--text-light);
+        }
+
+        .imaging-legend-title {
+            font-weight: 700;
+            color: var(--text-dark);
+            margin-right: 2px;
+        }
+
+        .legend-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+        }
+
+        .legend-shape {
+            display: inline-block;
+            flex: 0 0 auto;
+        }
+
+        .legend-circle {
+            width: 11px;
+            height: 11px;
+            border-radius: 999px;
+            border: 1px solid rgba(15, 23, 42, 0.18);
+        }
+
+        .legend-square {
+            width: 11px;
+            height: 11px;
+            border-radius: 2px;
+            border: 1px solid rgba(15, 23, 42, 0.18);
+        }
+
+        .legend-triangle {
+            width: 0;
+            height: 0;
+            border-left: 6px solid transparent;
+            border-right: 6px solid transparent;
+            border-bottom: 12px solid var(--triangle-color, #64748b);
+            filter: drop-shadow(0 1px 1px rgba(15, 23, 42, 0.25));
+        }
+
         .app-layout {
             display: flex;
             flex: 1;
@@ -1519,6 +1693,8 @@
             <div class="mode-switcher">
                 <button class="mode-nav-btn active" data-mode="deep" onclick="switchMode('deep')">Deep Research</button>
                 <button class="mode-nav-btn" data-mode="digest" onclick="switchMode('digest')">Digest</button>
+                <button class="mode-nav-btn" data-mode="alerts" onclick="switchMode('alerts')">Alerts</button>
+                <button class="mode-nav-btn" data-mode="regulatory" onclick="switchMode('regulatory')">Regulatory</button>
                 <button class="mode-nav-btn" data-mode="global" onclick="switchMode('global')">Global View</button>
                 <button class="mode-nav-btn" data-mode="imaging" onclick="switchMode('imaging')">Imaging</button>
             </div>
@@ -1612,11 +1788,87 @@
                     <button type="submit" class="search-button" id="newsIntelButton">
                         Synthesize Digest
                     </button>
+                    <div style="display:flex;justify-content:flex-end;margin-top:12px;">
+                        <button type="button" class="search-button hidden" id="saveAlertButton" onclick="openAlertModal()">
+                            Save as Alert
+                        </button>
+                    </div>
                 </form>
             </div>
         </div>
 
-        <div id="newsIntelResultsContainer"></div>
+        <div id="newsIntelResultsContainer" class="hidden"></div>
+
+        <div class="hidden" id="alertsSection">
+            <div class="global-view-panel">
+                <div class="sidebar-header" style="margin-bottom:16px;">
+                    <h3>Recurring Alerts</h3>
+                    <button class="sidebar-new-btn" onclick="loadAlertsView()" title="Refresh Alerts">↻</button>
+                </div>
+                <div id="alertsSummary" style="font-size:0.88rem;color:var(--text-light);margin-bottom:12px;">No alerts loaded yet.</div>
+                <div id="alertsListContainer" style="display:flex;flex-direction:column;gap:12px;"></div>
+                <div id="alertResultsContainer" style="margin-top:16px;"></div>
+            </div>
+        </div>
+
+        <div class="hidden" id="regulatorySection">
+            <div class="global-view-panel">
+                <div class="global-view-filters">
+                    <div>
+                        <label for="regJurisdiction">Jurisdiction</label>
+                        <select id="regJurisdiction">
+                            <option value="ALL">All</option>
+                            <option value="US">United States</option>
+                            <option value="ZA">South Africa</option>
+                            <option value="ZW">Zimbabwe</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="regState">US State</label>
+                        <input type="text" id="regState" placeholder="e.g., CA">
+                    </div>
+                    <div>
+                        <label for="regFuel">US Fuel</label>
+                        <input type="text" id="regFuel" placeholder="e.g., SUN">
+                    </div>
+                    <div>
+                        <label for="regYear">US Year</label>
+                        <input type="number" id="regYear" placeholder="e.g., 2025" min="2000" max="2050">
+                    </div>
+                    <div style="display:flex;align-items:flex-end;gap:8px;">
+                        <button type="button" class="search-button" style="padding:8px 16px;font-size:0.88rem;" onclick="loadRegulatoryView()">Apply</button>
+                        <button type="button" class="search-button" style="padding:8px 16px;font-size:0.88rem;background:#fff;color:#111827;border:1px solid #d1d5db;" onclick="refreshRegulatoryView()">Refresh</button>
+                    </div>
+                </div>
+
+                <div style="color:var(--text-light);font-size:0.88rem;margin-bottom:12px;">
+                    Cached regulatory events are the primary view. Jurisdiction filters the event and provenance cache; state, fuel, and year refine the US quantitative cache.
+                </div>
+
+                <div class="dataset-cards-grid" id="regulatoryCardsGrid">
+                    <div style="color:var(--text-light);font-size:0.9rem;">Load cached regulatory events, provenance, and US quantitative data.</div>
+                </div>
+
+                <div class="articles-table-container" style="margin-top:18px;">
+                    <table class="articles-table">
+                        <thead>
+                            <tr>
+                                <th>Recent Regulatory Events</th>
+                                <th>Cache Provenance</th>
+                                <th>US Quantitative Cache</th>
+                            </tr>
+                        </thead>
+                        <tbody id="regulatoryBody">
+                            <tr>
+                                <td style="color:var(--text-light);">No data loaded</td>
+                                <td style="color:var(--text-light);">No data loaded</td>
+                                <td style="color:var(--text-light);">No data loaded</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
 
         <div class="hidden" id="globalViewSection">
             <div class="global-view-panel">
@@ -1701,7 +1953,7 @@
                         </select>
                     </div>
                     <div>
-                        <label for="imgStatus">Status</label>
+                        <label for="imgStatus">Deposit Status</label>
                         <select id="imgStatus" class="search-input" style="padding:8px 10px;">
                             <option value="">All</option>
                             <option value="Producer">Producer</option>
@@ -1710,6 +1962,40 @@
                             <option value="Occurrence">Occurrence</option>
                         </select>
                     </div>
+                    <div>
+                        <label for="imgGenerationTech">Power Tech</label>
+                        <select id="imgGenerationTech" class="search-input" style="padding:8px 10px;">
+                            <option value="">All</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="imgGenerationStatus">Plant Status</label>
+                        <select id="imgGenerationStatus" class="search-input" style="padding:8px 10px;">
+                            <option value="">All</option>
+                            <option value="operating">Operating</option>
+                            <option value="construction">Construction</option>
+                            <option value="pre-construction">Pre-construction</option>
+                            <option value="announced">Announced</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="imgGenerationMinCapacity">Min MW</label>
+                        <input id="imgGenerationMinCapacity" class="search-input" type="number" min="0" step="1" placeholder="0" style="padding:8px 10px;">
+                    </div>
+                    <div>
+                        <label for="imgScoutTechnology">Scout Tech</label>
+                        <select id="imgScoutTechnology" class="search-input" style="padding:8px 10px;">
+                            <option value="solar">Solar</option>
+                            <option value="wind">Wind</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="imgSolarOverlayToggle">Resource Overlay</label>
+                        <label style="display:flex;align-items:center;gap:8px;height:42px;padding:0 12px;border:1px solid var(--border-grey);border-radius:10px;background:#fff;font-size:0.88rem;color:var(--text-dark);">
+                            <input id="imgSolarOverlayToggle" type="checkbox" onchange="toggleSolarResourceOverlay()">
+                            <span>Solar Resource</span>
+                        </label>
+                    </div>
                     <div style="display:flex;align-items:flex-end;">
                         <button type="button" class="search-button" style="padding:8px 16px;font-size:0.88rem;" onclick="applyImagingFilters()">Apply</button>
                     </div>
@@ -1717,17 +2003,54 @@
 
                 <div id="imaging-map-container" style="height:600px;border-radius:12px;margin-bottom:12px;"></div>
 
-                <div id="imagingSummary" style="font-size:0.88rem;color:var(--text-light);padding:8px 0;display:flex;flex-wrap:wrap;gap:16px;align-items:center;">
-                    <span id="imgDepositCount">0 deposits</span>
-                    <span id="imgConcessionCount">0 concessions</span>
-                    <span style="display:flex;gap:8px;align-items:center;">
-                        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#22c55e;"></span><span id="imgHighCount">0</span> high
-                        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#f59e0b;"></span><span id="imgMedCount">0</span> medium
-                        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#ef4444;"></span><span id="imgLowCount">0</span> low
-                    </span>
+                <div id="imagingSummary" class="imaging-summary">
+                    <div class="imaging-counts">
+                        <span id="imgDepositCount">0 deposits</span>
+                        <span id="imgConcessionCount">0 concessions</span>
+                        <span id="imgGenerationCount">0 generation assets</span>
+                    </div>
+                    <div class="imaging-legend">
+                        <span class="imaging-legend-title">Marker legend</span>
+                        <span class="legend-item"><span class="legend-shape legend-circle" style="background:#64748b;"></span>Mineral deposits</span>
+                        <span class="legend-item"><span class="legend-shape legend-square" style="background:#8b5cf6;"></span>Concessions</span>
+                        <span class="legend-item"><span class="legend-shape legend-triangle" style="--triangle-color:#64748b;"></span>Generation assets</span>
+                    </div>
+                    <div class="imaging-legend">
+                        <span class="imaging-legend-title">Deposit viability</span>
+                        <span class="legend-item"><span class="legend-shape legend-circle" style="background:#22c55e;"></span><span id="imgHighCount">0</span> high</span>
+                        <span class="legend-item"><span class="legend-shape legend-circle" style="background:#f59e0b;"></span><span id="imgMedCount">0</span> medium</span>
+                        <span class="legend-item"><span class="legend-shape legend-circle" style="background:#ef4444;"></span><span id="imgLowCount">0</span> low</span>
+                    </div>
+                    <div class="imaging-legend">
+                        <span class="imaging-legend-title">Generation technology</span>
+                        <span class="legend-item"><span class="legend-shape legend-triangle" style="--triangle-color:#f59e0b;"></span>Solar</span>
+                        <span class="legend-item"><span class="legend-shape legend-triangle" style="--triangle-color:#0ea5e9;"></span>Wind</span>
+                        <span class="legend-item"><span class="legend-shape legend-triangle" style="--triangle-color:#2563eb;"></span>Hydropower</span>
+                        <span class="legend-item"><span class="legend-shape legend-triangle" style="--triangle-color:#16a34a;"></span>Bioenergy</span>
+                        <span class="legend-item"><span class="legend-shape legend-triangle" style="--triangle-color:#dc2626;"></span>Geothermal</span>
+                    </div>
                 </div>
                 <div style="font-size:0.78rem;color:var(--text-light);opacity:0.7;">
-                    Data: USGS MRDS (pre-2011 vintage) | openAFRICA DMRE | VIIRS 2024 | EOX Sentinel-2
+                    Data: USGS MRDS (pre-2011 vintage) | openAFRICA DMRE | GEM Africa Energy Tracker (March 2026) | VIIRS 2024 | EOX Sentinel-2
+                </div>
+
+                <div class="imaging-panel-grid">
+                    <div class="imaging-subpanel">
+                        <h4>Brownfield Pipeline</h4>
+                        <p>Shortlist generation assets for acquisition diligence and push them into Deep Research with one click.</p>
+                        <div id="brownfieldPipelineList" class="imaging-list"></div>
+                    </div>
+                    <div class="imaging-subpanel">
+                        <h4>Greenfield Scouting</h4>
+                        <p>Click the map to score a candidate site with the selected scout technology, then persist strong sites into the compare watchlist.</p>
+                        <div id="scoutEvaluationCard" class="imaging-list-card" style="margin-bottom:12px;">
+                            Click the map to score a site.
+                        </div>
+                        <h4 style="margin-top:14px;">Scout Watchlist</h4>
+                        <div id="scoutWatchlist" class="imaging-list"></div>
+                        <h4 style="margin-top:14px;">Compare</h4>
+                        <div id="scoutCompareList" class="imaging-list-card">Select watchlist sites to compare them side by side.</div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1746,6 +2069,33 @@
     </div>
     </div><!-- .app-layout -->
     <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="closeSidebar()"></div>
+
+    <div id="alertModal" class="hidden" style="position:fixed;inset:0;background:rgba(15,23,42,0.45);z-index:2200;align-items:center;justify-content:center;padding:24px;">
+        <div style="max-width:460px;width:100%;background:#fff;border-radius:14px;padding:24px;box-shadow:0 22px 60px rgba(15,23,42,0.22);">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+                <h3 style="margin:0;color:#111827;">Save as Alert</h3>
+                <button type="button" onclick="closeAlertModal()" style="border:none;background:none;color:#6B7280;font-size:1.2rem;cursor:pointer;">&times;</button>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:12px;">
+                <div>
+                    <label for="alertNameInput" style="display:block;margin-bottom:6px;font-size:0.85rem;color:#374151;">Alert Name</label>
+                    <input id="alertNameInput" class="search-input" type="text" placeholder="e.g., SA Renewable Reg Watch">
+                </div>
+                <div>
+                    <label for="alertIntervalInput" style="display:block;margin-bottom:6px;font-size:0.85rem;color:#374151;">Frequency</label>
+                    <select id="alertIntervalInput" class="search-input" style="padding:12px 14px;">
+                        <option value="daily">Daily</option>
+                        <option value="weekly">Weekly</option>
+                    </select>
+                </div>
+                <div id="alertModalContext" style="font-size:0.84rem;color:#6B7280;line-height:1.5;"></div>
+            </div>
+            <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px;">
+                <button type="button" class="search-button" style="background:#fff;color:#111827;border:1px solid #d1d5db;" onclick="closeAlertModal()">Cancel</button>
+                <button type="button" class="search-button" onclick="saveDigestAlert()">Save Alert</button>
+            </div>
+        </div>
+    </div>
 
     <div id="chatDock" class="chat-dock hidden">
         <div class="chat-dock-inner">
@@ -2000,14 +2350,38 @@
 
             return await openRefinementModal(refineResult, query);
         }
+        function getSessionMode() {
+            if (!currentSession || !currentSession.type) return null;
+            if (currentSession.type === 'research') return 'deep';
+            if (currentSession.type === 'news_intel') return 'digest';
+            return null;
+        }
+
+        function syncSessionView() {
+            const sessionMode = getSessionMode();
+            const showResearchSession = activeMode === 'deep' && sessionMode === 'deep';
+            const showDigestSession = activeMode === 'digest' && sessionMode === 'digest';
+            const showSessionChrome = showResearchSession || showDigestSession;
+
+            sessionActive = showSessionChrome;
+
+            document.body.classList.toggle('session-active', showSessionChrome);
+            document.querySelector('.welcome-section').classList.toggle('hidden', activeMode !== 'deep' || showResearchSession);
+            document.getElementById('deepResearchSection').classList.toggle('hidden', activeMode !== 'deep' || showResearchSession);
+            document.getElementById('digestSection').classList.toggle('hidden', activeMode !== 'digest');
+            document.getElementById('alertsSection').classList.toggle('hidden', activeMode !== 'alerts');
+            document.getElementById('regulatorySection').classList.toggle('hidden', activeMode !== 'regulatory');
+            document.getElementById('globalViewSection').classList.toggle('hidden', activeMode !== 'global');
+            document.getElementById('imagingSection').classList.toggle('hidden', activeMode !== 'imaging');
+            document.getElementById('newSearchButton').classList.toggle('hidden', !showSessionChrome);
+            document.getElementById('researchLayout').classList.toggle('hidden', !showResearchSession);
+            document.getElementById('chatDock').classList.toggle('hidden', !showSessionChrome);
+            document.getElementById('newsIntelResultsContainer').classList.toggle('hidden', !showDigestSession);
+        }
+
         function setSessionActive(active) {
             sessionActive = active;
-            document.body.classList.toggle('session-active', active);
-            document.querySelector('.welcome-section').classList.toggle('hidden', active);
-            document.querySelector('.search-section').classList.toggle('hidden', active);
-            document.getElementById('newSearchButton').classList.toggle('hidden', !active);
-            document.getElementById('researchLayout').classList.toggle('hidden', !active);
-            document.getElementById('chatDock').classList.toggle('hidden', !active);
+            syncSessionView();
             loadResearchHistory();
         }
 
@@ -2030,7 +2404,6 @@
         document.getElementById('newSearchButton').addEventListener('click', resetToNewSearch);
 
         function activateSessionFromResearch(data) {
-            setSessionActive(true);
             currentSession = {
                 type: 'research',
                 researchId: data.research_id || null,
@@ -2039,11 +2412,11 @@
                 synthesis: data.synthesis || '',
             };
             chatMessages = [];
+            setSessionActive(true);
             setTimeout(() => document.getElementById('chatInput').focus(), 50);
         }
 
         function activateSessionFromNewsIntel(data) {
-            setSessionActive(true);
             currentSession = {
                 type: 'news_intel',
                 sessionId: `${data.topic || 'all'}:${data.date_from || 'any'}:${data.date_to || 'any'}`,
@@ -2058,6 +2431,7 @@
                 synthesis: data.synthesis || '',
             };
             chatMessages = [];
+            setSessionActive(true);
             setTimeout(() => document.getElementById('chatInput').focus(), 50);
         }
 
@@ -2199,25 +2573,18 @@
             document.querySelectorAll('.mode-nav-btn').forEach(b => {
                 b.classList.toggle('active', b.dataset.mode === mode);
             });
-            document.getElementById('deepResearchSection').classList.toggle('hidden', mode !== 'deep');
-            document.getElementById('digestSection').classList.toggle('hidden', mode !== 'digest');
-            document.getElementById('globalViewSection').classList.toggle('hidden', mode !== 'global');
-            document.getElementById('imagingSection').classList.toggle('hidden', mode !== 'imaging');
-            // Hide welcome/research layout when switching to non-deep modes
-            if (mode === 'global') {
-                document.querySelector('.welcome-section').classList.add('hidden');
-                document.getElementById('researchLayout').classList.add('hidden');
+            syncSessionView();
+
+            if (mode === 'alerts') {
+                loadAlertsView();
+            } else if (mode === 'global') {
                 loadGlobalView();
+            } else if (mode === 'regulatory') {
+                loadRegulatoryView();
             } else if (mode === 'imaging') {
-                document.querySelector('.welcome-section').classList.add('hidden');
-                document.getElementById('researchLayout').classList.add('hidden');
                 loadImagingView();
             } else if (mode === 'digest') {
-                document.querySelector('.welcome-section').classList.add('hidden');
-                document.getElementById('researchLayout').classList.add('hidden');
                 renderStagedItems();
-            } else if (mode === 'deep' && !sessionActive) {
-                document.querySelector('.welcome-section').classList.remove('hidden');
             }
         }
 
@@ -2715,6 +3082,7 @@
         function displayNewsIntelResults(data) {
             const container = document.getElementById('newsIntelResultsContainer');
             const articles = data.articles || [];
+            const saveAlertButton = document.getElementById('saveAlertButton');
             container.innerHTML = `
                 <div style="background: white; border:1px solid #E5E7EB; border-radius:12px; padding:24px; margin-bottom:24px;">
                     <h2 style="color:#1A1A1A; margin-bottom:12px; font-size:1.4rem;">News Intel</h2>
@@ -2749,6 +3117,9 @@
                 </div>
             `;
             activateSessionFromNewsIntel(data);
+            if (saveAlertButton) {
+                saveAlertButton.classList.remove('hidden');
+            }
             container.scrollIntoView({ behavior: 'smooth' });
         }
         
@@ -2760,6 +3131,169 @@
 
         function escapeAttr(text) {
             return String(text).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        function openAlertModal() {
+            const topic = document.getElementById('newsTopicInput')?.value?.trim() || currentSession?.topic || '';
+            const dateFrom = document.getElementById('newsDateFrom')?.value || currentSession?.date_from || '';
+            const dateTo = document.getElementById('newsDateTo')?.value || currentSession?.date_to || '';
+            const windowDays = (() => {
+                if (dateFrom && dateTo) {
+                    const start = new Date(dateFrom);
+                    const end = new Date(dateTo);
+                    const diff = Math.max(1, Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1);
+                    return diff;
+                }
+                return 7;
+            })();
+            const stagedSeries = stagedItems.filter(item => item.type === 'dataset').map(item => item.data.series_id);
+            document.getElementById('alertNameInput').value = topic ? `${topic} watch` : 'Digest alert';
+            document.getElementById('alertIntervalInput').value = windowDays > 7 ? 'weekly' : 'daily';
+            document.getElementById('alertModalContext').innerHTML = `
+                <strong>Topic:</strong> ${escapeHtml(topic || 'All')}<br>
+                <strong>Window:</strong> ${windowDays} day(s)<br>
+                <strong>Staged series:</strong> ${escapeHtml(stagedSeries.join(', ') || 'None')}
+            `;
+            const modal = document.getElementById('alertModal');
+            modal.classList.remove('hidden');
+            modal.style.display = 'flex';
+        }
+
+        function closeAlertModal() {
+            const modal = document.getElementById('alertModal');
+            modal.classList.add('hidden');
+            modal.style.display = 'none';
+        }
+
+        async function saveDigestAlert() {
+            const name = document.getElementById('alertNameInput')?.value?.trim();
+            const interval = document.getElementById('alertIntervalInput')?.value || 'daily';
+            const topic = document.getElementById('newsTopicInput')?.value?.trim() || currentSession?.topic || '';
+            const dateFrom = document.getElementById('newsDateFrom')?.value || currentSession?.date_from || '';
+            const dateTo = document.getElementById('newsDateTo')?.value || currentSession?.date_to || '';
+            const stagedSeries = stagedItems.filter(item => item.type === 'dataset').map(item => item.data.series_id);
+            let dateWindowDays = 7;
+            if (dateFrom && dateTo) {
+                const start = new Date(dateFrom);
+                const end = new Date(dateTo);
+                dateWindowDays = Math.max(1, Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1);
+            }
+
+            if (!name) {
+                alert('Please enter an alert name');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/alerts', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name,
+                        topic,
+                        date_window_days: dateWindowDays,
+                        article_limit: parseInt(document.getElementById('newsLimit')?.value || '60', 10) || 60,
+                        staged_series: stagedSeries,
+                        interval,
+                    }),
+                });
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Failed to save alert');
+                }
+                closeAlertModal();
+                await loadAlertsView();
+                switchMode('alerts');
+            } catch (err) {
+                alert('Failed to save alert: ' + err.message);
+            }
+        }
+
+        async function loadAlertsView() {
+            try {
+                const response = await fetch('/api/alerts');
+                if (!response.ok) {
+                    throw new Error('Failed to load alerts');
+                }
+                const data = await response.json();
+                const alerts = data.alerts || [];
+                const summary = document.getElementById('alertsSummary');
+                if (summary) {
+                    summary.textContent = `${alerts.length} alert${alerts.length !== 1 ? 's' : ''} | ${data.unread_total || 0} unread result${(data.unread_total || 0) !== 1 ? 's' : ''}`;
+                }
+                const container = document.getElementById('alertsListContainer');
+                if (!container) return;
+                if (!alerts.length) {
+                    container.innerHTML = '<div class="sidebar-empty">No recurring alerts saved yet.</div>';
+                    document.getElementById('alertResultsContainer').innerHTML = '';
+                    return;
+                }
+                container.innerHTML = alerts.map(alertItem => `
+                    <div style="border:1px solid #E5E7EB;border-radius:12px;padding:14px;background:#fff;">
+                        <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
+                            <div>
+                                <div style="font-weight:600;color:#111827;">${escapeHtml(alertItem.name || 'Untitled alert')}</div>
+                                <div style="color:#6B7280;font-size:0.85rem;margin-top:4px;">${escapeHtml(alertItem.interval || 'daily')} | ${escapeHtml(alertItem.topic || 'All topics')} | ${alertItem.unread_count || 0} unread</div>
+                            </div>
+                            <div style="display:flex;gap:8px;">
+                                <button type="button" style="border:1px solid #E5E7EB;background:#fff;color:#374151;padding:6px 10px;border-radius:8px;cursor:pointer;font-size:0.82rem;" onclick="viewAlertResults(${escapeAttr(JSON.stringify(alertItem.id))}, ${escapeAttr(JSON.stringify(alertItem.name || ''))})">View</button>
+                                <button type="button" style="border:1px solid #FECACA;background:#FEF2F2;color:#B91C1C;padding:6px 10px;border-radius:8px;cursor:pointer;font-size:0.82rem;" onclick="deleteAlert(${escapeAttr(JSON.stringify(alertItem.id))})">Delete</button>
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (err) {
+                console.error('Alerts load error:', err);
+            }
+        }
+
+        async function viewAlertResults(alertId, alertName) {
+            try {
+                const response = await fetch(`/api/alerts/${encodeURIComponent(alertId)}/results?limit=20&offset=0`);
+                if (!response.ok) {
+                    throw new Error('Failed to load alert results');
+                }
+                const data = await response.json();
+                const results = data.results || [];
+                const container = document.getElementById('alertResultsContainer');
+                if (!container) return;
+                container.innerHTML = `
+                    <div style="background:#fff;border:1px solid #E5E7EB;border-radius:12px;padding:18px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                            <h3 style="margin:0;color:#111827;">${escapeHtml(alertName || 'Alert results')}</h3>
+                            <button type="button" style="border:1px solid #E5E7EB;background:#fff;color:#374151;padding:6px 10px;border-radius:8px;cursor:pointer;font-size:0.82rem;" onclick="markAlertRead(${escapeAttr(JSON.stringify(alertId))})">Mark all read</button>
+                        </div>
+                        ${results.length ? results.map(result => `
+                            <div style="border-top:1px solid #E5E7EB;padding-top:12px;margin-top:12px;">
+                                <div style="font-size:0.82rem;color:#6B7280;margin-bottom:8px;">${escapeHtml((result.run_at || '').toString().slice(0, 19).replace('T', ' '))} | ${result.article_count || 0} articles | ${result.read ? 'Read' : 'Unread'}</div>
+                                <div style="white-space:pre-wrap;color:#1F2937;line-height:1.6;">${escapeHtml(stripThinkTags(result.synthesis || 'No synthesis available'))}</div>
+                            </div>
+                        `).join('') : '<div class="sidebar-empty">No alert results yet.</div>'}
+                    </div>
+                `;
+            } catch (err) {
+                console.error('Alert results load error:', err);
+            }
+        }
+
+        async function markAlertRead(alertId) {
+            try {
+                await fetch(`/api/alerts/${encodeURIComponent(alertId)}/read`, { method: 'POST' });
+                await loadAlertsView();
+                await viewAlertResults(alertId, '');
+            } catch (err) {
+                console.error('Mark alert read error:', err);
+            }
+        }
+
+        async function deleteAlert(alertId) {
+            try {
+                await fetch(`/api/alerts/${encodeURIComponent(alertId)}`, { method: 'DELETE' });
+                document.getElementById('alertResultsContainer').innerHTML = '';
+                await loadAlertsView();
+            } catch (err) {
+                console.error('Delete alert error:', err);
+            }
         }
 
         // ── Staging System ──
@@ -3067,6 +3601,252 @@
             }).join('');
         }
 
+        function formatRegulatoryDate(value) {
+            const text = (value || '').toString().trim();
+            return text ? text.slice(0, 10) : 'N/A';
+        }
+
+        function renderRegulatoryEvents(events) {
+            if (!events.length) {
+                return '<span style="color:var(--text-light);">No cached regulatory events for this filter.</span>';
+            }
+            return events.slice(0, 8).map(item => {
+                const jurisdiction = escapeHtml(item.jurisdiction || 'NA');
+                const eventType = escapeHtml((item.event_type || 'event').replaceAll('_', ' '));
+                const regulator = escapeHtml(item.regulator || 'Unknown regulator');
+                const title = escapeHtml(item.title || 'Untitled');
+                const sourceUrl = item.source_url ? escapeHtml(item.source_url) : '';
+                const linkedTitle = sourceUrl
+                    ? `<a href="${sourceUrl}" target="_blank" rel="noopener" style="color:#4f46e5;text-decoration:none;">${title}</a>`
+                    : title;
+                return `
+                    <div style="padding-bottom:10px;margin-bottom:10px;border-bottom:1px solid var(--border-grey);">
+                        <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:4px;">
+                            <strong style="font-size:0.82rem;">${escapeHtml(formatRegulatoryDate(item.published_date))}</strong>
+                            <span class="tag-chip">${jurisdiction}</span>
+                            <span class="tag-chip">${eventType}</span>
+                        </div>
+                        <div style="font-weight:600;color:var(--text-dark);line-height:1.35;">${linkedTitle}</div>
+                        <div style="font-size:0.78rem;color:var(--text-light);margin-top:4px;">${regulator} | ${escapeHtml(item.source_system || '')}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function renderRegulatoryProvenance(rawDocuments, transformRuns) {
+            if (!rawDocuments.length && !transformRuns.length) {
+                return '<span style="color:var(--text-light);">No provenance cached yet. Refresh to populate source fetch records.</span>';
+            }
+            const runMap = new Map(transformRuns.map(run => [run.source_system, run]));
+            const systems = [...new Set([
+                ...rawDocuments.map(item => item.source_system),
+                ...transformRuns.map(item => item.source_system),
+            ].filter(Boolean))];
+            return systems.map(sourceSystem => {
+                const doc = rawDocuments.find(item => item.source_system === sourceSystem) || {};
+                const run = runMap.get(sourceSystem) || {};
+                const metadata = doc.metadata || {};
+                const detailBits = [];
+                if (doc.fetch_status) detailBits.push(`status: ${doc.fetch_status}`);
+                if (metadata.fallback_reason) detailBits.push(`fallback: ${metadata.fallback_reason}`);
+                if (metadata.record_count != null) detailBits.push(`records: ${metadata.record_count}`);
+                if (run.transform_version) detailBits.push(`transform: ${run.transform_version}`);
+                return `
+                    <div style="padding-bottom:10px;margin-bottom:10px;border-bottom:1px solid var(--border-grey);">
+                        <div style="font-weight:600;color:var(--text-dark);">${escapeHtml(sourceSystem || 'unknown_source')}</div>
+                        <div style="font-size:0.78rem;color:var(--text-light);margin-top:4px;">
+                            ${escapeHtml(detailBits.join(' | ') || 'No provenance details available')}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function renderRegulatoryQuantCache(rpsItems, capacityItems, generationItems, rateItems) {
+            const blocks = [];
+            if (rpsItems.length) {
+                blocks.push(`
+                    <div style="margin-bottom:12px;">
+                        <div style="font-weight:600;color:var(--text-dark);margin-bottom:4px;">RPS / CES Targets</div>
+                        <div style="font-size:0.82rem;line-height:1.45;">${rpsItems.slice(0, 4).map(item => `${escapeHtml(item.state || '')} ${escapeHtml(String(item.year || ''))}: ${Math.round((item.target_pct || 0) * 100)}% ${escapeHtml(item.tier || '')}`).join('<br>')}</div>
+                    </div>
+                `);
+            }
+            if (capacityItems.length || generationItems.length) {
+                blocks.push(`
+                    <div style="margin-bottom:12px;">
+                        <div style="font-weight:600;color:var(--text-dark);margin-bottom:4px;">Power Data</div>
+                        <div style="font-size:0.82rem;line-height:1.45;">
+                            Capacity rows: ${escapeHtml(String(capacityItems.length))}<br>
+                            Generation rows: ${escapeHtml(String(generationItems.length))}
+                        </div>
+                    </div>
+                `);
+            }
+            if (rateItems.length) {
+                blocks.push(`
+                    <div style="margin-bottom:12px;">
+                        <div style="font-weight:600;color:var(--text-dark);margin-bottom:4px;">Utility Rates</div>
+                        <div style="font-size:0.82rem;line-height:1.45;">${rateItems.slice(0, 4).map(item => `${escapeHtml(item.utility_name || 'Unknown')}: ${escapeHtml(item.sector || '')} ${Number(item.rate_kwh || 0).toFixed(4)} $/kWh`).join('<br>')}</div>
+                    </div>
+                `);
+            }
+            if (!blocks.length) {
+                return '<span style="color:var(--text-light);">No US quantitative cache rows match this filter.</span>';
+            }
+            return blocks.join('');
+        }
+
+        async function loadRegulatoryView() {
+            const jurisdiction = (document.getElementById('regJurisdiction')?.value || 'ALL').trim().toUpperCase();
+            const state = (document.getElementById('regState')?.value || '').trim().toUpperCase();
+            const fuelType = (document.getElementById('regFuel')?.value || '').trim().toUpperCase();
+            const year = (document.getElementById('regYear')?.value || '').trim();
+            const eventParams = new URLSearchParams();
+            const provenanceParams = new URLSearchParams();
+            const rpsParams = new URLSearchParams();
+            const eiaParams = new URLSearchParams();
+            const rateParams = new URLSearchParams();
+
+            if (jurisdiction && jurisdiction !== 'ALL') {
+                eventParams.set('jurisdiction', jurisdiction);
+                provenanceParams.set('jurisdiction', jurisdiction);
+            }
+            if (state) {
+                rpsParams.set('state', state);
+                eiaParams.set('state', state);
+                rateParams.set('state', state);
+            }
+            if (fuelType) {
+                eiaParams.set('fuel_type', fuelType);
+            }
+            if (year) {
+                rpsParams.set('year', year);
+            }
+
+            eventParams.set('limit', '20');
+            rpsParams.set('limit', '10');
+            eiaParams.set('limit', '10');
+            rateParams.set('limit', '10');
+
+            const cards = document.getElementById('regulatoryCardsGrid');
+            const body = document.getElementById('regulatoryBody');
+            if (cards) cards.innerHTML = '<div class="dataset-card"><div class="dataset-card-name">Loading regulatory data...</div></div>';
+            if (body) body.innerHTML = '<tr><td colspan="3">Loading regulatory data...</td></tr>';
+
+            const results = await Promise.allSettled([
+                fetch(`/api/regulatory/events?${eventParams}`).then(r => r.ok ? r.json() : Promise.reject(r.statusText)),
+                fetch(`/api/regulatory/provenance?${provenanceParams}`).then(r => r.ok ? r.json() : Promise.reject(r.statusText)),
+                fetch(`/api/regulatory/rps?${rpsParams}`).then(r => r.ok ? r.json() : Promise.reject(r.statusText)),
+                fetch(`/api/regulatory/eia/capacity?${eiaParams}`).then(r => r.ok ? r.json() : Promise.reject(r.statusText)),
+                fetch(`/api/regulatory/eia/generation?${eiaParams}`).then(r => r.ok ? r.json() : Promise.reject(r.statusText)),
+                fetch(`/api/regulatory/rates?${rateParams}`).then(r => r.ok ? r.json() : Promise.reject(r.statusText)),
+            ]);
+
+            const val = (i, fallback) => results[i].status === 'fulfilled' ? results[i].value : fallback;
+            const errors = results.map((r, i) => r.status === 'rejected' ? r.reason : null).filter(Boolean);
+
+            const eventsData = val(0, { items: [], count: 0 });
+            const provenanceData = val(1, { raw_documents: [], transform_runs: [] });
+            const rpsData = val(2, { items: [], count: 0 });
+            const capacityData = val(3, { items: [], count: 0 });
+            const generationData = val(4, { items: [], count: 0 });
+            const ratesData = val(5, { items: [], count: 0 });
+
+            const events = eventsData.items || [];
+            const rawDocuments = provenanceData.raw_documents || [];
+            const transformRuns = provenanceData.transform_runs || [];
+
+            if (cards) {
+                const eventsTotal = eventsData.count || events.length;
+                const latestEvent = events[0];
+                const jurisdictionCounts = Object.entries(
+                    events.reduce((acc, item) => {
+                        const key = item.jurisdiction || 'NA';
+                        acc[key] = (acc[key] || 0) + 1;
+                        return acc;
+                    }, {})
+                );
+                const jurisdictionSummary = jurisdictionCounts.length
+                    ? jurisdictionCounts.map(([key, count]) => `${key} ${count}`).join(' | ')
+                    : 'No jurisdictions cached';
+                const sourceSystems = [...new Set([
+                    ...events.map(item => item.source_system),
+                    ...rawDocuments.map(item => item.source_system),
+                ].filter(Boolean))];
+                const okSources = rawDocuments.filter(item => item.fetch_status === 'ok').length;
+                const fallbackSources = rawDocuments.filter(item => (item.metadata || {}).fallback_reason || item.fetch_status === 'seed_catalog').length;
+                const rpsCount = Number(rpsData.count || (rpsData.items || []).length || 0);
+                const capacityCount = Number(capacityData.count || (capacityData.items || []).length || 0);
+                const generationCount = Number(generationData.count || (generationData.items || []).length || 0);
+                const rateCount = Number(ratesData.count || (ratesData.items || []).length || 0);
+                cards.innerHTML = `
+                    ${errors.length ? `<div class="dataset-card" style="border-color:#ef4444"><div class="dataset-card-name" style="color:#ef4444">Fetch Errors</div><div class="dataset-card-meta">${errors.length} endpoint(s) failed to load</div></div>` : ''}
+                    <div class="dataset-card">
+                        <div class="dataset-card-name">Cached Events</div>
+                        <div class="dataset-card-value">${eventsTotal.toLocaleString()}</div>
+                        <div class="dataset-card-meta">${escapeHtml(jurisdictionSummary)}</div>
+                    </div>
+                    <div class="dataset-card">
+                        <div class="dataset-card-name">Latest Event</div>
+                        <div class="dataset-card-value">${escapeHtml(formatRegulatoryDate(latestEvent?.published_date || ''))}</div>
+                        <div class="dataset-card-meta">${latestEvent ? `${escapeHtml(latestEvent.regulator || '')} | ${escapeHtml(latestEvent.jurisdiction || '')}` : 'No cached regulatory events'}</div>
+                    </div>
+                    <div class="dataset-card">
+                        <div class="dataset-card-name">Active Sources</div>
+                        <div class="dataset-card-value">${sourceSystems.length}</div>
+                        <div class="dataset-card-meta">${escapeHtml(sourceSystems.slice(0, 3).join(', ') || 'No source systems cached')}</div>
+                    </div>
+                    <div class="dataset-card">
+                        <div class="dataset-card-name">Cache Status</div>
+                        <div class="dataset-card-value">${rawDocuments.length}</div>
+                        <div class="dataset-card-meta">${escapeHtml(`${okSources} ok | ${fallbackSources} fallback | ${transformRuns.length} transforms`)}</div>
+                    </div>
+                    <div class="dataset-card">
+                        <div class="dataset-card-name">US RPS Cache</div>
+                        <div class="dataset-card-value">${rpsCount.toLocaleString()}</div>
+                        <div class="dataset-card-meta">${state || 'All states'} | ${year || 'All years'}</div>
+                    </div>
+                    <div class="dataset-card">
+                        <div class="dataset-card-name">US Power Cache</div>
+                        <div class="dataset-card-value">${capacityCount.toLocaleString()} / ${generationCount.toLocaleString()}</div>
+                        <div class="dataset-card-meta">${escapeHtml(`${fuelType || 'All fuels'} | ${rateCount} rate rows`)}</div>
+                    </div>
+                `;
+            }
+
+            if (body) {
+                const rpsItems = rpsData.items || [];
+                const capacityItems = capacityData.items || [];
+                const generationItems = generationData.items || [];
+                const rateItems = ratesData.items || [];
+                body.innerHTML = `
+                    <tr>
+                        <td>${renderRegulatoryEvents(events)}</td>
+                        <td>${renderRegulatoryProvenance(rawDocuments, transformRuns)}</td>
+                        <td>${renderRegulatoryQuantCache(rpsItems, capacityItems, generationItems, rateItems)}</td>
+                    </tr>
+                `;
+            }
+        }
+
+        async function refreshRegulatoryView() {
+            const btn = document.querySelector('[onclick="refreshRegulatoryView()"]');
+            if (btn) { btn.disabled = true; btn.textContent = 'Refreshing...'; }
+            try {
+                const response = await fetch('/api/regulatory/refresh', { method: 'POST' });
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Regulatory refresh failed');
+                }
+                await loadRegulatoryView();
+            } catch (err) {
+                alert('Failed to refresh regulatory data: ' + err.message);
+            } finally {
+                if (btn) { btn.disabled = false; btn.textContent = 'Refresh Cache'; }
+            }
+        }
+
         function renderGvArticlesTable() {
             const body = document.getElementById('gvArticlesBody');
             const pagination = document.getElementById('gvPagination');
@@ -3104,7 +3884,9 @@
         // ===================================================================
         // Imaging tab — OSINT mineral intelligence map
         // ===================================================================
-        let imagingMap = null, imagingDeposits = null, imagingViirs = null, imagingConcessions = null;
+        let imagingMap = null, imagingDeposits = null, imagingViirs = null, imagingConcessions = null, imagingGeneration = null;
+        let imagingSolarResource = null, imagingSolarResourceConfig = null, scoutMarker = null;
+        let pipelineAssetIds = new Set(), currentScoutSite = null, selectedScoutCompareIds = new Set();
 
         function initImagingMap() {
             if (imagingMap) {
@@ -3120,6 +3902,17 @@
                 );
                 satellite.addTo(imagingMap);
 
+                const borders = L.tileLayer(
+                    'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+                    { attribution: 'Tiles &copy; Esri', maxZoom: 18 }
+                );
+                borders.addTo(imagingMap);
+
+                const railways = L.tileLayer(
+                    'https://{s}.tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png',
+                    { attribution: '&copy; OpenRailwayMap', maxZoom: 18, subdomains: 'abc' }
+                );
+
                 const viirs = L.tileLayer(
                     'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_DayNightBand_AtSensor_M15/default/2024-01-01/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png',
                     { attribution: 'NASA GIBS VIIRS', opacity: 0.6, maxZoom: 8 }
@@ -3129,12 +3922,17 @@
 
                 imagingDeposits = L.layerGroup().addTo(imagingMap);
                 imagingConcessions = L.layerGroup().addTo(imagingMap);
+                imagingGeneration = L.layerGroup().addTo(imagingMap);
 
                 L.control.layers(
                     { 'Satellite': satellite },
-                    { 'VIIRS Nightlights': viirs, 'Deposits': imagingDeposits, 'Concessions': imagingConcessions },
+                    { 'Borders & Labels': borders, 'Railways': railways, 'VIIRS Nightlights': viirs, 'Deposits': imagingDeposits, 'Concessions': imagingConcessions, 'Generation': imagingGeneration },
                     { collapsed: false }
                 ).addTo(imagingMap);
+
+                imagingMap.on('click', async function(event) {
+                    await scoreScoutSite(event.latlng.lat, event.latlng.lng);
+                });
 
                 setTimeout(() => imagingMap.invalidateSize(), 200);
             } catch (e) {
@@ -3152,6 +3950,60 @@
             if (tier === 'high') return '<span style="color:#22c55e;font-weight:700;">HIGH</span>';
             if (tier === 'medium') return '<span style="color:#f59e0b;font-weight:700;">MEDIUM</span>';
             return '<span style="color:#ef4444;font-weight:700;">LOW</span>';
+        }
+
+        function generationColor(technology) {
+            if (technology === 'solar') return '#f59e0b';
+            if (technology === 'wind') return '#0ea5e9';
+            if (technology === 'hydropower') return '#2563eb';
+            if (technology === 'bioenergy') return '#16a34a';
+            if (technology === 'geothermal') return '#dc2626';
+            return '#64748b';
+        }
+
+        function generationRadius(capacity) {
+            const mw = Number(capacity || 0);
+            return Math.max(5, Math.min(16, 4 + Math.sqrt(mw) / 2.5));
+        }
+
+        function createGenerationIcon(technology, capacity, inPipeline = false) {
+            const size = Math.round(generationRadius(capacity) * 1.7);
+            const color = generationColor(technology);
+            return L.divIcon({
+                className: 'generation-triangle-icon',
+                html: `<span class="generation-triangle-marker${inPipeline ? ' pipeline' : ''}" style="--triangle-color:${color};--triangle-size:${size}px;"></span>`,
+                iconSize: [size, size],
+                iconAnchor: [Math.round(size / 2), size],
+                popupAnchor: [0, -size + 6],
+            });
+        }
+
+        function createConcessionIcon() {
+            const size = 11;
+            return L.divIcon({
+                className: 'concession-square-icon',
+                html: '<span class="concession-square-marker" style="--square-size:11px;--square-color:#8b5cf6;--square-border:#7c3aed;"></span>',
+                iconSize: [size, size],
+                iconAnchor: [Math.round(size / 2), Math.round(size / 2)],
+                popupAnchor: [0, -Math.round(size / 2)],
+            });
+        }
+
+        function toggleSolarResourceOverlay() {
+            if (!imagingMap || !imagingSolarResourceConfig || !imagingSolarResourceConfig.url) return;
+            if (!imagingSolarResource) {
+                imagingSolarResource = L.tileLayer(imagingSolarResourceConfig.url, {
+                    attribution: imagingSolarResourceConfig.attribution || '',
+                    opacity: 0.35,
+                    maxZoom: 11,
+                });
+            }
+            const shouldShow = !!document.getElementById('imgSolarOverlayToggle')?.checked;
+            if (shouldShow && !imagingMap.hasLayer(imagingSolarResource)) {
+                imagingSolarResource.addTo(imagingMap);
+            } else if (!shouldShow && imagingMap.hasLayer(imagingSolarResource)) {
+                imagingMap.removeLayer(imagingSolarResource);
+            }
         }
 
         function renderDepositPopup(props) {
@@ -3182,33 +4034,354 @@
             return html;
         }
 
-        async function loadImagingView() {
-            initImagingMap();
-            const params = new URLSearchParams();
-            const commodity = document.getElementById('imgCommodity')?.value;
-            const country = document.getElementById('imgCountry')?.value;
-            if (commodity) params.set('commodity', commodity);
-            if (country) params.set('country', country);
+        function buildBrownfieldResearchQuery(asset) {
+            const name = asset?.name || 'target asset';
+            const technology = asset?.technology ? `${asset.technology} ` : '';
+            const country = asset?.country ? `in ${asset.country}` : '';
+            const capacity = asset?.capacity_mw ? `${Number(asset.capacity_mw).toLocaleString()} MW` : 'unknown capacity';
+            return `Brownfield acquisition opportunity for ${name} ${country} with ${capacity} ${technology}generation. Review ownership, offtake, grid access, counterparties, and acquisition risks.`
+                .replace(/\s+/g, ' ')
+                .trim();
+        }
+
+        function prefillBrownfieldResearch(asset) {
+            switchMode('deep');
+            document.getElementById('searchInput').value = buildBrownfieldResearchQuery(asset || {});
+            document.getElementById('searchInput').focus();
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        function prefillBrownfieldResearchFromQuery(query) {
+            switchMode('deep');
+            document.getElementById('searchInput').value = String(query || '');
+            document.getElementById('searchInput').focus();
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        async function addGenerationToPipeline(asset) {
+            const coords = asset?.__coords || [asset?.lon, asset?.lat];
+            const feature = {
+                type: 'Feature',
+                geometry: { type: 'Point', coordinates: coords },
+                properties: { ...asset },
+            };
+            delete feature.properties.__coords;
 
             try {
-                const [depositsRes, concessionsRes, configRes] = await Promise.all([
-                    fetch(`/api/imaging/deposits?${params}`),
-                    fetch(`/api/imaging/concessions?${params}`),
+                const response = await fetch('/api/pipeline/assets', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ source_type: 'generation_asset', asset: feature }),
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to save pipeline asset');
+                }
+                await loadImagingView();
+            } catch (error) {
+                alert('Pipeline error: ' + error.message);
+            }
+        }
+
+        async function removePipelineAsset(assetId) {
+            try {
+                await fetch(`/api/pipeline/assets/${encodeURIComponent(assetId)}`, { method: 'DELETE' });
+                await loadImagingView();
+            } catch (error) {
+                alert('Pipeline delete error: ' + error.message);
+            }
+        }
+
+        function renderGenerationPopup(props) {
+            const technology = escapeHtml(props.technology || 'unknown');
+            const capacity = Number(props.capacity_mw || 0);
+            const inPipeline = pipelineAssetIds.has(props.site_id || '');
+            let html = `<div style="min-width:240px;font-size:0.85rem;">`;
+            html += `<strong>${escapeHtml(props.name || 'Unknown')}</strong>`;
+            html += `<div style="color:#6B7280;margin:2px 0 4px;">${escapeHtml(props.country || '')}</div>`;
+            html += `<div>Technology: ${technology}</div>`;
+            html += `<div>Capacity: ${capacity ? `${capacity.toLocaleString()} MW` : 'Unknown'}</div>`;
+            html += `<div>Status: ${escapeHtml(props.status || '')}</div>`;
+            html += `<div>Operator: ${escapeHtml(props.operator || 'Unknown')}</div>`;
+            html += `<div>Owner: ${escapeHtml(props.owner || 'Unknown')}</div>`;
+            if (inPipeline) {
+                html += `<div style="margin-top:6px;color:#b45309;font-weight:700;">In Brownfield Pipeline</div>`;
+            }
+            html += `<div class="imaging-card-actions">`;
+            html += `<button type="button" class="imaging-mini-btn" onclick="prefillBrownfieldResearch(${escapeAttr(JSON.stringify(props))})">Research</button>`;
+            html += `<button type="button" class="imaging-mini-btn" onclick="addGenerationToPipeline(${escapeAttr(JSON.stringify(props))})">+ Pipeline</button>`;
+            html += `</div>`;
+            if (props.wiki_url) {
+                html += `<div style="margin-top:8px;"><a href="${escapeHtml(props.wiki_url)}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;">GEM project page</a></div>`;
+            }
+            html += `</div>`;
+            return html;
+        }
+
+        function focusImagingLocation(lat, lon) {
+            if (!imagingMap) return;
+            imagingMap.setView([lat, lon], Math.max(imagingMap.getZoom(), 7));
+        }
+
+        function renderBrownfieldPipeline(items) {
+            const container = document.getElementById('brownfieldPipelineList');
+            if (!container) return;
+            if (!items || items.length === 0) {
+                container.innerHTML = '<div class="imaging-list-card">No brownfield assets staged yet.</div>';
+                return;
+            }
+            container.innerHTML = items.map(item => `
+                <div class="imaging-list-card">
+                    <strong>${escapeHtml(item.asset_name || 'Unnamed asset')}</strong>
+                    <div style="margin-top:4px;font-size:0.82rem;color:var(--text-light);">
+                        ${escapeHtml(item.technology || 'unknown')} · ${escapeHtml(item.country || '')} · ${item.capacity_mw ? `${Number(item.capacity_mw).toLocaleString()} MW` : 'capacity unknown'}
+                    </div>
+                    <div style="margin-top:6px;font-size:0.8rem;color:var(--text-light);">${escapeHtml(item.status || 'status unknown')}</div>
+                    <div class="imaging-card-actions">
+                        <button type="button" class="imaging-mini-btn" onclick="prefillBrownfieldResearchFromQuery(${escapeAttr(JSON.stringify(item.research_query || ''))})">Research</button>
+                        <button type="button" class="imaging-mini-btn" onclick="focusImagingLocation(${Number(item.lat || 0)}, ${Number(item.lon || 0)})">Focus</button>
+                        <button type="button" class="imaging-mini-btn danger" onclick="removePipelineAsset(${escapeAttr(JSON.stringify(item.id))})">Remove</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function renderScoutEvaluation(site) {
+            const container = document.getElementById('scoutEvaluationCard');
+            if (!container) return;
+            if (!site) {
+                container.textContent = 'Click the map to score a site.';
+                return;
+            }
+            const factors = site.factors || [];
+            container.innerHTML = `
+                <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:10px;">
+                    <div>
+                        <strong>${escapeHtml(site.name || 'Candidate site')}</strong>
+                        <div style="margin-top:4px;font-size:0.82rem;color:var(--text-light);">${escapeHtml(site.technology || '')} · ${Number(site.lat).toFixed(3)}, ${Number(site.lon).toFixed(3)}</div>
+                    </div>
+                    <div style="text-align:right;">
+                        <div style="font-size:1.1rem;font-weight:700;color:#111827;">${site.overall_score ?? 'N/A'}</div>
+                        <div style="font-size:0.76rem;color:var(--text-light);text-transform:uppercase;">${escapeHtml(site.score_label || 'unknown')}</div>
+                    </div>
+                </div>
+                ${factors.map(factor => `
+                    <div class="scout-factor-row">
+                        <span>${escapeHtml(factor.label || factor.key || '')}</span>
+                        <span style="text-align:right;color:${factor.status === 'unknown' ? '#9CA3AF' : '#111827'};">
+                            ${factor.status === 'unknown'
+                                ? 'unknown'
+                                : `${factor.score}/${factor.max_score}${factor.value !== null && factor.value !== undefined ? ` · ${factor.value}${factor.unit ? ` ${factor.unit}` : ''}` : ''}`}
+                        </span>
+                    </div>
+                `).join('')}
+                <div class="imaging-card-actions">
+                    <button type="button" class="imaging-mini-btn" onclick="saveScoutedSite()">Add to Watchlist</button>
+                    <button type="button" class="imaging-mini-btn" onclick="focusImagingLocation(${Number(site.lat)}, ${Number(site.lon)})">Focus</button>
+                </div>
+            `;
+        }
+
+        async function saveScoutedSite() {
+            if (!currentScoutSite) return;
+            try {
+                const response = await fetch('/api/scouting/watchlist', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ site: currentScoutSite }),
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to save scouted site');
+                }
+                currentScoutSite = data.site;
+                await loadImagingView();
+            } catch (error) {
+                alert('Scouting save error: ' + error.message);
+            }
+        }
+
+        function toggleScoutCompareSelection(siteId, checked) {
+            if (checked) {
+                selectedScoutCompareIds.add(siteId);
+            } else {
+                selectedScoutCompareIds.delete(siteId);
+            }
+            loadScoutingCompare();
+        }
+
+        async function deleteScoutWatchlistSite(siteId) {
+            try {
+                await fetch(`/api/scouting/watchlist/${encodeURIComponent(siteId)}`, { method: 'DELETE' });
+                selectedScoutCompareIds.delete(siteId);
+                await loadImagingView();
+            } catch (error) {
+                alert('Scouting delete error: ' + error.message);
+            }
+        }
+
+        function renderScoutWatchlist(items) {
+            const container = document.getElementById('scoutWatchlist');
+            if (!container) return;
+            if (!items || items.length === 0) {
+                container.innerHTML = '<div class="imaging-list-card">No scouted sites saved yet.</div>';
+                return;
+            }
+            container.innerHTML = items.map(item => `
+                <div class="imaging-list-card">
+                    <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
+                        <div>
+                            <strong>${escapeHtml(item.name || 'Candidate')}</strong>
+                            <div style="margin-top:4px;font-size:0.82rem;color:var(--text-light);">${escapeHtml(item.technology || '')} · ${item.overall_score ?? 'N/A'} · ${escapeHtml(item.score_label || 'unknown')}</div>
+                        </div>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.78rem;color:var(--text-light);">
+                            <input type="checkbox" ${selectedScoutCompareIds.has(item.id) ? 'checked' : ''} onchange="toggleScoutCompareSelection(${escapeAttr(JSON.stringify(item.id))}, this.checked)">
+                            Compare
+                        </label>
+                    </div>
+                    <div class="imaging-card-actions">
+                        <button type="button" class="imaging-mini-btn" onclick="focusImagingLocation(${Number(item.lat)}, ${Number(item.lon)})">Focus</button>
+                        <button type="button" class="imaging-mini-btn danger" onclick="deleteScoutWatchlistSite(${escapeAttr(JSON.stringify(item.id))})">Remove</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function loadScoutingCompare() {
+            const container = document.getElementById('scoutCompareList');
+            if (!container) return;
+            if (selectedScoutCompareIds.size === 0) {
+                container.textContent = 'Select watchlist sites to compare them side by side.';
+                return;
+            }
+            try {
+                const ids = Array.from(selectedScoutCompareIds);
+                const response = await fetch(`/api/scouting/compare?ids=${encodeURIComponent(ids.join(','))}`);
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || 'Compare failed');
+                }
+                const items = data.items || [];
+                container.innerHTML = items.map(item => `
+                    <div class="imaging-list-card" style="margin-bottom:10px;">
+                        <strong>${escapeHtml(item.name || 'Candidate')}</strong>
+                        <div style="margin-top:4px;font-size:0.82rem;color:var(--text-light);">${escapeHtml(item.technology || '')} · ${item.overall_score ?? 'N/A'} · ${escapeHtml(item.score_label || 'unknown')}</div>
+                        ${(item.factors || []).slice(0, 4).map(factor => `
+                            <div class="scout-factor-row">
+                                <span>${escapeHtml(factor.label || factor.key || '')}</span>
+                                <span>${factor.status === 'unknown' ? 'unknown' : `${factor.score}/${factor.max_score}`}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                `).join('');
+            } catch (error) {
+                container.textContent = `Compare error: ${error.message}`;
+            }
+        }
+
+        async function scoreScoutSite(lat, lon) {
+            const technology = document.getElementById('imgScoutTechnology')?.value || 'solar';
+            try {
+                const response = await fetch('/api/scouting/score', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: `${technology.charAt(0).toUpperCase() + technology.slice(1)} site @ ${lat.toFixed(3)}, ${lon.toFixed(3)}`,
+                        lat,
+                        lon,
+                        technology,
+                    }),
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || 'Scouting failed');
+                }
+                currentScoutSite = data.site;
+                renderScoutEvaluation(currentScoutSite);
+                if (scoutMarker) {
+                    imagingMap.removeLayer(scoutMarker);
+                }
+                scoutMarker = L.circleMarker([lat, lon], {
+                    radius: 7,
+                    color: '#111827',
+                    weight: 2,
+                    fillColor: '#f59e0b',
+                    fillOpacity: 0.9,
+                }).addTo(imagingMap);
+            } catch (error) {
+                alert('Scouting error: ' + error.message);
+            }
+        }
+
+        async function loadImagingView() {
+            initImagingMap();
+            const depositParams = new URLSearchParams();
+            const generationParams = new URLSearchParams();
+            const commodity = document.getElementById('imgCommodity')?.value;
+            const country = document.getElementById('imgCountry')?.value;
+            const generationTech = document.getElementById('imgGenerationTech')?.value;
+            const generationStatus = document.getElementById('imgGenerationStatus')?.value;
+            const generationMinCapacity = document.getElementById('imgGenerationMinCapacity')?.value;
+            if (commodity) depositParams.set('commodity', commodity);
+            if (country) {
+                depositParams.set('country', country);
+                generationParams.set('country', country);
+            }
+            if (generationTech) generationParams.set('technology', generationTech);
+            if (generationStatus) generationParams.set('status', generationStatus);
+            if (generationMinCapacity) generationParams.set('min_capacity_mw', generationMinCapacity);
+
+            try {
+                const [depositsRes, concessionsRes, generationRes, configRes, pipelineRes, watchlistRes] = await Promise.all([
+                    fetch(`/api/imaging/deposits?${depositParams}`),
+                    fetch(`/api/imaging/concessions?${depositParams}`),
+                    fetch(`/api/imaging/generation?${generationParams}`),
                     fetch('/api/imaging/config'),
+                    fetch('/api/pipeline/assets'),
+                    fetch('/api/scouting/watchlist'),
                 ]);
 
-                // Populate commodity filter from config
                 if (configRes.ok) {
                     const cfg = await configRes.json();
-                    const sel = document.getElementById('imgCommodity');
-                    if (sel && sel.options.length <= 1) {
+                    const commoditySel = document.getElementById('imgCommodity');
+                    if (commoditySel && commoditySel.options.length <= 1) {
                         (cfg.target_commodities || []).forEach(c => {
                             const opt = document.createElement('option');
-                            opt.value = c; opt.textContent = c;
-                            sel.appendChild(opt);
+                            opt.value = c;
+                            opt.textContent = c;
+                            commoditySel.appendChild(opt);
                         });
                     }
+                    const generationSel = document.getElementById('imgGenerationTech');
+                    if (generationSel && generationSel.options.length <= 1) {
+                        (cfg.generation_technologies || []).forEach(t => {
+                            const opt = document.createElement('option');
+                            opt.value = t;
+                            opt.textContent = t.charAt(0).toUpperCase() + t.slice(1);
+                            generationSel.appendChild(opt);
+                        });
+                    }
+                    const scoutSel = document.getElementById('imgScoutTechnology');
+                    if (scoutSel && scoutSel.options.length <= 2) {
+                        (cfg.scouting_technologies || []).forEach(t => {
+                            if ([...scoutSel.options].some(opt => opt.value === t)) return;
+                            const opt = document.createElement('option');
+                            opt.value = t;
+                            opt.textContent = t.charAt(0).toUpperCase() + t.slice(1);
+                            scoutSel.appendChild(opt);
+                        });
+                    }
+                    imagingSolarResourceConfig = (cfg.resource_layers || [])[0] || null;
+                    toggleSolarResourceOverlay();
                 }
+
+                const pipelineData = pipelineRes.ok ? await pipelineRes.json() : { items: [] };
+                pipelineAssetIds = new Set((pipelineData.items || []).map(item => item.source_asset_id));
+                renderBrownfieldPipeline(pipelineData.items || []);
+
+                const watchlistData = watchlistRes.ok ? await watchlistRes.json() : { items: [] };
+                renderScoutWatchlist(watchlistData.items || []);
+                await loadScoutingCompare();
 
                 if (depositsRes.ok) {
                     const data = await depositsRes.json();
@@ -3252,9 +4425,8 @@
                         const p = f.properties || {};
                         const coords = f.geometry?.coordinates;
                         if (!coords) return;
-                        const marker = L.circleMarker([coords[1], coords[0]], {
-                            radius: 5, fillColor: '#8b5cf6', color: '#7c3aed',
-                            weight: 1, fillOpacity: 0.7,
+                        const marker = L.marker([coords[1], coords[0]], {
+                            icon: createConcessionIcon(),
                         });
                         let popup = `<div style="min-width:200px;font-size:0.85rem;">`;
                         popup += `<strong>${escapeHtml(p.name || 'Unknown')}</strong>`;
@@ -3265,6 +4437,28 @@
                         imagingConcessions.addLayer(marker);
                     });
                     document.getElementById('imgConcessionCount').textContent = `${features.length} concessions`;
+                }
+
+                if (generationRes.ok) {
+                    const data = await generationRes.json();
+                    const features = data.features || [];
+                    imagingGeneration.clearLayers();
+                    features.forEach(f => {
+                        const p = f.properties || {};
+                        const coords = f.geometry?.coordinates;
+                        if (!coords) return;
+                        const technology = String(p.technology || '').toLowerCase();
+                        const popupProps = { ...p, __coords: coords };
+                        const marker = L.marker([coords[1], coords[0]], {
+                            icon: createGenerationIcon(technology, p.capacity_mw, pipelineAssetIds.has(p.site_id || '')),
+                        });
+                        marker.bindPopup(renderGenerationPopup(popupProps));
+                        if (pipelineAssetIds.has(p.site_id || '')) {
+                            marker.setZIndexOffset(200);
+                        }
+                        imagingGeneration.addLayer(marker);
+                    });
+                    document.getElementById('imgGenerationCount').textContent = `${features.length} generation assets`;
                 }
             } catch (err) {
                 console.error('Imaging view load error:', err);
@@ -3329,6 +4523,7 @@
             });
         }
 
+        syncSessionView();
         loadResearchHistory();
     </script>
 

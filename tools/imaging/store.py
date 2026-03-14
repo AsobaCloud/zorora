@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class ImagingDataStore:
-    """Local SQLite store for mineral deposit and concession data."""
+    """Local SQLite store for mineral deposit, concession, and generation data."""
 
     def __init__(self, db_path: Optional[str] = None):
         if db_path is None:
@@ -80,10 +80,70 @@ class ImagingDataStore:
             )
         """)
         cur.execute("""
+            CREATE TABLE IF NOT EXISTS generation_assets (
+                id TEXT PRIMARY KEY,
+                name TEXT,
+                technology TEXT,
+                capacity_mw REAL,
+                status TEXT,
+                operator TEXT,
+                owner TEXT,
+                country TEXT,
+                lat REAL,
+                lon REAL,
+                location_accuracy TEXT,
+                source_sheet TEXT,
+                wiki_url TEXT,
+                properties_json TEXT,
+                fetched_at TEXT
+            )
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS fetch_metadata (
                 layer TEXT PRIMARY KEY,
                 last_fetched_at TEXT,
                 record_count INTEGER DEFAULT 0
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS pipeline_assets (
+                id TEXT PRIMARY KEY,
+                source_type TEXT NOT NULL,
+                source_asset_id TEXT NOT NULL,
+                asset_name TEXT,
+                technology TEXT,
+                capacity_mw REAL,
+                status TEXT,
+                operator TEXT,
+                owner TEXT,
+                country TEXT,
+                lat REAL,
+                lon REAL,
+                research_query TEXT,
+                metadata_json TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            )
+        """)
+        cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_pipeline_source
+            ON pipeline_assets (source_type, source_asset_id)
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS scouting_watchlist (
+                id TEXT PRIMARY KEY,
+                name TEXT,
+                technology TEXT,
+                country TEXT,
+                lat REAL,
+                lon REAL,
+                overall_score REAL,
+                score_label TEXT,
+                notes TEXT,
+                factors_json TEXT,
+                resource_json TEXT,
+                created_at TEXT,
+                updated_at TEXT
             )
         """)
         conn.commit()
@@ -162,6 +222,151 @@ class ImagingDataStore:
         )
         conn.commit()
 
+    def upsert_generation_assets(self, features: list):
+        """Insert or replace generation assets and update metadata."""
+        if not features:
+            return
+        conn = self.conn
+        cur = conn.cursor()
+        now_utc = datetime.now(timezone.utc).isoformat()
+        for feat in features:
+            props = feat.get("properties", {})
+            coords = feat.get("geometry", {}).get("coordinates", [0, 0])
+            site_id = props.get("site_id", f"{coords[0]}_{coords[1]}")
+            cur.execute(
+                """INSERT OR REPLACE INTO generation_assets
+                   (id, name, technology, capacity_mw, status, operator, owner, country,
+                    lat, lon, location_accuracy, source_sheet, wiki_url, properties_json, fetched_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    site_id,
+                    props.get("name", ""),
+                    props.get("technology", ""),
+                    float(props.get("capacity_mw", 0) or 0),
+                    props.get("status", ""),
+                    props.get("operator", ""),
+                    props.get("owner", ""),
+                    props.get("country", ""),
+                    coords[1],
+                    coords[0],
+                    props.get("location_accuracy", ""),
+                    props.get("source_sheet", ""),
+                    props.get("wiki_url", ""),
+                    json.dumps(props),
+                    now_utc,
+                ),
+            )
+        cur.execute(
+            """INSERT OR REPLACE INTO fetch_metadata (layer, last_fetched_at, record_count)
+               VALUES ('generation_assets', ?, ?)""",
+            (now_utc, len(features)),
+        )
+        conn.commit()
+
+    def upsert_pipeline_asset(self, source_type: str, asset: dict) -> dict:
+        """Insert or update a brownfield pipeline asset keyed by source asset id."""
+        props = dict(asset.get("properties") or asset)
+        geometry = asset.get("geometry") or {}
+        coords = geometry.get("coordinates") or [props.get("lon"), props.get("lat")]
+        lon = float(coords[0]) if coords and coords[0] is not None else None
+        lat = float(coords[1]) if len(coords) > 1 and coords[1] is not None else None
+        source_asset_id = (
+            props.get("site_id")
+            or props.get("dep_id")
+            or props.get("id")
+            or f"{source_type}:{lat}:{lon}"
+        )
+        asset_name = props.get("name") or props.get("site_name") or source_asset_id
+        country = props.get("country", "")
+        technology = props.get("technology", "")
+        capacity_mw = float(props.get("capacity_mw", 0) or 0)
+        status = props.get("status", "")
+        operator = props.get("operator", "")
+        owner = props.get("owner", "")
+        research_query = props.get("research_query") or self._build_brownfield_research_query(
+            asset_name=asset_name,
+            technology=technology,
+            country=country,
+            capacity_mw=capacity_mw,
+        )
+        now_utc = datetime.now(timezone.utc).isoformat()
+
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT id, created_at FROM pipeline_assets WHERE source_type = ? AND source_asset_id = ?",
+            (source_type, source_asset_id),
+        )
+        existing = cur.fetchone()
+        asset_id = existing["id"] if existing else f"{source_type}:{source_asset_id}"
+        created_at = existing["created_at"] if existing else now_utc
+
+        cur.execute(
+            """INSERT OR REPLACE INTO pipeline_assets
+               (id, source_type, source_asset_id, asset_name, technology, capacity_mw, status,
+                operator, owner, country, lat, lon, research_query, metadata_json, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                asset_id,
+                source_type,
+                source_asset_id,
+                asset_name,
+                technology,
+                capacity_mw,
+                status,
+                operator,
+                owner,
+                country,
+                lat,
+                lon,
+                research_query,
+                json.dumps({"properties": props, "geometry": geometry}),
+                created_at,
+                now_utc,
+            ),
+        )
+        self.conn.commit()
+        return self.get_pipeline_asset(asset_id)
+
+    def upsert_watchlist_site(self, site: dict) -> dict:
+        """Insert or update a greenfield scouting watchlist site."""
+        lat = float(site.get("lat"))
+        lon = float(site.get("lon"))
+        technology = str(site.get("technology", "") or "").strip().lower()
+        site_id = site.get("id") or f"{technology}:{lat:.4f}:{lon:.4f}"
+        now_utc = datetime.now(timezone.utc).isoformat()
+
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT created_at FROM scouting_watchlist WHERE id = ?",
+            (site_id,),
+        )
+        existing = cur.fetchone()
+        created_at = existing["created_at"] if existing else now_utc
+
+        cur.execute(
+            """INSERT OR REPLACE INTO scouting_watchlist
+               (id, name, technology, country, lat, lon, overall_score, score_label, notes,
+                factors_json, resource_json, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                site_id,
+                site.get("name", ""),
+                technology,
+                site.get("country", ""),
+                lat,
+                lon,
+                site.get("overall_score"),
+                site.get("score_label", ""),
+                site.get("notes", ""),
+                json.dumps(site.get("factors") or []),
+                json.dumps(site.get("resource_summary") or {}),
+                created_at,
+                now_utc,
+            ),
+        )
+        self.conn.commit()
+        return self.get_watchlist_site(site_id)
+
     # -- reads ----------------------------------------------------------------
 
     def get_deposits(
@@ -215,6 +420,111 @@ class ImagingDataStore:
             })
         return {"type": "FeatureCollection", "features": features}
 
+    def get_generation_assets(
+        self,
+        technology: Optional[str] = None,
+        status: Optional[str] = None,
+        country: Optional[str] = None,
+        min_capacity_mw: Optional[float] = None,
+    ) -> dict:
+        """Return generation assets as GeoJSON FeatureCollection, optionally filtered."""
+        query = "SELECT * FROM generation_assets WHERE 1=1"
+        params: list = []
+        if technology:
+            query += " AND technology = ?"
+            params.append(technology)
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        if country:
+            query += " AND country = ?"
+            params.append(country)
+        if min_capacity_mw is not None:
+            query += " AND capacity_mw >= ?"
+            params.append(float(min_capacity_mw))
+
+        cur = self.conn.cursor()
+        cur.execute(query, params)
+        rows = cur.fetchall()
+
+        features = []
+        for row in rows:
+            props = json.loads(row["properties_json"])
+            features.append({
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [row["lon"], row["lat"]]},
+                "properties": props,
+            })
+        return {"type": "FeatureCollection", "features": features}
+
+    def get_pipeline_asset(self, asset_id: str) -> Optional[dict]:
+        """Return a single brownfield pipeline asset by id."""
+        cur = self.conn.cursor()
+        cur.execute("SELECT * FROM pipeline_assets WHERE id = ?", (asset_id,))
+        row = cur.fetchone()
+        return self._row_to_pipeline_asset(row) if row else None
+
+    def list_pipeline_assets(
+        self,
+        technology: Optional[str] = None,
+        country: Optional[str] = None,
+    ) -> list[dict]:
+        """List brownfield pipeline assets."""
+        query = "SELECT * FROM pipeline_assets WHERE 1=1"
+        params: list = []
+        if technology:
+            query += " AND technology = ?"
+            params.append(technology)
+        if country:
+            query += " AND country = ?"
+            params.append(country)
+        query += " ORDER BY created_at DESC"
+        cur = self.conn.cursor()
+        cur.execute(query, params)
+        return [self._row_to_pipeline_asset(row) for row in cur.fetchall()]
+
+    def delete_pipeline_asset(self, asset_id: str):
+        """Delete a brownfield pipeline asset."""
+        self.conn.execute("DELETE FROM pipeline_assets WHERE id = ?", (asset_id,))
+        self.conn.commit()
+
+    def get_watchlist_site(self, site_id: str) -> Optional[dict]:
+        """Return a single watchlist site by id."""
+        cur = self.conn.cursor()
+        cur.execute("SELECT * FROM scouting_watchlist WHERE id = ?", (site_id,))
+        row = cur.fetchone()
+        return self._row_to_watchlist_site(row) if row else None
+
+    def list_watchlist_sites(self, technology: Optional[str] = None) -> list[dict]:
+        """List persisted scouting watchlist sites."""
+        query = "SELECT * FROM scouting_watchlist WHERE 1=1"
+        params: list = []
+        if technology:
+            query += " AND technology = ?"
+            params.append(technology)
+        query += " ORDER BY created_at DESC"
+        cur = self.conn.cursor()
+        cur.execute(query, params)
+        return [self._row_to_watchlist_site(row) for row in cur.fetchall()]
+
+    def get_watchlist_sites_by_ids(self, ids: list[str]) -> list[dict]:
+        """Return watchlist sites in the order requested."""
+        if not ids:
+            return []
+        placeholders = ", ".join("?" for _ in ids)
+        cur = self.conn.cursor()
+        cur.execute(
+            f"SELECT * FROM scouting_watchlist WHERE id IN ({placeholders})",
+            ids,
+        )
+        rows = {row["id"]: self._row_to_watchlist_site(row) for row in cur.fetchall()}
+        return [rows[site_id] for site_id in ids if site_id in rows]
+
+    def delete_watchlist_site(self, site_id: str):
+        """Delete a scouting watchlist site."""
+        self.conn.execute("DELETE FROM scouting_watchlist WHERE id = ?", (site_id,))
+        self.conn.commit()
+
     def get_staleness(self, layer: str) -> Optional[float]:
         """Return hours since last fetch for a layer, or None if never fetched."""
         cur = self.conn.cursor()
@@ -229,3 +539,63 @@ class ImagingDataStore:
             last = last.replace(tzinfo=timezone.utc)
         delta = datetime.now(timezone.utc) - last
         return delta.total_seconds() / 3600.0
+
+    @staticmethod
+    def _build_brownfield_research_query(
+        asset_name: str,
+        technology: str,
+        country: str,
+        capacity_mw: float,
+    ) -> str:
+        capacity_str = f"{capacity_mw:.0f} MW" if capacity_mw else "unknown capacity"
+        parts = [
+            "Brownfield acquisition opportunity",
+            f"for {asset_name}",
+        ]
+        if technology:
+            parts.append(f"({technology})")
+        if country:
+            parts.append(f"in {country}")
+        parts.append(f"with {capacity_str}")
+        parts.append("covering ownership, offtake, grid access, and acquisition risks")
+        return " ".join(parts)
+
+    @staticmethod
+    def _row_to_pipeline_asset(row: sqlite3.Row) -> dict:
+        metadata = json.loads(row["metadata_json"]) if row["metadata_json"] else {}
+        return {
+            "id": row["id"],
+            "source_type": row["source_type"],
+            "source_asset_id": row["source_asset_id"],
+            "asset_name": row["asset_name"],
+            "technology": row["technology"],
+            "capacity_mw": row["capacity_mw"],
+            "status": row["status"],
+            "operator": row["operator"],
+            "owner": row["owner"],
+            "country": row["country"],
+            "lat": row["lat"],
+            "lon": row["lon"],
+            "research_query": row["research_query"],
+            "metadata": metadata,
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    @staticmethod
+    def _row_to_watchlist_site(row: sqlite3.Row) -> dict:
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "technology": row["technology"],
+            "country": row["country"],
+            "lat": row["lat"],
+            "lon": row["lon"],
+            "overall_score": row["overall_score"],
+            "score_label": row["score_label"],
+            "notes": row["notes"],
+            "factors": json.loads(row["factors_json"]) if row["factors_json"] else [],
+            "resource_summary": json.loads(row["resource_json"]) if row["resource_json"] else {},
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
