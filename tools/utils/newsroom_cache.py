@@ -1,4 +1,4 @@
-"""Cache for newsroom articles - 7-day rolling window."""
+"""Cache for newsroom articles - 90-day rolling window."""
 
 import json
 import time
@@ -13,16 +13,17 @@ logger = logging.getLogger(__name__)
 CACHE_DIR = Path(__file__).parent.parent.parent / ".cache" / "newsroom"
 CACHE_FILE = CACHE_DIR / "articles.json"
 CACHE_TTL_SECONDS = 86400  # 24 hours
-ROLLING_WINDOW_DAYS = 7
+ROLLING_WINDOW_DAYS = 90
 
 
 class NewsroomCache:
     """
-    Cache for newsroom articles with 7-day rolling window.
+    Cache for newsroom articles with 90-day rolling window.
 
     - Caches articles locally to avoid repeated API calls
     - Refreshes daily (24-hour TTL) since newsroom updates ~400 articles/day
-    - Prunes articles older than 7 days
+    - Merges new articles with existing cache (dedup by URL)
+    - Prunes articles older than 90 days
     """
 
     def __init__(self, cache_dir: Path = CACHE_DIR, ttl_seconds: int = CACHE_TTL_SECONDS):
@@ -91,20 +92,34 @@ class NewsroomCache:
 
     def update(self, articles: List[Dict[str, Any]]):
         """
-        Update cache with fresh articles.
+        Merge new articles into the cache, deduplicating by URL.
+
+        New articles overwrite existing ones with the same URL.
+        After merging, prunes articles older than the rolling window.
 
         Args:
             articles: List of article dicts from API
         """
-        # Prune old articles before saving
-        pruned = self._prune_old_articles(articles)
+        existing = self._load_cache().get("articles", [])
+
+        # Build lookup from existing articles keyed by URL
+        by_url = {a["url"]: a for a in existing if a.get("url")}
+
+        # Merge: new articles overwrite existing with same URL
+        for article in articles:
+            url = article.get("url")
+            if url:
+                by_url[url] = article
+
+        merged = list(by_url.values())
+        pruned = self._prune_old_articles(merged)
 
         cache = {
             "last_fetch": time.time(),
             "articles": pruned
         }
         self._save_cache(cache)
-        logger.info(f"Newsroom cache updated: {len(pruned)} articles")
+        logger.info(f"Newsroom cache updated: {len(pruned)} articles (merged from {len(existing)} existing + {len(articles)} new)")
 
     def get_age_seconds(self) -> float:
         """Get cache age in seconds."""

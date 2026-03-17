@@ -1414,6 +1414,99 @@
             font-family: inherit;
         }
 
+        .facet-select {
+            position: relative;
+        }
+
+        .facet-select-input {
+            width: 100%;
+            padding: 8px 10px;
+            border: 1px solid var(--border-grey);
+            border-radius: 6px;
+            font-size: 0.88rem;
+            font-family: inherit;
+            cursor: text;
+        }
+
+        .facet-select-input:focus {
+            border-color: var(--primary-purple);
+            outline: none;
+        }
+
+        .facet-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            margin-top: 4px;
+        }
+
+        .facet-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            padding: 2px 8px;
+            background: #eef2ff;
+            border: 1px solid #c7d2fe;
+            border-radius: 12px;
+            font-size: 0.76rem;
+            color: #4338ca;
+        }
+
+        .facet-chip-x {
+            cursor: pointer;
+            font-size: 0.82rem;
+            line-height: 1;
+            color: #6366f1;
+        }
+
+        .facet-chip-x:hover {
+            color: #ef4444;
+        }
+
+        .facet-dropdown {
+            display: none;
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            max-height: 220px;
+            overflow-y: auto;
+            background: var(--white);
+            border: 1px solid var(--border-grey);
+            border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            margin-top: 2px;
+        }
+
+        .facet-dropdown.open {
+            display: block;
+        }
+
+        .facet-option {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 10px;
+            cursor: pointer;
+            font-size: 0.84rem;
+        }
+
+        .facet-option:hover {
+            background: #f3f4f6;
+        }
+
+        .facet-option.selected {
+            background: #eef2ff;
+            color: #4338ca;
+            font-weight: 600;
+        }
+
+        .facet-option-count {
+            font-size: 0.76rem;
+            color: var(--text-light);
+        }
+
         #global-map-container {
             height: 400px;
             border: 1px solid var(--border-grey);
@@ -1881,13 +1974,19 @@
                         <label for="gvDateTo">Date To</label>
                         <input type="date" id="gvDateTo">
                     </div>
-                    <div>
-                        <label for="gvTopic">Topic</label>
-                        <input type="text" id="gvTopic" placeholder="e.g., energy">
+                    <div class="facet-select" id="gvTopicSelect">
+                        <label>Topic</label>
+                        <input type="text" class="facet-select-input" id="gvTopicInput" placeholder="Filter topics..." autocomplete="off">
+                        <input type="hidden" id="gvTopic">
+                        <div class="facet-chips" id="gvTopicChips"></div>
+                        <div class="facet-dropdown" id="gvTopicDropdown"></div>
                     </div>
-                    <div>
-                        <label for="gvSource">Source</label>
-                        <input type="text" id="gvSource" placeholder="e.g., Reuters">
+                    <div class="facet-select" id="gvSourceSelect">
+                        <label>Source</label>
+                        <input type="text" class="facet-select-input" id="gvSourceInput" placeholder="Filter sources..." autocomplete="off">
+                        <input type="hidden" id="gvSource">
+                        <div class="facet-chips" id="gvSourceChips"></div>
+                        <div class="facet-dropdown" id="gvSourceDropdown"></div>
                     </div>
                     <div>
                         <label for="gvSearch">Search</label>
@@ -2135,6 +2234,7 @@
             if (normalized === 'impact assessment' || normalized === 'impact_assessment') return 'impact_assessment';
             if (normalized === 'market overview' || normalized === 'market_overview') return 'trend_analysis';
             if (normalized === 'comparative' || normalized === 'comparison') return 'comparative';
+            if (normalized === 'diligence' || normalized === 'diligence search') return 'diligence';
             return null;
         }
 
@@ -2158,6 +2258,11 @@
                 }
 
                 let match = null;
+                if ((match = trimmed.match(/^!\[([^\]]*)\]\(([^)]+)\)/))) {
+                    closeList();
+                    htmlParts.push(`<img src="${match[2]}" alt="${match[1]}" style="max-width:100%;margin:12px 0;border-radius:8px;">`);
+                    continue;
+                }
                 if ((match = trimmed.match(/^###\s+(.+)/))) {
                     closeList();
                     htmlParts.push(`<h3>${match[1]}</h3>`);
@@ -2623,23 +2728,32 @@
             searchButton.textContent = 'Refining...';
             
             try {
-                const refinementResult = await requestRefinedQuery(query);
-                const refinedQuery = refinementResult?.refined_query || query;
-                const researchType = refinementResult?.research_type || null;
+                let refinedQuery = query;
+                let researchType = null;
+                let assetMetadata = null;
+
+                if (pendingDiligenceAsset) {
+                    // Diligence search: skip refinement, force type
+                    researchType = 'diligence';
+                    assetMetadata = pendingDiligenceAsset;
+                    pendingDiligenceAsset = null;
+                } else {
+                    const refinementResult = await requestRefinedQuery(query);
+                    refinedQuery = refinementResult?.refined_query || query;
+                    researchType = refinementResult?.research_type || null;
+                }
                 searchButton.textContent = 'Researching...';
                 showProgressArea();
+
+                const payload = { query, depth, refined_query: refinedQuery, research_type: researchType };
+                if (assetMetadata) payload.asset_metadata = assetMetadata;
 
                 const response = await fetch('/api/research', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({
-                        query,
-                        depth,
-                        refined_query: refinedQuery,
-                        research_type: researchType,
-                    })
+                    body: JSON.stringify(payload)
                 });
                 
                 if (!response.ok) {
@@ -3368,6 +3482,118 @@
         let gvPage = 0;
         const GV_PAGE_SIZE = 50;
 
+        // --- Facet multi-select state ---
+        const gvFacetState = {
+            topic: { selected: new Set(), items: [] },
+            source: { selected: new Set(), items: [] },
+        };
+
+        function initFacetSelect(facetKey, inputId, chipsId, dropdownId, hiddenId) {
+            const input = document.getElementById(inputId);
+            const chips = document.getElementById(chipsId);
+            const dropdown = document.getElementById(dropdownId);
+            const hidden = document.getElementById(hiddenId);
+            const state = gvFacetState[facetKey];
+
+            function renderDropdown(filter) {
+                const lc = (filter || '').toLowerCase();
+                const filtered = lc
+                    ? state.items.filter(i => i.name.toLowerCase().includes(lc))
+                    : state.items;
+                dropdown.innerHTML = filtered.map(item => {
+                    const sel = state.selected.has(item.name) ? ' selected' : '';
+                    return `<div class="facet-option${sel}" data-value="${escapeHtml(item.name)}">
+                        <span>${escapeHtml(item.name)}</span>
+                        <span class="facet-option-count">${item.count}</span>
+                    </div>`;
+                }).join('');
+                if (filtered.length === 0) {
+                    dropdown.innerHTML = '<div style="padding:8px 10px;font-size:0.82rem;color:var(--text-light);">No matches</div>';
+                }
+            }
+
+            function renderChips() {
+                chips.innerHTML = Array.from(state.selected).map(name =>
+                    `<span class="facet-chip">${escapeHtml(name)}<span class="facet-chip-x" data-value="${escapeHtml(name)}">&times;</span></span>`
+                ).join('');
+                hidden.value = Array.from(state.selected).join(',');
+            }
+
+            function toggle(name) {
+                if (state.selected.has(name)) {
+                    state.selected.delete(name);
+                } else {
+                    state.selected.add(name);
+                }
+                renderChips();
+                renderDropdown(input.value);
+            }
+
+            input.addEventListener('focus', () => {
+                renderDropdown(input.value);
+                dropdown.classList.add('open');
+            });
+
+            input.addEventListener('input', () => {
+                renderDropdown(input.value);
+                dropdown.classList.add('open');
+            });
+
+            dropdown.addEventListener('click', (e) => {
+                const opt = e.target.closest('.facet-option');
+                if (opt) {
+                    toggle(opt.dataset.value);
+                }
+            });
+
+            chips.addEventListener('click', (e) => {
+                const x = e.target.closest('.facet-chip-x');
+                if (x) {
+                    toggle(x.dataset.value);
+                }
+            });
+
+            document.addEventListener('click', (e) => {
+                if (!e.target.closest('#' + inputId) && !e.target.closest('#' + dropdownId)) {
+                    dropdown.classList.remove('open');
+                }
+            });
+
+            return { renderDropdown, renderChips };
+        }
+
+        const topicFacet = initFacetSelect('topic', 'gvTopicInput', 'gvTopicChips', 'gvTopicDropdown', 'gvTopic');
+        const sourceFacet = initFacetSelect('source', 'gvSourceInput', 'gvSourceChips', 'gvSourceDropdown', 'gvSource');
+
+        async function loadFacets() {
+            try {
+                const resp = await fetch('/api/news-intel/facets');
+                if (!resp.ok) return;
+                const data = await resp.json();
+                gvFacetState.topic.items = data.topics || [];
+                gvFacetState.source.items = data.sources || [];
+                topicFacet.renderDropdown('');
+                sourceFacet.renderDropdown('');
+
+                // Set date input bounds from actual data range
+                const dr = data.date_range || {};
+                const dateFrom = document.getElementById('gvDateFrom');
+                const dateTo = document.getElementById('gvDateTo');
+                if (dr.min) {
+                    dateFrom.setAttribute('min', dr.min);
+                    dateTo.setAttribute('min', dr.min);
+                    dateFrom.setAttribute('placeholder', dr.min);
+                }
+                if (dr.max) {
+                    dateFrom.setAttribute('max', dr.max);
+                    dateTo.setAttribute('max', dr.max);
+                    dateTo.setAttribute('placeholder', dr.max);
+                }
+            } catch (err) {
+                console.error('Facets load error:', err);
+            }
+        }
+
         const COUNTRY_COORDS = {
             "United States": [39.8, -98.6], "United Kingdom": [54.0, -2.0],
             "China": [35.0, 105.0], "Russia": [62.0, 100.0],
@@ -3417,8 +3643,11 @@
 
         async function loadGlobalView() {
             initGlobalViewMap();
+            loadFacets();
+
+            const topicVal = document.getElementById('gvTopic')?.value || '';
             const params = {
-                topic: document.getElementById('gvTopic')?.value || '',
+                topic: topicVal,
                 date_from: document.getElementById('gvDateFrom')?.value || null,
                 date_to: document.getElementById('gvDateTo')?.value || null,
             };
@@ -3433,7 +3662,7 @@
                     fetch('/api/news-intel/articles', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ ...params, limit: 200 }),
+                        body: JSON.stringify({ ...params, limit: 10000 }),
                     }),
                     fetch('/api/market/latest'),
                 ]);
@@ -3459,13 +3688,13 @@
                     gvAllArticles = articlesData.articles || [];
                     gvArticles = gvAllArticles;
                     if (articlesData.warning) warningMsg = articlesData.warning;
-                    // Client-side keyword filter
+                    // Client-side keyword and source filter
                     const search = (document.getElementById('gvSearch')?.value || '').toLowerCase();
-                    const srcFilter = (document.getElementById('gvSource')?.value || '').toLowerCase();
-                    if (search || srcFilter) {
+                    const selectedSources = gvFacetState.source.selected;
+                    if (search || selectedSources.size > 0) {
                         gvArticles = gvArticles.filter(a => {
                             if (search && !(a.headline || '').toLowerCase().includes(search)) return false;
-                            if (srcFilter && !(a.source || '').toLowerCase().includes(srcFilter)) return false;
+                            if (selectedSources.size > 0 && !selectedSources.has(a.source || '')) return false;
                             return true;
                         });
                     }
@@ -3549,9 +3778,9 @@
                 });
                 // Rich popup matching data-admin.js
                 const topTopics = Object.entries(stat.topics || {})
-                    .sort((a, b) => b[1] - a[1]).slice(0, 6);
+                    .sort((a, b) => b[1] - a[1]);
                 const topSources = Object.entries(stat.sources || {})
-                    .sort((a, b) => b[1] - a[1]).slice(0, 4);
+                    .sort((a, b) => b[1] - a[1]).slice(0, 8);
                 const countryEsc = escapeHtml(stat.country);
                 let popup = `<div style="min-width:180px;font-size:0.85rem;">`;
                 popup += `<strong style="cursor:pointer;color:#1d4ed8;" onclick="filterGvByCountry('${countryEsc}')">${countryEsc}</strong>`;
@@ -3858,8 +4087,11 @@
 
             body.innerHTML = pageArticles.map(a => {
                 const isStaged = stagedItems.some(i => i.type === 'article' && i.data.headline === a.headline);
-                const topics = (a.topic_tags || []).slice(0, 3).map(t => `<span class="tag-chip">${escapeHtml(t)}</span>`).join('');
-                const geo = (a.geography_tags || a.country_tags || []).slice(0, 2).map(g => escapeHtml(normalizeCountry(g))).join(', ');
+                const allTopics = a.topic_tags || [];
+                const visibleTopics = allTopics.slice(0, 6).map(t => `<span class="tag-chip">${escapeHtml(t)}</span>`).join('');
+                const topicOverflow = allTopics.length > 6 ? `<span class="tag-chip" style="background:#f3f4f6;color:var(--text-light);">+${allTopics.length - 6}</span>` : '';
+                const topics = visibleTopics + topicOverflow;
+                const geo = (a.geography_tags || a.country_tags || []).slice(0, 4).map(g => escapeHtml(normalizeCountry(g))).join(', ');
                 return `<tr>
                     <td>${a.url ? `<a href="${escapeHtml(a.url)}" target="_blank" rel="noopener" style="color:#4f46e5;text-decoration:none;">${escapeHtml(a.headline || 'Untitled')}</a>` : escapeHtml(a.headline || 'Untitled')}</td>
                     <td style="white-space:nowrap;">${(a.date || '').toString().slice(0, 10)}</td>
@@ -4058,6 +4290,42 @@
             window.scrollTo({ top: 0, behavior: 'smooth' });
         }
 
+        let pendingDiligenceAsset = null;
+
+        function startDiligenceSearch(asset) {
+            pendingDiligenceAsset = {
+                name: asset?.name || 'Unknown',
+                technology: asset?.technology || '',
+                capacity_mw: asset?.capacity_mw || 0,
+                country: asset?.country || '',
+                operator: asset?.operator || '',
+                owner: asset?.owner || '',
+                status: asset?.status || '',
+                lat: asset?.lat || 0,
+                lon: asset?.lon || 0,
+            };
+            const query = buildBrownfieldResearchQuery(asset || {});
+            switchMode('deep');
+            document.getElementById('searchInput').value = query;
+            document.getElementById('searchInput').focus();
+            // Auto-submit the diligence search
+            setTimeout(() => document.getElementById('searchButton').click(), 100);
+        }
+
+        function startDiligenceFromPipeline(item) {
+            startDiligenceSearch({
+                name: item?.asset_name || item?.name || 'Unknown',
+                technology: item?.technology || '',
+                capacity_mw: item?.capacity_mw || 0,
+                country: item?.country || '',
+                operator: item?.operator || '',
+                owner: item?.owner || '',
+                status: item?.status || '',
+                lat: item?.lat || 0,
+                lon: item?.lon || 0,
+            });
+        }
+
         async function addGenerationToPipeline(asset) {
             const coords = asset?.__coords || [asset?.lon, asset?.lat];
             const feature = {
@@ -4109,6 +4377,7 @@
             }
             html += `<div class="imaging-card-actions">`;
             html += `<button type="button" class="imaging-mini-btn" onclick="prefillBrownfieldResearch(${escapeAttr(JSON.stringify(props))})">Research</button>`;
+            html += `<button type="button" class="imaging-mini-btn" onclick="startDiligenceSearch(${escapeAttr(JSON.stringify(props))})">Diligence</button>`;
             html += `<button type="button" class="imaging-mini-btn" onclick="addGenerationToPipeline(${escapeAttr(JSON.stringify(props))})">+ Pipeline</button>`;
             html += `</div>`;
             if (props.wiki_url) {
@@ -4139,6 +4408,7 @@
                     <div style="margin-top:6px;font-size:0.8rem;color:var(--text-light);">${escapeHtml(item.status || 'status unknown')}</div>
                     <div class="imaging-card-actions">
                         <button type="button" class="imaging-mini-btn" onclick="prefillBrownfieldResearchFromQuery(${escapeAttr(JSON.stringify(item.research_query || ''))})">Research</button>
+                        <button type="button" class="imaging-mini-btn" onclick="startDiligenceFromPipeline(${escapeAttr(JSON.stringify(item))})">Diligence</button>
                         <button type="button" class="imaging-mini-btn" onclick="focusImagingLocation(${Number(item.lat || 0)}, ${Number(item.lon || 0)})">Focus</button>
                         <button type="button" class="imaging-mini-btn danger" onclick="removePipelineAsset(${escapeAttr(JSON.stringify(item.id))})">Remove</button>
                     </div>

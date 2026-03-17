@@ -85,7 +85,7 @@ def _news_intel_synthesis(articles, topic=None, date_from=None, date_to=None):
     )
 
 
-def fetch_newsroom_api(max_results=500):
+def fetch_newsroom_api(max_results=10000):
     """Compatibility wrapper that exposes newsroom articles for API handlers/tests."""
     global newsroom_api_warning
     articles, warning = fetch_newsroom_cached(max_results=max_results)
@@ -233,6 +233,7 @@ def _run_research_with_progress(
     depth: int,
     refined_query: str = None,
     research_type: str = None,
+    asset_metadata: dict = None,
 ):
     """Run research workflow in background thread and emit progress updates."""
     try:
@@ -252,6 +253,7 @@ def _run_research_with_progress(
             progress_callback=on_progress,
             refined_query=refined_query,
             research_type=research_type,
+            asset_metadata=asset_metadata,
         )
 
         research_id_actual = research_engine.save_research(state)
@@ -319,6 +321,7 @@ def start_research():
         depth = int(data.get('depth', 1))
         refined_query = (data.get('refined_query') or '').strip() or None
         research_type = (data.get('research_type') or '').strip() or None
+        asset_metadata = data.get('asset_metadata') or None
         if not research_type:
             research_type = infer_research_type(refined_query or query)
 
@@ -347,6 +350,7 @@ def start_research():
             kwargs={
                 "refined_query": refined_query,
                 "research_type": research_type,
+                "asset_metadata": asset_metadata,
             },
             daemon=True
         )
@@ -529,6 +533,43 @@ def research_chat(research_id):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/news-intel/facets', methods=['GET'])
+def get_news_intel_facets():
+    """Return available topics, sources, and date range from cached articles."""
+    try:
+        from collections import Counter
+
+        articles = fetch_newsroom_api(max_results=5000)
+
+        topic_counts = Counter()
+        source_counts = Counter()
+        dates = []
+
+        for article in articles:
+            for tag in (article.get("topic_tags") or []):
+                topic_counts[tag] += 1
+            src = article.get("source")
+            if src:
+                source_counts[src] += 1
+            d = (article.get("date") or "")[:10]
+            if d:
+                dates.append(d)
+
+        topics = [{"name": name, "count": count}
+                  for name, count in topic_counts.most_common()]
+        sources = [{"name": name, "count": count}
+                   for name, count in source_counts.most_common()]
+        date_range = {
+            "min": min(dates) if dates else None,
+            "max": max(dates) if dates else None,
+        }
+
+        return jsonify({"topics": topics, "sources": sources, "date_range": date_range})
+    except Exception as e:
+        logger.error(f"News intel facets error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/api/news-intel/articles', methods=['POST'])
 def get_news_intel_articles():
     """Fetch newsroom articles from API and filter by topic/date range."""
@@ -537,15 +578,15 @@ def get_news_intel_articles():
         topic = (data.get("topic") or "").strip()
         date_from = data.get("date_from")
         date_to = data.get("date_to")
-        limit = int(data.get("limit", 100))
-        limit = max(1, min(limit, 200))
+        limit = int(data.get("limit", 200))
+        limit = max(1, min(limit, 10000))
 
         start_date = _parse_date(date_from)
         end_date = _parse_date(date_to)
         if start_date and end_date and start_date > end_date:
             return jsonify({"error": "date_from must be <= date_to"}), 400
 
-        articles = fetch_newsroom_api(max_results=500)
+        articles = fetch_newsroom_api()
         warning = newsroom_api_warning
         filtered = _filter_newsroom_articles(
             articles,
@@ -581,15 +622,15 @@ def synthesize_news_intel():
         topic = (data.get("topic") or "").strip()
         date_from = data.get("date_from")
         date_to = data.get("date_to")
-        limit = int(data.get("limit", 100))
-        limit = max(1, min(limit, 200))
+        limit = int(data.get("limit", 200))
+        limit = max(1, min(limit, 10000))
 
         start_date = _parse_date(date_from)
         end_date = _parse_date(date_to)
         if start_date and end_date and start_date > end_date:
             return jsonify({"error": "date_from must be <= date_to"}), 400
 
-        articles = fetch_newsroom_api(max_results=500)
+        articles = fetch_newsroom_api()
         filtered = _filter_newsroom_articles(
             articles,
             topic=topic,
@@ -687,10 +728,10 @@ def get_news_intel_stats():
         topic = (data.get("topic") or "").strip()
         date_from = data.get("date_from")
         date_to = data.get("date_to")
-        limit = int(data.get("limit", 500))
-        limit = max(1, min(limit, 500))
+        limit = int(data.get("limit", 10000))
+        limit = max(1, min(limit, 10000))
 
-        articles, warning = fetch_newsroom_cached(max_results=500)
+        articles, warning = fetch_newsroom_cached(max_results=10000)
         filtered = _filter_newsroom_articles(
             articles, topic=topic, date_from=date_from, date_to=date_to, limit=limit,
         )
