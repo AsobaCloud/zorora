@@ -146,6 +146,17 @@ class ImagingDataStore:
                 updated_at TEXT
             )
         """)
+        # SEP-044: add scouting_stage column to existing tables
+        for table, default in [
+            ("pipeline_assets", "identified"),
+            ("scouting_watchlist", "scored"),
+        ]:
+            try:
+                cur.execute(
+                    f"ALTER TABLE {table} ADD COLUMN scouting_stage TEXT DEFAULT '{default}'"
+                )
+            except sqlite3.OperationalError:
+                pass  # column already exists
         conn.commit()
 
     # -- writes ---------------------------------------------------------------
@@ -560,6 +571,53 @@ class ImagingDataStore:
         parts.append("covering ownership, offtake, grid access, and acquisition risks")
         return " ".join(parts)
 
+    # -- SEP-044: scouting stage management ------------------------------------
+
+    VALID_SCOUTING_STAGES = {"identified", "scored", "feasibility", "diligence", "decision"}
+    VALID_ITEM_TYPES = {"brownfield", "greenfield", "bess"}
+
+    def update_scouting_stage(self, item_type: str, item_id: str, stage: str):
+        """Move a scouting item to a new pipeline stage."""
+        if item_type not in self.VALID_ITEM_TYPES:
+            raise ValueError(f"Invalid item_type: {item_type!r}")
+        if stage not in self.VALID_SCOUTING_STAGES:
+            raise ValueError(f"Invalid stage: {stage!r}")
+        table = "scouting_watchlist" if item_type == "greenfield" else "pipeline_assets"
+        self.conn.execute(
+            f"UPDATE {table} SET scouting_stage = ? WHERE id = ?",
+            (stage, item_id),
+        )
+        self.conn.commit()
+
+    def list_scouting_items(self, item_type: str, stage: str = None) -> list[dict]:
+        """List scouting items by type, optionally filtered by stage."""
+        if item_type not in self.VALID_ITEM_TYPES:
+            raise ValueError(f"Invalid item_type: {item_type!r}")
+        if item_type == "greenfield":
+            query = "SELECT * FROM scouting_watchlist WHERE 1=1"
+            params: list = []
+            if stage:
+                query += " AND scouting_stage = ?"
+                params.append(stage)
+            query += " ORDER BY created_at DESC"
+            cur = self.conn.cursor()
+            cur.execute(query, params)
+            return [self._row_to_watchlist_site(row) for row in cur.fetchall()]
+        else:
+            query = "SELECT * FROM pipeline_assets WHERE 1=1"
+            params = []
+            if item_type == "bess":
+                query += " AND source_type = 'bess'"
+            else:
+                query += " AND source_type != 'bess'"
+            if stage:
+                query += " AND scouting_stage = ?"
+                params.append(stage)
+            query += " ORDER BY created_at DESC"
+            cur = self.conn.cursor()
+            cur.execute(query, params)
+            return [self._row_to_pipeline_asset(row) for row in cur.fetchall()]
+
     @staticmethod
     def _row_to_pipeline_asset(row: sqlite3.Row) -> dict:
         metadata = json.loads(row["metadata_json"]) if row["metadata_json"] else {}
@@ -578,6 +636,7 @@ class ImagingDataStore:
             "lon": row["lon"],
             "research_query": row["research_query"],
             "metadata": metadata,
+            "scouting_stage": row["scouting_stage"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
@@ -596,6 +655,7 @@ class ImagingDataStore:
             "notes": row["notes"],
             "factors": json.loads(row["factors_json"]) if row["factors_json"] else [],
             "resource_summary": json.loads(row["resource_json"]) if row["resource_json"] else {},
+            "scouting_stage": row["scouting_stage"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }

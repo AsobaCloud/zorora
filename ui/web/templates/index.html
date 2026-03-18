@@ -1763,6 +1763,133 @@
                 grid-template-columns: 1fr 1fr;
             }
         }
+
+        /* SEP-044: Scouting kanban styles */
+        .scouting-tabs {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 16px;
+        }
+        .scouting-tab-btn {
+            padding: 8px 18px;
+            border: 1px solid var(--border-grey);
+            border-radius: 10px;
+            background: #fff;
+            color: var(--text-light);
+            cursor: pointer;
+            font-size: 0.88rem;
+            font-weight: 500;
+        }
+        .scouting-tab-btn.active {
+            background: var(--text-dark);
+            color: #fff;
+            border-color: var(--text-dark);
+        }
+        .kanban-board {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 12px;
+            min-height: 300px;
+        }
+        .kanban-column {
+            background: #f8fafc;
+            border: 1px solid var(--border-grey);
+            border-radius: 12px;
+            padding: 12px;
+            min-height: 200px;
+        }
+        .kanban-column.drag-over {
+            border-color: #3b82f6;
+            background: #eff6ff;
+        }
+        .kanban-column-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--border-grey);
+        }
+        .kanban-column-title {
+            font-size: 0.85rem;
+            font-weight: 700;
+            color: var(--text-dark);
+            text-transform: capitalize;
+        }
+        .kanban-count-badge {
+            background: #e5e7eb;
+            color: var(--text-light);
+            font-size: 0.72rem;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 10px;
+        }
+        .kanban-card {
+            border: 1px solid var(--border-grey);
+            border-radius: 10px;
+            padding: 10px;
+            background: #fff;
+            margin-bottom: 8px;
+            cursor: grab;
+            transition: box-shadow 0.15s;
+        }
+        .kanban-card:active {
+            cursor: grabbing;
+        }
+        .kanban-card.dragging {
+            opacity: 0.5;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        .kanban-card strong {
+            font-size: 0.85rem;
+            color: var(--text-dark);
+        }
+        .kanban-card-meta {
+            font-size: 0.78rem;
+            color: var(--text-light);
+            margin-top: 4px;
+        }
+        .kanban-card-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 8px;
+        }
+        .kanban-card-actions button {
+            border: 1px solid var(--border-grey);
+            background: #fff;
+            color: #374151;
+            padding: 4px 8px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.75rem;
+        }
+        .kanban-card-actions button.danger {
+            border-color: #fecaca;
+            color: #b91c1c;
+            background: #fef2f2;
+        }
+        .kanban-card-actions button.go {
+            border-color: #bbf7d0;
+            color: #166534;
+            background: #f0fdf4;
+        }
+        .kanban-empty {
+            color: var(--text-light);
+            font-size: 0.8rem;
+            text-align: center;
+            padding: 20px 8px;
+        }
+        @media (max-width: 1100px) {
+            .kanban-board {
+                grid-template-columns: repeat(3, 1fr);
+            }
+        }
+        @media (max-width: 700px) {
+            .kanban-board {
+                grid-template-columns: 1fr;
+            }
+        }
     </style>
 </head>
 <body>
@@ -1790,6 +1917,7 @@
                 <button class="mode-nav-btn" data-mode="regulatory" onclick="switchMode('regulatory')">Regulatory</button>
                 <button class="mode-nav-btn" data-mode="global" onclick="switchMode('global')">Global View</button>
                 <button class="mode-nav-btn" data-mode="imaging" onclick="switchMode('imaging')">Imaging</button>
+                <button class="mode-nav-btn" data-mode="scouting" onclick="switchMode('scouting')">Scouting</button>
             </div>
             <div class="staged-badge hidden" id="stagedBadge">Staged: 0 items</div>
             <div class="sidebar-header">
@@ -2133,24 +2261,24 @@
                     Data: USGS MRDS (pre-2011 vintage) | openAFRICA DMRE | GEM Africa Energy Tracker (March 2026) | VIIRS 2024 | EOX Sentinel-2
                 </div>
 
-                <div class="imaging-panel-grid">
-                    <div class="imaging-subpanel">
-                        <h4>Brownfield Pipeline</h4>
-                        <p>Shortlist generation assets for acquisition diligence and push them into Deep Research with one click.</p>
-                        <div id="brownfieldPipelineList" class="imaging-list"></div>
-                    </div>
-                    <div class="imaging-subpanel">
-                        <h4>Greenfield Scouting</h4>
-                        <p>Click the map to score a candidate site with the selected scout technology, then persist strong sites into the compare watchlist.</p>
-                        <div id="scoutEvaluationCard" class="imaging-list-card" style="margin-bottom:12px;">
-                            Click the map to score a site.
-                        </div>
-                        <h4 style="margin-top:14px;">Scout Watchlist</h4>
-                        <div id="scoutWatchlist" class="imaging-list"></div>
-                        <h4 style="margin-top:14px;">Compare</h4>
-                        <div id="scoutCompareList" class="imaging-list-card">Select watchlist sites to compare them side by side.</div>
+                <div style="margin-top:14px;">
+                    <div id="scoutEvaluationCard" class="imaging-list-card">
+                        Click the map to score a site.
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <div class="hidden" id="scoutingSection">
+            <div class="global-view-panel">
+                <h2 style="margin:0 0 4px;font-size:1.2rem;color:var(--text-dark);">Scouting Pipeline</h2>
+                <p style="margin:0 0 16px;font-size:0.85rem;color:var(--text-light);">Track sites through evaluation stages. Drag cards between columns to advance them.</p>
+                <div class="scouting-tabs" id="scoutingTabs">
+                    <button class="scouting-tab-btn active" data-scouttype="brownfield" onclick="switchScoutingTab('brownfield')">Brownfield</button>
+                    <button class="scouting-tab-btn" data-scouttype="greenfield" onclick="switchScoutingTab('greenfield')">Greenfield</button>
+                    <button class="scouting-tab-btn" data-scouttype="bess" onclick="switchScoutingTab('bess')">BESS</button>
+                </div>
+                <div class="kanban-board" id="kanbanBoard"></div>
             </div>
         </div>
 
@@ -2478,6 +2606,7 @@
             document.getElementById('regulatorySection').classList.toggle('hidden', activeMode !== 'regulatory');
             document.getElementById('globalViewSection').classList.toggle('hidden', activeMode !== 'global');
             document.getElementById('imagingSection').classList.toggle('hidden', activeMode !== 'imaging');
+            document.getElementById('scoutingSection').classList.toggle('hidden', activeMode !== 'scouting');
             document.getElementById('newSearchButton').classList.toggle('hidden', !showSessionChrome);
             document.getElementById('researchLayout').classList.toggle('hidden', !showResearchSession);
             document.getElementById('chatDock').classList.toggle('hidden', !showSessionChrome);
@@ -2688,6 +2817,8 @@
                 loadRegulatoryView();
             } else if (mode === 'imaging') {
                 loadImagingView();
+            } else if (mode === 'scouting') {
+                loadScoutingView();
             } else if (mode === 'digest') {
                 renderStagedItems();
             }
@@ -4378,7 +4509,7 @@
             html += `<div class="imaging-card-actions">`;
             html += `<button type="button" class="imaging-mini-btn" onclick="prefillBrownfieldResearch(${escapeAttr(JSON.stringify(props))})">Research</button>`;
             html += `<button type="button" class="imaging-mini-btn" onclick="startDiligenceSearch(${escapeAttr(JSON.stringify(props))})">Diligence</button>`;
-            html += `<button type="button" class="imaging-mini-btn" onclick="addGenerationToPipeline(${escapeAttr(JSON.stringify(props))})">+ Pipeline</button>`;
+            html += `<button type="button" class="imaging-mini-btn" onclick="addGenerationToPipeline(${escapeAttr(JSON.stringify(props))})">+ Scouting</button>`;
             html += `</div>`;
             if (props.wiki_url) {
                 html += `<div style="margin-top:8px;"><a href="${escapeHtml(props.wiki_url)}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;">GEM project page</a></div>`;
@@ -4446,7 +4577,7 @@
                     </div>
                 `).join('')}
                 <div class="imaging-card-actions">
-                    <button type="button" class="imaging-mini-btn" onclick="saveScoutedSite()">Add to Watchlist</button>
+                    <button type="button" class="imaging-mini-btn" onclick="saveScoutedSite()">Add to Scouting</button>
                     <button type="button" class="imaging-mini-btn" onclick="focusImagingLocation(${Number(site.lat)}, ${Number(site.lon)})">Focus</button>
                 </div>
             `;
@@ -4548,6 +4679,141 @@
                 container.textContent = `Compare error: ${error.message}`;
             }
         }
+
+        // ----- SEP-044: Scouting kanban functions -----
+        let activeScoutingTab = 'brownfield';
+        const SCOUTING_STAGES = ['identified', 'scored', 'feasibility', 'diligence', 'decision'];
+
+        function switchScoutingTab(tab) {
+            activeScoutingTab = tab;
+            document.querySelectorAll('.scouting-tab-btn').forEach(b => {
+                b.classList.toggle('active', b.dataset.scouttype === tab);
+            });
+            loadScoutingView();
+        }
+
+        async function loadScoutingView() {
+            const board = document.getElementById('kanbanBoard');
+            if (!board) return;
+            board.innerHTML = '<div class="kanban-empty">Loading...</div>';
+            try {
+                const response = await fetch(`/api/scouting/items?type=${encodeURIComponent(activeScoutingTab)}`);
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || 'Failed to load scouting items');
+                renderKanbanBoard(data.items || [], activeScoutingTab);
+            } catch (error) {
+                board.innerHTML = `<div class="kanban-empty">Error: ${escapeHtml(error.message)}</div>`;
+            }
+        }
+
+        function renderKanbanBoard(items, type) {
+            const board = document.getElementById('kanbanBoard');
+            if (!board) return;
+            const byStage = {};
+            SCOUTING_STAGES.forEach(s => byStage[s] = []);
+            items.forEach(item => {
+                const stage = item.scouting_stage || 'identified';
+                if (byStage[stage]) byStage[stage].push(item);
+            });
+            board.innerHTML = SCOUTING_STAGES.map(stage => `
+                <div class="kanban-column" data-stage="${stage}"
+                     ondragover="kanbanDragOver(event)" ondragleave="kanbanDragLeave(event)" ondrop="kanbanDrop(event, '${stage}')">
+                    <div class="kanban-column-header">
+                        <span class="kanban-column-title">${stage}</span>
+                        <span class="kanban-count-badge">${byStage[stage].length}</span>
+                    </div>
+                    <div class="kanban-cards">
+                        ${byStage[stage].length === 0
+                            ? '<div class="kanban-empty">No items</div>'
+                            : byStage[stage].map(item => renderScoutingCard(item, type, stage)).join('')}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function renderScoutingCard(item, type, stage) {
+            const name = escapeHtml(item.asset_name || item.name || 'Unnamed');
+            const country = escapeHtml(item.country || '');
+            const metric = type === 'greenfield'
+                ? `Score: ${item.overall_score ?? 'N/A'} (${escapeHtml(item.score_label || '')})`
+                : `${item.capacity_mw ? `${Number(item.capacity_mw).toLocaleString()} MW` : 'capacity unknown'}`;
+            const id = item.id;
+            const idAttr = escapeAttr(JSON.stringify(id));
+            let actions = '';
+            if (stage === 'identified') {
+                actions = `<button onclick="moveToStage(${idAttr}, '${type}', 'scored')">Score</button>
+                           <button class="danger" onclick="removeScoutingItem(${idAttr}, '${type}')">Remove</button>`;
+            } else if (stage === 'scored') {
+                actions = `<button onclick="moveToStage(${idAttr}, '${type}', 'feasibility')">Feasibility</button>
+                           <button onclick="moveToStage(${idAttr}, '${type}', 'diligence')">Diligence</button>
+                           <button class="danger" onclick="removeScoutingItem(${idAttr}, '${type}')">Remove</button>`;
+            } else if (stage === 'feasibility') {
+                actions = `<button onclick="moveToStage(${idAttr}, '${type}', 'diligence')">Diligence</button>`;
+            } else if (stage === 'diligence') {
+                actions = `<button onclick="moveToStage(${idAttr}, '${type}', 'decision')">Decision</button>`;
+            } else if (stage === 'decision') {
+                actions = `<button class="go" onclick="moveToStage(${idAttr}, '${type}', 'decision')">Go</button>
+                           <button class="danger" onclick="removeScoutingItem(${idAttr}, '${type}')">No-Go</button>`;
+            }
+            return `
+                <div class="kanban-card" draggable="true"
+                     ondragstart="kanbanDragStart(event, ${idAttr}, '${type}')"
+                     ondragend="kanbanDragEnd(event)">
+                    <strong>${name}</strong>
+                    <div class="kanban-card-meta">${country} · ${metric}</div>
+                    <div class="kanban-card-actions">${actions}</div>
+                </div>`;
+        }
+
+        function kanbanDragStart(event, itemId, type) {
+            event.dataTransfer.setData('text/plain', JSON.stringify({id: itemId, type: type}));
+            event.target.classList.add('dragging');
+        }
+        function kanbanDragEnd(event) {
+            event.target.classList.remove('dragging');
+        }
+        function kanbanDragOver(event) {
+            event.preventDefault();
+            event.currentTarget.classList.add('drag-over');
+        }
+        function kanbanDragLeave(event) {
+            event.currentTarget.classList.remove('drag-over');
+        }
+        async function kanbanDrop(event, targetStage) {
+            event.preventDefault();
+            event.currentTarget.classList.remove('drag-over');
+            try {
+                const payload = JSON.parse(event.dataTransfer.getData('text/plain'));
+                await moveToStage(payload.id, payload.type, targetStage);
+            } catch (e) { /* ignore bad drops */ }
+        }
+
+        async function moveToStage(itemId, type, stage) {
+            try {
+                const response = await fetch(`/api/scouting/items/${encodeURIComponent(itemId)}/stage`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ type, stage }),
+                });
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.error || 'Stage update failed');
+                }
+                await loadScoutingView();
+            } catch (error) {
+                alert('Stage update error: ' + error.message);
+            }
+        }
+
+        async function removeScoutingItem(itemId, type) {
+            try {
+                await fetch(`/api/scouting/items/${encodeURIComponent(itemId)}?type=${encodeURIComponent(type)}`, { method: 'DELETE' });
+                await loadScoutingView();
+            } catch (error) {
+                alert('Scouting delete error: ' + error.message);
+            }
+        }
+        // ----- end SEP-044 -----
 
         async function scoreScoutSite(lat, lon) {
             const technology = document.getElementById('imgScoutTechnology')?.value || 'solar';

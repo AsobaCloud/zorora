@@ -1113,6 +1113,109 @@ def delete_pipeline_asset(asset_id):
 
 
 # ---------------------------------------------------------------------------
+# Scouting kanban endpoints (SEP-044)
+# ---------------------------------------------------------------------------
+
+VALID_SCOUTING_TYPES = {"brownfield", "greenfield", "bess"}
+VALID_SCOUTING_STAGES = {"identified", "scored", "feasibility", "diligence", "decision"}
+
+
+@app.route('/api/scouting/items', methods=['GET'])
+def list_scouting_items():
+    """List scouting kanban items by type, optionally filtered by stage."""
+    try:
+        item_type = (request.args.get("type") or "").strip()
+        if item_type not in VALID_SCOUTING_TYPES:
+            return jsonify({"error": f"type must be one of {sorted(VALID_SCOUTING_TYPES)}"}), 400
+        stage = request.args.get("stage")
+        store = ImagingDataStore()
+        items = store.list_scouting_items(item_type, stage=stage)
+        store.close()
+        return jsonify({"items": items, "count": len(items)})
+    except Exception as e:
+        logger.error(f"Scouting list error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scouting/items/<item_id>/stage', methods=['PUT'])
+def update_scouting_item_stage(item_id):
+    """Move a scouting item to a different pipeline stage."""
+    try:
+        data = request.get_json(silent=True) or {}
+        item_type = (data.get("type") or "").strip()
+        stage = (data.get("stage") or "").strip()
+        if not item_type:
+            return jsonify({"error": "type is required"}), 400
+        if not stage:
+            return jsonify({"error": "stage is required"}), 400
+        if item_type not in VALID_SCOUTING_TYPES:
+            return jsonify({"error": f"type must be one of {sorted(VALID_SCOUTING_TYPES)}"}), 400
+        if stage not in VALID_SCOUTING_STAGES:
+            return jsonify({"error": f"stage must be one of {sorted(VALID_SCOUTING_STAGES)}"}), 400
+        store = ImagingDataStore()
+        store.update_scouting_stage(item_type, item_id, stage)
+        if item_type == "greenfield":
+            item = store.get_watchlist_site(item_id)
+        else:
+            item = store.get_pipeline_asset(item_id)
+        store.close()
+        return jsonify({"status": "ok", "item": item})
+    except Exception as e:
+        logger.error(f"Scouting stage update error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scouting/items', methods=['POST'])
+def create_scouting_item():
+    """Create a scouting item via the unified endpoint."""
+    try:
+        data = request.get_json() or {}
+        item_type = (data.get("type") or "").strip()
+        if item_type not in VALID_SCOUTING_TYPES:
+            return jsonify({"error": f"type must be one of {sorted(VALID_SCOUTING_TYPES)}"}), 400
+        store = ImagingDataStore()
+        if item_type == "greenfield":
+            site = data.get("site") or {}
+            if not site:
+                return jsonify({"error": "site is required for greenfield"}), 400
+            saved = store.upsert_watchlist_site(site)
+            store.close()
+            return jsonify({"status": "ok", "item": saved})
+        else:
+            source_type = (data.get("source_type") or item_type).strip()
+            asset = data.get("asset") or {}
+            if not asset:
+                return jsonify({"error": "asset is required"}), 400
+            saved = store.upsert_pipeline_asset(source_type=source_type, asset=asset)
+            store.close()
+            return jsonify({"status": "ok", "item": saved})
+    except Exception as e:
+        logger.error(f"Scouting create error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scouting/items/<item_id>', methods=['DELETE'])
+def delete_scouting_item(item_id):
+    """Delete a scouting item."""
+    try:
+        item_type = (request.args.get("type") or "").strip()
+        if not item_type:
+            return jsonify({"error": "type query parameter is required"}), 400
+        if item_type not in VALID_SCOUTING_TYPES:
+            return jsonify({"error": f"type must be one of {sorted(VALID_SCOUTING_TYPES)}"}), 400
+        store = ImagingDataStore()
+        if item_type == "greenfield":
+            store.delete_watchlist_site(item_id)
+        else:
+            store.delete_pipeline_asset(item_id)
+        store.close()
+        return jsonify({"status": "deleted"})
+    except Exception as e:
+        logger.error(f"Scouting delete error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
 # Imaging (OSINT mineral intelligence) endpoints
 # ---------------------------------------------------------------------------
 
