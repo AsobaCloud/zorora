@@ -70,6 +70,12 @@ class MarketWorkflow:
         wb_config = getattr(config, "WORLD_BANK_INDICATORS", {})
         if provider == "worldbank" and not wb_config.get("enabled", True):
             return False
+        sapp_config = getattr(config, "SAPP", {})
+        if provider == "sapp" and not sapp_config.get("enabled", True):
+            return False
+        eskom_config = getattr(config, "ESKOM", {})
+        if provider == "eskom" and not eskom_config.get("enabled", True):
+            return False
 
         staleness = self.store.get_staleness(series_id, provider=provider)
         if not force and staleness is not None and staleness < self.stale_hours:
@@ -88,6 +94,37 @@ class MarketWorkflow:
         elif provider == "worldbank":
             start_year = int(start_date[:4]) if start_date else None
             obs = worldbank_client.fetch_observations(series_id, start_year=start_year)
+        elif provider == "sapp":
+            from tools.market import sapp_client
+            # Derive node and currency from series_id: sapp_dam_rsan_usd
+            parts = series_id.split("_")
+            node = parts[2] if len(parts) >= 4 else ""
+            currency = parts[3] if len(parts) >= 4 else "usd"
+            file_name = sapp_config.get("dam_files", {}).get(node)
+            if not file_name:
+                return False
+            file_path = str(Path(sapp_config.get("data_dir", "data")) / file_name)
+            obs = sapp_client.fetch_observations(file_path, currency=currency)
+        elif provider == "eskom":
+            from tools.market import eskom_client
+            data_dir = eskom_config.get("data_dir", "data")
+            # Route to correct parser based on series_id prefix
+            if series_id.startswith("eskom_re_"):
+                col_key = series_id[len("eskom_re_"):]
+                file_path = str(Path(data_dir) / eskom_config.get("generation_file", "Hourly_Generation.csv"))
+                all_obs = eskom_client.fetch_generation_observations(file_path)
+                obs = all_obs.get(col_key, [])
+            elif series_id in ("eskom_residual_forecast", "eskom_rsa_contracted_forecast",
+                               "eskom_residual_demand", "eskom_rsa_contracted_demand"):
+                col_key = series_id[len("eskom_"):]
+                file_path = str(Path(data_dir) / eskom_config.get("demand_file", "System_hourly_actual_and_forecasted_demand.csv"))
+                all_obs = eskom_client.fetch_demand_observations(file_path)
+                obs = all_obs.get(col_key, [])
+            else:
+                col_key = series_id[len("eskom_"):]
+                file_path = str(Path(data_dir) / eskom_config.get("station_buildup_file", "Station_Build_Up.csv"))
+                all_obs = eskom_client.fetch_station_buildup_observations(file_path)
+                obs = all_obs.get(col_key, [])
         else:
             obs = fred_client.fetch_observations(series_id, observation_start=start_date)
 
