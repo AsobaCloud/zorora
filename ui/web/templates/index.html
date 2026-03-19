@@ -1916,7 +1916,7 @@
                 <button class="mode-nav-btn" data-mode="alerts" onclick="switchMode('alerts')">Alerts</button>
                 <button class="mode-nav-btn" data-mode="regulatory" onclick="switchMode('regulatory')">Regulatory</button>
                 <button class="mode-nav-btn" data-mode="global" onclick="switchMode('global')">Global View</button>
-                <button class="mode-nav-btn" data-mode="imaging" onclick="switchMode('imaging')">Imaging</button>
+                <button class="mode-nav-btn" data-mode="imaging" onclick="switchMode('imaging')">Discovery</button>
                 <button class="mode-nav-btn" data-mode="scouting" onclick="switchMode('scouting')">Scouting</button>
             </div>
             <div class="staged-badge hidden" id="stagedBadge">Staged: 0 items</div>
@@ -2223,6 +2223,26 @@
                             <span>Solar Resource</span>
                         </label>
                     </div>
+                    <div style="border-left:2px solid var(--border-grey);padding-left:12px;margin-left:4px;">
+                        <label style="font-weight:600;font-size:0.82rem;color:var(--text-dark);margin-bottom:4px;display:block;">Grid Infrastructure</label>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.85rem;margin-bottom:3px;">
+                            <input id="imgMtsZonesToggle" type="checkbox" onchange="toggleGridLayer('mts')"> MTS Zones
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.85rem;margin-bottom:3px;">
+                            <input id="imgSupplyAreasToggle" type="checkbox" onchange="toggleGridLayer('supply')"> Supply Areas
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.85rem;">
+                            <input id="imgDamZonesToggle" type="checkbox" onchange="toggleGridLayer('dam')"> DAM Zones
+                        </label>
+                    </div>
+                    <div>
+                        <label for="imgColorBy">Color zones by</label>
+                        <select id="imgColorBy" class="search-input" style="padding:8px 10px;" onchange="recolorMtsZones()">
+                            <option value="arbitrage">Arbitrage Spread</option>
+                            <option value="avg_price">Avg DAM Price</option>
+                            <option value="re_penetration">RE Penetration</option>
+                        </select>
+                    </div>
                     <div style="display:flex;align-items:flex-end;">
                         <button type="button" class="search-button" style="padding:8px 16px;font-size:0.88rem;" onclick="applyImagingFilters()">Apply</button>
                     </div>
@@ -2256,9 +2276,16 @@
                         <span class="legend-item"><span class="legend-shape legend-triangle" style="--triangle-color:#16a34a;"></span>Bioenergy</span>
                         <span class="legend-item"><span class="legend-shape legend-triangle" style="--triangle-color:#dc2626;"></span>Geothermal</span>
                     </div>
+                    <div class="imaging-legend" id="gridInfraLegend" style="display:none;">
+                        <span class="imaging-legend-title">Grid infrastructure</span>
+                        <span class="legend-item"><span style="display:inline-block;width:14px;height:14px;background:rgba(59,130,246,0.3);border:2px solid #3b82f6;border-radius:2px;"></span>MTS zones</span>
+                        <span class="legend-item"><span style="display:inline-block;width:14px;height:14px;background:transparent;border:2px solid #f97316;border-radius:2px;"></span>Supply areas</span>
+                        <span class="legend-item"><span style="display:inline-block;width:14px;height:14px;background:rgba(220,38,38,0.15);border:2px dashed #dc2626;border-radius:2px;"></span>RSAN</span>
+                        <span class="legend-item"><span style="display:inline-block;width:14px;height:14px;background:rgba(37,99,235,0.15);border:2px dashed #2563eb;border-radius:2px;"></span>RSAS</span>
+                    </div>
                 </div>
                 <div style="font-size:0.78rem;color:var(--text-light);opacity:0.7;">
-                    Data: USGS MRDS (pre-2011 vintage) | openAFRICA DMRE | GEM Africa Energy Tracker (March 2026) | VIIRS 2024 | EOX Sentinel-2
+                    Data: USGS MRDS (pre-2011 vintage) | openAFRICA DMRE | GEM Africa Energy Tracker (March 2026) | VIIRS 2024 | EOX Sentinel-2 | GCCA 2025 (Eskom/NTCSA)
                 </div>
 
                 <div style="margin-top:14px;">
@@ -4250,6 +4277,8 @@
         let imagingMap = null, imagingDeposits = null, imagingViirs = null, imagingConcessions = null, imagingGeneration = null;
         let imagingSolarResource = null, imagingSolarResourceConfig = null, scoutMarker = null;
         let pipelineAssetIds = new Set(), currentScoutSite = null, selectedScoutCompareIds = new Set();
+        let imagingMtsZones = null, imagingSupplyAreas = null, imagingDamZones = null;
+        let mtsZoneData = null, supplyAreaData = null, zoneMetricsCache = {};
 
         function initImagingMap() {
             if (imagingMap) {
@@ -4367,6 +4396,174 @@
             } else if (!shouldShow && imagingMap.hasLayer(imagingSolarResource)) {
                 imagingMap.removeLayer(imagingSolarResource);
             }
+        }
+
+        // ── Grid Infrastructure Layer Management ──
+
+        async function toggleGridLayer(layerType) {
+            if (!imagingMap) return;
+            const legend = document.getElementById('gridInfraLegend');
+
+            if (layerType === 'mts') {
+                const checked = document.getElementById('imgMtsZonesToggle')?.checked;
+                if (checked) {
+                    if (!mtsZoneData) {
+                        try {
+                            const [zonesResp, metricsResp] = await Promise.all([
+                                fetch('/api/discovery/gcca/mts-zones'),
+                                fetch('/api/discovery/zone-metrics'),
+                            ]);
+                            mtsZoneData = await zonesResp.json();
+                            zoneMetricsCache = await metricsResp.json();
+                        } catch (e) { console.error('Failed to load MTS zones', e); return; }
+                    }
+                    if (imagingMtsZones) imagingMap.removeLayer(imagingMtsZones);
+                    imagingMtsZones = L.geoJSON(mtsZoneData, {
+                        style: mtsZoneStyle,
+                        onEachFeature: (feature, layer) => {
+                            layer.on('click', (e) => showMtsZonePopup(e, feature));
+                        },
+                    }).addTo(imagingMap);
+                    if (legend) legend.style.display = '';
+                } else {
+                    if (imagingMtsZones) { imagingMap.removeLayer(imagingMtsZones); imagingMtsZones = null; }
+                    updateGridLegendVisibility();
+                }
+            } else if (layerType === 'supply') {
+                const checked = document.getElementById('imgSupplyAreasToggle')?.checked;
+                if (checked) {
+                    if (!supplyAreaData) {
+                        try {
+                            const resp = await fetch('/api/discovery/gcca/supply-areas');
+                            supplyAreaData = await resp.json();
+                        } catch (e) { console.error('Failed to load supply areas', e); return; }
+                    }
+                    if (imagingSupplyAreas) imagingMap.removeLayer(imagingSupplyAreas);
+                    imagingSupplyAreas = L.geoJSON(supplyAreaData, {
+                        style: { color: '#f97316', weight: 2, fillOpacity: 0, dashArray: null },
+                    }).addTo(imagingMap);
+                    if (legend) legend.style.display = '';
+                } else {
+                    if (imagingSupplyAreas) { imagingMap.removeLayer(imagingSupplyAreas); imagingSupplyAreas = null; }
+                    updateGridLegendVisibility();
+                }
+            } else if (layerType === 'dam') {
+                const checked = document.getElementById('imgDamZonesToggle')?.checked;
+                if (checked) {
+                    if (!supplyAreaData) {
+                        try {
+                            const resp = await fetch('/api/discovery/gcca/supply-areas');
+                            supplyAreaData = await resp.json();
+                        } catch (e) { console.error('Failed to load supply areas', e); return; }
+                    }
+                    if (imagingDamZones) imagingMap.removeLayer(imagingDamZones);
+                    imagingDamZones = L.geoJSON(supplyAreaData, {
+                        style: (feature) => {
+                            const node = feature.properties?.dam_node;
+                            return {
+                                color: node === 'rsan' ? '#dc2626' : '#2563eb',
+                                weight: 2.5,
+                                fillOpacity: 0.08,
+                                fillColor: node === 'rsan' ? '#dc2626' : '#2563eb',
+                                dashArray: '8,6',
+                            };
+                        },
+                    }).addTo(imagingMap);
+                    if (legend) legend.style.display = '';
+                } else {
+                    if (imagingDamZones) { imagingMap.removeLayer(imagingDamZones); imagingDamZones = null; }
+                    updateGridLegendVisibility();
+                }
+            }
+        }
+
+        function updateGridLegendVisibility() {
+            const legend = document.getElementById('gridInfraLegend');
+            if (!legend) return;
+            const anyOn = imagingMtsZones || imagingSupplyAreas || imagingDamZones;
+            legend.style.display = anyOn ? '' : 'none';
+        }
+
+        function mtsZoneStyle(feature) {
+            const sub = feature.properties?.substation || feature.properties?.mts_1 || '';
+            const m = zoneMetricsCache[sub] || {};
+            const colorBy = document.getElementById('imgColorBy')?.value || 'arbitrage';
+            let val = 0;
+            if (colorBy === 'arbitrage') val = m.arbitrage_spread_usd || 0;
+            else if (colorBy === 'avg_price') val = m.avg_dam_price_usd || 0;
+            else if (colorBy === 're_penetration') val = m.re_capacity_mw || 0;
+            return {
+                color: '#3b82f6',
+                weight: 1.5,
+                fillColor: zoneColor(colorBy, val),
+                fillOpacity: 0.4,
+            };
+        }
+
+        function zoneColor(metric, value) {
+            // Interpolate green→yellow→red based on value relative to known ranges
+            let pct = 0;
+            if (metric === 'arbitrage') {
+                // Higher spread = better for BESS = green. Range ~0-15 USD/MWh
+                pct = Math.min(1, Math.max(0, value / 15));
+            } else if (metric === 'avg_price') {
+                // Higher price = more expensive = red. Range ~25-45 USD/MWh
+                pct = Math.min(1, Math.max(0, (value - 25) / 20));
+                pct = 1 - pct; // Invert: low price = green
+            } else if (metric === 're_penetration') {
+                // More RE = better charging for BESS = green. Range 0-500 MW
+                pct = Math.min(1, Math.max(0, value / 500));
+            }
+            // Green (120) → Yellow (60) → Red (0) in HSL
+            const hue = Math.round(pct * 120);
+            return `hsl(${hue}, 70%, 45%)`;
+        }
+
+        function recolorMtsZones() {
+            if (!imagingMtsZones) return;
+            imagingMtsZones.eachLayer((layer) => {
+                if (layer.feature) layer.setStyle(mtsZoneStyle(layer.feature));
+            });
+        }
+
+        function showMtsZonePopup(e, feature) {
+            const props = feature.properties || {};
+            const sub = props.substation || props.mts_1 || '';
+            const m = zoneMetricsCache[sub] || {};
+            let html = `<div style="min-width:280px;font-size:0.85rem;">`;
+            html += `<strong style="font-size:1rem;">⬡ ${escapeHtml(sub)}</strong>`;
+            html += `<div style="color:#6B7280;margin:2px 0 6px;">`;
+            html += `${escapeHtml(props.supplyarea || '')} · ${escapeHtml(props.localarea || '')}`;
+            html += `</div>`;
+            html += `<div style="margin-bottom:4px;">DAM Node: <strong>${(m.dam_node || '').toUpperCase()}</strong></div>`;
+            html += `<hr style="border:0;border-top:1px solid #e5e7eb;margin:6px 0;">`;
+            html += `<div>Avg Peak: <strong>${(m.avg_peak_usd || 0).toFixed(1)} USD/MWh</strong></div>`;
+            html += `<div>Avg Off-Peak: <strong>${(m.avg_offpeak_usd || 0).toFixed(1)} USD/MWh</strong></div>`;
+            const spread = m.arbitrage_spread_usd || 0;
+            const spreadColor = spread > 8 ? '#16a34a' : spread > 4 ? '#f59e0b' : '#dc2626';
+            html += `<div>Arbitrage Spread: <strong style="color:${spreadColor}">${spread.toFixed(1)} USD/MWh</strong></div>`;
+            html += `<hr style="border:0;border-top:1px solid #e5e7eb;margin:6px 0;">`;
+            html += `<div>RE Assets: <strong>${m.re_asset_count || 0}</strong> (${(m.re_capacity_mw || 0).toFixed(0)} MW)</div>`;
+            html += `<div style="margin-top:8px;display:flex;gap:6px;">`;
+            html += `<button class="imaging-mini-btn" onclick="scoreScoutSite(${e.latlng.lat},${e.latlng.lng},'bess')">Score BESS</button>`;
+            html += `<button class="imaging-mini-btn" onclick="addZoneToScouting('${escapeHtml(sub)}',${e.latlng.lat},${e.latlng.lng},'${escapeHtml(m.dam_node || '')}')">+ Scouting</button>`;
+            html += `</div></div>`;
+            L.popup().setLatLng(e.latlng).setContent(html).openOn(imagingMap);
+        }
+
+        function addZoneToScouting(substation, lat, lon, damNode) {
+            const item = {
+                source_type: 'bess_opportunity',
+                item_type: 'bess',
+                asset: {
+                    type: 'Feature',
+                    properties: { name: substation + ' MTS Zone', technology: 'Storage', country: 'South Africa', capacity_mw: 0, operator: '', dam_node: damNode },
+                    geometry: { type: 'Point', coordinates: [lon, lat] },
+                },
+            };
+            fetch('/api/scouting/items', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(item) })
+                .then(r => r.json()).then(() => { alert('Added to BESS Scouting pipeline'); })
+                .catch(e => console.error('Failed to add to scouting', e));
         }
 
         function renderDepositPopup(props) {

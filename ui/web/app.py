@@ -1338,6 +1338,96 @@ def refresh_imaging_data():
 
 
 # ---------------------------------------------------------------------------
+# Discovery (grid infrastructure) endpoints
+# ---------------------------------------------------------------------------
+
+_discovery_mts_cache = None
+_discovery_supply_cache = None
+_discovery_metrics_cache = None
+
+
+@app.route('/api/discovery/gcca/mts-zones', methods=['GET'])
+def get_discovery_mts_zones():
+    """Return MTS substation zones as GeoJSON with DAM node annotation."""
+    global _discovery_mts_cache
+    try:
+        if _discovery_mts_cache is None:
+            from tools.imaging.gcca_client import load_mts_zones
+            from tools.imaging.grid_metrics import SUPPLY_AREA_DAM_NODE
+            fc = load_mts_zones()
+            for f in fc.get("features", []):
+                area = f.get("properties", {}).get("supplyarea", "")
+                f["properties"]["dam_node"] = SUPPLY_AREA_DAM_NODE.get(area, "rsan")
+            _discovery_mts_cache = fc
+        return jsonify(_discovery_mts_cache)
+    except Exception as e:
+        logger.error(f"MTS zones error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/discovery/gcca/supply-areas', methods=['GET'])
+def get_discovery_supply_areas():
+    """Return supply area boundary polygons as GeoJSON with DAM node annotation."""
+    global _discovery_supply_cache
+    try:
+        if _discovery_supply_cache is None:
+            from tools.imaging.gcca_client import load_supply_areas
+            from tools.imaging.grid_metrics import SUPPLY_AREA_DAM_NODE
+            fc = load_supply_areas()
+            for f in fc.get("features", []):
+                area = f.get("properties", {}).get("supplyarea", "")
+                f["properties"]["dam_node"] = SUPPLY_AREA_DAM_NODE.get(area, "rsan")
+            _discovery_supply_cache = fc
+        return jsonify(_discovery_supply_cache)
+    except Exception as e:
+        logger.error(f"Supply areas error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+def _ensure_zone_metrics():
+    """Compute and cache zone metrics on first call."""
+    global _discovery_metrics_cache
+    if _discovery_metrics_cache is not None:
+        return _discovery_metrics_cache
+    from tools.imaging.gcca_client import load_mts_zones
+    from tools.imaging.grid_metrics import compute_zone_metrics
+    from tools.market.sapp_client import parse_all_dam_files
+    mts = load_mts_zones()
+    dam = parse_all_dam_files()
+    store = ImagingDataStore()
+    gen_fc = store.get_generation_assets()
+    store.close()
+    gen_features = gen_fc.get("features", []) if gen_fc else []
+    _discovery_metrics_cache = compute_zone_metrics(mts, dam, gen_features)
+    return _discovery_metrics_cache
+
+
+@app.route('/api/discovery/zone-metrics', methods=['GET'])
+def get_discovery_zone_metrics_all():
+    """Return DAM price stats + RE asset counts for all MTS zones."""
+    try:
+        metrics = _ensure_zone_metrics()
+        return jsonify(metrics)
+    except Exception as e:
+        logger.error(f"Zone metrics error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/discovery/zone-metrics/<substation>', methods=['GET'])
+def get_discovery_zone_metrics(substation):
+    """Return DAM price stats + RE asset count for a specific MTS zone."""
+    try:
+        metrics = _ensure_zone_metrics()
+        zone = metrics.get(substation)
+        if zone is None:
+            return jsonify({"error": f"Unknown substation: {substation}"}), 404
+        return jsonify(zone)
+    except Exception as e:
+        logger.error(f"Zone metrics error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
 # Greenfield scouting endpoints
 # ---------------------------------------------------------------------------
 
