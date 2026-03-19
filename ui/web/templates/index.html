@@ -2340,6 +2340,9 @@
                         <label style="display:flex;align-items:center;gap:6px;font-size:0.85rem;">
                             <input id="imgDamZonesToggle" type="checkbox" onchange="toggleGridLayer('dam')"> DAM Zones
                         </label>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.85rem;">
+                            <input id="imgSubstationsToggle" type="checkbox" onchange="toggleGridLayer('substations')"> Substations
+                        </label>
                     </div>
                     <div>
                         <label for="imgColorBy">Color zones by</label>
@@ -4403,8 +4406,8 @@
         let imagingMap = null, imagingDeposits = null, imagingViirs = null, imagingConcessions = null, imagingGeneration = null;
         let imagingSolarResource = null, imagingSolarResourceConfig = null, scoutMarker = null;
         let pipelineAssetIds = new Set(), currentScoutSite = null, selectedScoutCompareIds = new Set();
-        let imagingMtsZones = null, imagingSupplyAreas = null, imagingDamZones = null;
-        let mtsZoneData = null, supplyAreaData = null, zoneMetricsCache = {};
+        let imagingMtsZones = null, imagingSupplyAreas = null, imagingDamZones = null, imagingSubstations = null;
+        let mtsZoneData = null, supplyAreaData = null, substationData = null, zoneMetricsCache = {};
 
         function initImagingMap() {
             if (imagingMap) {
@@ -4600,13 +4603,74 @@
                     if (imagingDamZones) { imagingMap.removeLayer(imagingDamZones); imagingDamZones = null; }
                     updateGridLegendVisibility();
                 }
+            } else if (layerType === 'substations') {
+                const checked = document.getElementById('imgSubstationsToggle')?.checked;
+                if (checked) {
+                    if (!substationData) {
+                        try {
+                            const resp = await fetch('/api/discovery/gcca/substations');
+                            substationData = await resp.json();
+                            if (!Object.keys(zoneMetricsCache).length) {
+                                const mResp = await fetch('/api/discovery/zone-metrics');
+                                zoneMetricsCache = await mResp.json();
+                            }
+                        } catch (e) { console.error('Failed to load substations', e); return; }
+                    }
+                    if (imagingSubstations) imagingMap.removeLayer(imagingSubstations);
+                    imagingSubstations = L.geoJSON(substationData, {
+                        pointToLayer: (feature, latlng) => {
+                            const node = feature.properties?.dam_node;
+                            return L.circleMarker(latlng, {
+                                radius: 6,
+                                fillColor: node === 'rsan' ? '#dc2626' : '#2563eb',
+                                color: '#fff',
+                                weight: 2,
+                                fillOpacity: 0.9,
+                            });
+                        },
+                        onEachFeature: (feature, layer) => {
+                            layer.on('click', (e) => showSubstationPopup(e, feature));
+                        },
+                    }).addTo(imagingMap);
+                    if (legend) legend.style.display = '';
+                } else {
+                    if (imagingSubstations) { imagingMap.removeLayer(imagingSubstations); imagingSubstations = null; }
+                    updateGridLegendVisibility();
+                }
             }
+        }
+
+        function showSubstationPopup(e, feature) {
+            const p = feature.properties || {};
+            const sub = p.substation || '';
+            const m = zoneMetricsCache[sub] || {};
+            let html = `<div style="min-width:280px;font-size:0.85rem;">`;
+            html += `<strong style="font-size:1rem;">⚡ ${escapeHtml(sub)}</strong>`;
+            html += `<div style="color:#6B7280;margin:2px 0 6px;">${escapeHtml(p.supply_area || '')} · ${(p.dam_node || '').toUpperCase()}</div>`;
+            if (p.transformer_voltage) html += `<div>Voltage: <strong>${escapeHtml(p.transformer_voltage)}</strong></div>`;
+            if (p.installed_capacity_mva) html += `<div>Installed: <strong>${escapeHtml(p.installed_capacity_mva)} MVA</strong></div>`;
+            if (p.transformer_count > 1) html += `<div>Transformers: <strong>${p.transformer_count}</strong></div>`;
+            if (p.status) html += `<div>Status: ${escapeHtml(p.status)}</div>`;
+            if (p.reippp_gen) html += `<div>REIPPP Gen: ${escapeHtml(p.reippp_gen)}</div>`;
+            if (m.avg_peak_usd) {
+                html += `<hr style="border:0;border-top:1px solid #e5e7eb;margin:6px 0;">`;
+                html += `<div>DAM Peak: <strong>${m.avg_peak_usd.toFixed(1)} USD/MWh</strong></div>`;
+                html += `<div>DAM Off-Peak: <strong>${m.avg_offpeak_usd.toFixed(1)} USD/MWh</strong></div>`;
+                const spread = m.arbitrage_spread_usd || 0;
+                const spreadColor = spread > 8 ? '#16a34a' : spread > 4 ? '#f59e0b' : '#dc2626';
+                html += `<div>Spread: <strong style="color:${spreadColor}">${spread.toFixed(1)} USD/MWh</strong></div>`;
+            }
+            html += `<div style="margin-top:8px;display:flex;gap:6px;">`;
+            html += `<button class="imaging-mini-btn" onclick="scoreScoutSite(${e.latlng.lat},${e.latlng.lng})">Score BESS</button>`;
+            html += `<button class="imaging-mini-btn" onclick="addZoneToScouting('${escapeHtml(sub)}',${e.latlng.lat},${e.latlng.lng},'${escapeHtml(p.dam_node || '')}')">+ Scouting</button>`;
+            html += `</div></div>`;
+            L.popup().setLatLng(e.latlng).setContent(html).openOn(imagingMap);
         }
 
         function updateGridLegendVisibility() {
             const legend = document.getElementById('gridInfraLegend');
             if (!legend) return;
-            const anyOn = imagingMtsZones || imagingSupplyAreas || imagingDamZones;
+            const anyOn = imagingMtsZones || imagingSupplyAreas || imagingDamZones || imagingSubstations;
             legend.style.display = anyOn ? '' : 'none';
         }
 

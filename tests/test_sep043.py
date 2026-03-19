@@ -202,3 +202,68 @@ class TestDiscoveryEndpoints:
             data = resp.get_json()
             assert data["dam_node"] in ("rsan", "rsas")
             assert "avg_peak_usd" in data
+
+    def test_substations_endpoint(self):
+        app = self._get_app()
+        with app.test_client() as client:
+            resp = client.get("/api/discovery/gcca/substations")
+            assert resp.status_code == 200
+            data = resp.get_json()
+            assert data["type"] == "FeatureCollection"
+            assert len(data["features"]) > 50
+            for f in data["features"][:5]:
+                assert f["geometry"]["type"] == "Point"
+                assert "dam_node" in f["properties"]
+                assert f["properties"]["dam_node"] in ("rsan", "rsas")
+            import json
+            response_size = len(json.dumps(data))
+            assert response_size < 100_000, (
+                f"Response is {response_size} bytes — should be <100KB"
+            )
+
+
+class TestSubstationPoints:
+
+    def test_load_substations_returns_features(self):
+        from tools.imaging.gcca_client import load_substations
+
+        fc = load_substations()
+        assert fc["type"] == "FeatureCollection"
+        assert len(fc["features"]) > 50
+
+    def test_substation_has_point_geometry(self):
+        from tools.imaging.gcca_client import load_substations
+
+        fc = load_substations()
+        for f in fc["features"][:10]:
+            assert f["geometry"]["type"] == "Point"
+            coords = f["geometry"]["coordinates"]
+            assert len(coords) == 2
+            lon, lat = coords
+            assert 14 < lon < 35, f"Longitude {lon} outside SA range"
+            assert -36 < lat < -20, f"Latitude {lat} outside SA range"
+
+    def test_substation_has_transformer_data(self):
+        from tools.imaging.gcca_client import load_substations
+
+        fc = load_substations()
+        has_voltage = 0
+        for f in fc["features"]:
+            props = f["properties"]
+            assert "substation" in props
+            assert "supply_area" in props
+            if props.get("transformer_voltage") or props.get("transformers"):
+                has_voltage += 1
+        assert has_voltage > len(fc["features"]) * 0.5
+
+    def test_deduplication_by_coordinates(self):
+        from tools.imaging.gcca_client import load_substations
+
+        fc = load_substations()
+        coord_set = set()
+        for f in fc["features"]:
+            coords = tuple(f["geometry"]["coordinates"])
+            assert coords not in coord_set, (
+                f"Duplicate coordinates {coords} — deduplication failed"
+            )
+            coord_set.add(coords)

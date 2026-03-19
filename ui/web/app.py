@@ -1458,6 +1458,7 @@ def refresh_imaging_data():
 _discovery_mts_cache = None
 _discovery_supply_cache = None
 _discovery_metrics_cache = None
+_discovery_substations_cache = None
 
 
 @app.route('/api/discovery/gcca/mts-zones', methods=['GET'])
@@ -1495,6 +1496,25 @@ def get_discovery_supply_areas():
         return jsonify(_discovery_supply_cache)
     except Exception as e:
         logger.error(f"Supply areas error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/discovery/gcca/substations', methods=['GET'])
+def get_discovery_substations():
+    """Return MTS substation point locations as GeoJSON with DAM node annotation."""
+    global _discovery_substations_cache
+    try:
+        if _discovery_substations_cache is None:
+            from tools.imaging.gcca_client import load_substations
+            from tools.imaging.grid_metrics import SUPPLY_AREA_DAM_NODE
+            fc = load_substations()
+            for f in fc.get("features", []):
+                area = f.get("properties", {}).get("supply_area", "")
+                f["properties"]["dam_node"] = SUPPLY_AREA_DAM_NODE.get(area, "rsan")
+            _discovery_substations_cache = fc
+        return jsonify(_discovery_substations_cache)
+    except Exception as e:
+        logger.error(f"Substations error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
