@@ -1414,6 +1414,99 @@
             font-family: inherit;
         }
 
+        .facet-select {
+            position: relative;
+        }
+
+        .facet-select-input {
+            width: 100%;
+            padding: 8px 10px;
+            border: 1px solid var(--border-grey);
+            border-radius: 6px;
+            font-size: 0.88rem;
+            font-family: inherit;
+            cursor: text;
+        }
+
+        .facet-select-input:focus {
+            border-color: var(--primary-purple);
+            outline: none;
+        }
+
+        .facet-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            margin-top: 4px;
+        }
+
+        .facet-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            padding: 2px 8px;
+            background: #eef2ff;
+            border: 1px solid #c7d2fe;
+            border-radius: 12px;
+            font-size: 0.76rem;
+            color: #4338ca;
+        }
+
+        .facet-chip-x {
+            cursor: pointer;
+            font-size: 0.82rem;
+            line-height: 1;
+            color: #6366f1;
+        }
+
+        .facet-chip-x:hover {
+            color: #ef4444;
+        }
+
+        .facet-dropdown {
+            display: none;
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            max-height: 220px;
+            overflow-y: auto;
+            background: var(--white);
+            border: 1px solid var(--border-grey);
+            border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            margin-top: 2px;
+        }
+
+        .facet-dropdown.open {
+            display: block;
+        }
+
+        .facet-option {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 10px;
+            cursor: pointer;
+            font-size: 0.84rem;
+        }
+
+        .facet-option:hover {
+            background: #f3f4f6;
+        }
+
+        .facet-option.selected {
+            background: #eef2ff;
+            color: #4338ca;
+            font-weight: 600;
+        }
+
+        .facet-option-count {
+            font-size: 0.76rem;
+            color: var(--text-light);
+        }
+
         #global-map-container {
             height: 400px;
             border: 1px solid var(--border-grey);
@@ -1670,6 +1763,239 @@
                 grid-template-columns: 1fr 1fr;
             }
         }
+
+        /* SEP-044: Scouting kanban styles */
+        .scouting-tabs {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 16px;
+        }
+        .scouting-tab-btn {
+            padding: 8px 18px;
+            border: 1px solid var(--border-grey);
+            border-radius: 10px;
+            background: #fff;
+            color: var(--text-light);
+            cursor: pointer;
+            font-size: 0.88rem;
+            font-weight: 500;
+        }
+        .scouting-tab-btn.active {
+            background: var(--text-dark);
+            color: #fff;
+            border-color: var(--text-dark);
+        }
+        .kanban-board {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 12px;
+            min-height: 300px;
+        }
+        .kanban-column {
+            background: #f8fafc;
+            border: 1px solid var(--border-grey);
+            border-radius: 12px;
+            padding: 12px;
+            min-height: 200px;
+        }
+        .kanban-column.drag-over {
+            border-color: #3b82f6;
+            background: #eff6ff;
+        }
+        .kanban-column-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--border-grey);
+        }
+        .kanban-column-title {
+            font-size: 0.85rem;
+            font-weight: 700;
+            color: var(--text-dark);
+            text-transform: capitalize;
+        }
+        .kanban-count-badge {
+            background: #e5e7eb;
+            color: var(--text-light);
+            font-size: 0.72rem;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 10px;
+        }
+        .kanban-card {
+            border: 1px solid var(--border-grey);
+            border-radius: 10px;
+            padding: 10px;
+            background: #fff;
+            margin-bottom: 8px;
+            cursor: grab;
+            transition: box-shadow 0.15s;
+        }
+        .kanban-card:active {
+            cursor: grabbing;
+        }
+        .kanban-card.dragging {
+            opacity: 0.5;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        .kanban-card strong {
+            font-size: 0.85rem;
+            color: var(--text-dark);
+        }
+        .kanban-card-meta {
+            font-size: 0.78rem;
+            color: var(--text-light);
+            margin-top: 4px;
+        }
+        .kanban-card-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 8px;
+        }
+        .kanban-card-actions button {
+            border: 1px solid var(--border-grey);
+            background: #fff;
+            color: #374151;
+            padding: 4px 8px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.75rem;
+        }
+        .kanban-card-actions button.danger {
+            border-color: #fecaca;
+            color: #b91c1c;
+            background: #fef2f2;
+        }
+        .kanban-card-actions button.go {
+            border-color: #bbf7d0;
+            color: #166534;
+            background: #f0fdf4;
+        }
+        .kanban-empty {
+            color: var(--text-light);
+            font-size: 0.8rem;
+            text-align: center;
+            padding: 20px 8px;
+        }
+        @media (max-width: 1100px) {
+            .kanban-board {
+                grid-template-columns: repeat(3, 1fr);
+            }
+        }
+        @media (max-width: 700px) {
+            .kanban-board {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* SEP-045: Feasibility panel styles */
+        #feasibilityPanel {
+            margin-top: 18px;
+            border: 1px solid var(--border-grey);
+            border-radius: 14px;
+            padding: 16px;
+            background: rgba(255,255,255,0.96);
+            box-shadow: 0 8px 24px rgba(15,23,42,0.05);
+        }
+        .feasibility-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        .feasibility-progress-badge {
+            margin-left: 10px;
+            font-size: 0.78rem;
+            font-weight: 600;
+            padding: 3px 10px;
+            border-radius: 10px;
+            background: #e5e7eb;
+            color: var(--text-light);
+        }
+        .feasibility-content {
+            min-height: 120px;
+        }
+        .conclusion-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            font-weight: 700;
+            text-transform: capitalize;
+        }
+        .conclusion-badge.favorable { background: #dcfce7; color: #166534; }
+        .conclusion-badge.marginal { background: #fef3c7; color: #92400e; }
+        .conclusion-badge.unfavorable { background: #fee2e2; color: #991b1b; }
+        .confidence-label {
+            font-size: 0.76rem;
+            color: var(--text-light);
+            margin-left: 8px;
+            text-transform: capitalize;
+        }
+        .feasibility-finding {
+            margin: 12px 0;
+            font-size: 0.88rem;
+            line-height: 1.55;
+            color: var(--text-dark);
+        }
+        .feasibility-list-section {
+            margin: 10px 0;
+        }
+        .feasibility-list-section h5 {
+            margin: 0 0 6px;
+            font-size: 0.82rem;
+            color: var(--text-light);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .feasibility-list-section ul {
+            margin: 0;
+            padding-left: 18px;
+            font-size: 0.84rem;
+            color: var(--text-dark);
+        }
+        .feasibility-list-section li {
+            margin-bottom: 4px;
+        }
+        .feasibility-chart {
+            margin: 12px 0;
+            text-align: center;
+        }
+        .feasibility-chart img {
+            max-width: 100%;
+            border-radius: 8px;
+            border: 1px solid var(--border-grey);
+        }
+        .feasibility-run-btn {
+            display: block;
+            margin: 20px auto;
+            padding: 10px 24px;
+            border: 1px solid var(--border-grey);
+            border-radius: 10px;
+            background: var(--text-dark);
+            color: #fff;
+            font-size: 0.88rem;
+            cursor: pointer;
+        }
+        .feasibility-loading {
+            text-align: center;
+            padding: 30px;
+            color: var(--text-light);
+            font-size: 0.88rem;
+        }
+        .kanban-card-progress {
+            font-size: 0.72rem;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 8px;
+            background: #dbeafe;
+            color: #1e40af;
+            margin-top: 6px;
+            display: inline-block;
+        }
     </style>
 </head>
 <body>
@@ -1696,7 +2022,8 @@
                 <button class="mode-nav-btn" data-mode="alerts" onclick="switchMode('alerts')">Alerts</button>
                 <button class="mode-nav-btn" data-mode="regulatory" onclick="switchMode('regulatory')">Regulatory</button>
                 <button class="mode-nav-btn" data-mode="global" onclick="switchMode('global')">Global View</button>
-                <button class="mode-nav-btn" data-mode="imaging" onclick="switchMode('imaging')">Imaging</button>
+                <button class="mode-nav-btn" data-mode="imaging" onclick="switchMode('imaging')">Discovery</button>
+                <button class="mode-nav-btn" data-mode="scouting" onclick="switchMode('scouting')">Scouting</button>
             </div>
             <div class="staged-badge hidden" id="stagedBadge">Staged: 0 items</div>
             <div class="sidebar-header">
@@ -1881,13 +2208,19 @@
                         <label for="gvDateTo">Date To</label>
                         <input type="date" id="gvDateTo">
                     </div>
-                    <div>
-                        <label for="gvTopic">Topic</label>
-                        <input type="text" id="gvTopic" placeholder="e.g., energy">
+                    <div class="facet-select" id="gvTopicSelect">
+                        <label>Topic</label>
+                        <input type="text" class="facet-select-input" id="gvTopicInput" placeholder="Filter topics..." autocomplete="off">
+                        <input type="hidden" id="gvTopic">
+                        <div class="facet-chips" id="gvTopicChips"></div>
+                        <div class="facet-dropdown" id="gvTopicDropdown"></div>
                     </div>
-                    <div>
-                        <label for="gvSource">Source</label>
-                        <input type="text" id="gvSource" placeholder="e.g., Reuters">
+                    <div class="facet-select" id="gvSourceSelect">
+                        <label>Source</label>
+                        <input type="text" class="facet-select-input" id="gvSourceInput" placeholder="Filter sources..." autocomplete="off">
+                        <input type="hidden" id="gvSource">
+                        <div class="facet-chips" id="gvSourceChips"></div>
+                        <div class="facet-dropdown" id="gvSourceDropdown"></div>
                     </div>
                     <div>
                         <label for="gvSearch">Search</label>
@@ -1996,6 +2329,29 @@
                             <span>Solar Resource</span>
                         </label>
                     </div>
+                    <div style="border-left:2px solid var(--border-grey);padding-left:12px;margin-left:4px;">
+                        <label style="font-weight:600;font-size:0.82rem;color:var(--text-dark);margin-bottom:4px;display:block;">Grid Infrastructure</label>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.85rem;margin-bottom:3px;">
+                            <input id="imgMtsZonesToggle" type="checkbox" onchange="toggleGridLayer('mts')"> MTS Zones
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.85rem;margin-bottom:3px;">
+                            <input id="imgSupplyAreasToggle" type="checkbox" onchange="toggleGridLayer('supply')"> Supply Areas
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.85rem;">
+                            <input id="imgDamZonesToggle" type="checkbox" onchange="toggleGridLayer('dam')"> DAM Zones
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.85rem;">
+                            <input id="imgSubstationsToggle" type="checkbox" onchange="toggleGridLayer('substations')"> Substations
+                        </label>
+                    </div>
+                    <div>
+                        <label for="imgColorBy">Color zones by</label>
+                        <select id="imgColorBy" class="search-input" style="padding:8px 10px;" onchange="recolorMtsZones()">
+                            <option value="arbitrage">Arbitrage Spread</option>
+                            <option value="avg_price">Avg DAM Price</option>
+                            <option value="re_penetration">RE Penetration</option>
+                        </select>
+                    </div>
                     <div style="display:flex;align-items:flex-end;">
                         <button type="button" class="search-button" style="padding:8px 16px;font-size:0.88rem;" onclick="applyImagingFilters()">Apply</button>
                     </div>
@@ -2029,27 +2385,54 @@
                         <span class="legend-item"><span class="legend-shape legend-triangle" style="--triangle-color:#16a34a;"></span>Bioenergy</span>
                         <span class="legend-item"><span class="legend-shape legend-triangle" style="--triangle-color:#dc2626;"></span>Geothermal</span>
                     </div>
+                    <div class="imaging-legend" id="gridInfraLegend" style="display:none;">
+                        <span class="imaging-legend-title">Grid infrastructure</span>
+                        <span class="legend-item"><span style="display:inline-block;width:14px;height:14px;background:rgba(59,130,246,0.3);border:2px solid #3b82f6;border-radius:2px;"></span>MTS zones</span>
+                        <span class="legend-item"><span style="display:inline-block;width:14px;height:14px;background:transparent;border:2px solid #f97316;border-radius:2px;"></span>Supply areas</span>
+                        <span class="legend-item"><span style="display:inline-block;width:14px;height:14px;background:rgba(220,38,38,0.15);border:2px dashed #dc2626;border-radius:2px;"></span>RSAN</span>
+                        <span class="legend-item"><span style="display:inline-block;width:14px;height:14px;background:rgba(37,99,235,0.15);border:2px dashed #2563eb;border-radius:2px;"></span>RSAS</span>
+                    </div>
                 </div>
                 <div style="font-size:0.78rem;color:var(--text-light);opacity:0.7;">
-                    Data: USGS MRDS (pre-2011 vintage) | openAFRICA DMRE | GEM Africa Energy Tracker (March 2026) | VIIRS 2024 | EOX Sentinel-2
+                    Data: USGS MRDS (pre-2011 vintage) | openAFRICA DMRE | GEM Africa Energy Tracker (March 2026) | VIIRS 2024 | EOX Sentinel-2 | GCCA 2025 (Eskom/NTCSA)
                 </div>
 
-                <div class="imaging-panel-grid">
-                    <div class="imaging-subpanel">
-                        <h4>Brownfield Pipeline</h4>
-                        <p>Shortlist generation assets for acquisition diligence and push them into Deep Research with one click.</p>
-                        <div id="brownfieldPipelineList" class="imaging-list"></div>
+                <div style="margin-top:14px;">
+                    <div id="scoutEvaluationCard" class="imaging-list-card">
+                        Click the map to score a site.
                     </div>
-                    <div class="imaging-subpanel">
-                        <h4>Greenfield Scouting</h4>
-                        <p>Click the map to score a candidate site with the selected scout technology, then persist strong sites into the compare watchlist.</p>
-                        <div id="scoutEvaluationCard" class="imaging-list-card" style="margin-bottom:12px;">
-                            Click the map to score a site.
+                </div>
+            </div>
+        </div>
+
+        <div class="hidden" id="scoutingSection">
+            <div class="global-view-panel">
+                <h2 style="margin:0 0 4px;font-size:1.2rem;color:var(--text-dark);">Scouting Pipeline</h2>
+                <p style="margin:0 0 16px;font-size:0.85rem;color:var(--text-light);">Track sites through evaluation stages. Drag cards between columns to advance them.</p>
+                <div class="scouting-tabs" id="scoutingTabs">
+                    <button class="scouting-tab-btn active" data-scouttype="brownfield" onclick="switchScoutingTab('brownfield')">Brownfield</button>
+                    <button class="scouting-tab-btn" data-scouttype="greenfield" onclick="switchScoutingTab('greenfield')">Greenfield</button>
+                    <button class="scouting-tab-btn" data-scouttype="bess" onclick="switchScoutingTab('bess')">BESS</button>
+                </div>
+                <div class="kanban-board" id="kanbanBoard"></div>
+
+                <div class="hidden" id="feasibilityPanel">
+                    <div class="feasibility-header">
+                        <div>
+                            <strong id="feasibilityItemName">Site Name</strong>
+                            <span class="feasibility-progress-badge" id="feasibilityProgressBadge">0/5 done</span>
                         </div>
-                        <h4 style="margin-top:14px;">Scout Watchlist</h4>
-                        <div id="scoutWatchlist" class="imaging-list"></div>
-                        <h4 style="margin-top:14px;">Compare</h4>
-                        <div id="scoutCompareList" class="imaging-list-card">Select watchlist sites to compare them side by side.</div>
+                        <button type="button" class="imaging-mini-btn" onclick="closeFeasibilityPanel()">Close</button>
+                    </div>
+                    <div class="scouting-tabs" id="feasibilityTabs">
+                        <button class="scouting-tab-btn active" data-ftab="production" onclick="switchFeasibilityTab('production')">Production</button>
+                        <button class="scouting-tab-btn" data-ftab="trading" onclick="switchFeasibilityTab('trading')">Trading</button>
+                        <button class="scouting-tab-btn" data-ftab="grid" onclick="switchFeasibilityTab('grid')">Grid Connection</button>
+                        <button class="scouting-tab-btn" data-ftab="regulatory" onclick="switchFeasibilityTab('regulatory')">Regulatory</button>
+                        <button class="scouting-tab-btn" data-ftab="financial" onclick="switchFeasibilityTab('financial')">Financial</button>
+                    </div>
+                    <div id="feasibilityContent" class="feasibility-content">
+                        <div class="kanban-empty">Select a tab and run a study.</div>
                     </div>
                 </div>
             </div>
@@ -2135,6 +2518,7 @@
             if (normalized === 'impact assessment' || normalized === 'impact_assessment') return 'impact_assessment';
             if (normalized === 'market overview' || normalized === 'market_overview') return 'trend_analysis';
             if (normalized === 'comparative' || normalized === 'comparison') return 'comparative';
+            if (normalized === 'diligence' || normalized === 'diligence search') return 'diligence';
             return null;
         }
 
@@ -2158,6 +2542,11 @@
                 }
 
                 let match = null;
+                if ((match = trimmed.match(/^!\[([^\]]*)\]\(([^)]+)\)/))) {
+                    closeList();
+                    htmlParts.push(`<img src="${match[2]}" alt="${match[1]}" style="max-width:100%;margin:12px 0;border-radius:8px;">`);
+                    continue;
+                }
                 if ((match = trimmed.match(/^###\s+(.+)/))) {
                     closeList();
                     htmlParts.push(`<h3>${match[1]}</h3>`);
@@ -2373,6 +2762,7 @@
             document.getElementById('regulatorySection').classList.toggle('hidden', activeMode !== 'regulatory');
             document.getElementById('globalViewSection').classList.toggle('hidden', activeMode !== 'global');
             document.getElementById('imagingSection').classList.toggle('hidden', activeMode !== 'imaging');
+            document.getElementById('scoutingSection').classList.toggle('hidden', activeMode !== 'scouting');
             document.getElementById('newSearchButton').classList.toggle('hidden', !showSessionChrome);
             document.getElementById('researchLayout').classList.toggle('hidden', !showResearchSession);
             document.getElementById('chatDock').classList.toggle('hidden', !showSessionChrome);
@@ -2583,6 +2973,8 @@
                 loadRegulatoryView();
             } else if (mode === 'imaging') {
                 loadImagingView();
+            } else if (mode === 'scouting') {
+                loadScoutingView();
             } else if (mode === 'digest') {
                 renderStagedItems();
             }
@@ -2623,23 +3015,32 @@
             searchButton.textContent = 'Refining...';
             
             try {
-                const refinementResult = await requestRefinedQuery(query);
-                const refinedQuery = refinementResult?.refined_query || query;
-                const researchType = refinementResult?.research_type || null;
+                let refinedQuery = query;
+                let researchType = null;
+                let assetMetadata = null;
+
+                if (pendingDiligenceAsset) {
+                    // Diligence search: skip refinement, force type
+                    researchType = 'diligence';
+                    assetMetadata = pendingDiligenceAsset;
+                    pendingDiligenceAsset = null;
+                } else {
+                    const refinementResult = await requestRefinedQuery(query);
+                    refinedQuery = refinementResult?.refined_query || query;
+                    researchType = refinementResult?.research_type || null;
+                }
                 searchButton.textContent = 'Researching...';
                 showProgressArea();
+
+                const payload = { query, depth, refined_query: refinedQuery, research_type: researchType };
+                if (assetMetadata) payload.asset_metadata = assetMetadata;
 
                 const response = await fetch('/api/research', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({
-                        query,
-                        depth,
-                        refined_query: refinedQuery,
-                        research_type: researchType,
-                    })
+                    body: JSON.stringify(payload)
                 });
                 
                 if (!response.ok) {
@@ -3368,6 +3769,118 @@
         let gvPage = 0;
         const GV_PAGE_SIZE = 50;
 
+        // --- Facet multi-select state ---
+        const gvFacetState = {
+            topic: { selected: new Set(), items: [] },
+            source: { selected: new Set(), items: [] },
+        };
+
+        function initFacetSelect(facetKey, inputId, chipsId, dropdownId, hiddenId) {
+            const input = document.getElementById(inputId);
+            const chips = document.getElementById(chipsId);
+            const dropdown = document.getElementById(dropdownId);
+            const hidden = document.getElementById(hiddenId);
+            const state = gvFacetState[facetKey];
+
+            function renderDropdown(filter) {
+                const lc = (filter || '').toLowerCase();
+                const filtered = lc
+                    ? state.items.filter(i => i.name.toLowerCase().includes(lc))
+                    : state.items;
+                dropdown.innerHTML = filtered.map(item => {
+                    const sel = state.selected.has(item.name) ? ' selected' : '';
+                    return `<div class="facet-option${sel}" data-value="${escapeHtml(item.name)}">
+                        <span>${escapeHtml(item.name)}</span>
+                        <span class="facet-option-count">${item.count}</span>
+                    </div>`;
+                }).join('');
+                if (filtered.length === 0) {
+                    dropdown.innerHTML = '<div style="padding:8px 10px;font-size:0.82rem;color:var(--text-light);">No matches</div>';
+                }
+            }
+
+            function renderChips() {
+                chips.innerHTML = Array.from(state.selected).map(name =>
+                    `<span class="facet-chip">${escapeHtml(name)}<span class="facet-chip-x" data-value="${escapeHtml(name)}">&times;</span></span>`
+                ).join('');
+                hidden.value = Array.from(state.selected).join(',');
+            }
+
+            function toggle(name) {
+                if (state.selected.has(name)) {
+                    state.selected.delete(name);
+                } else {
+                    state.selected.add(name);
+                }
+                renderChips();
+                renderDropdown(input.value);
+            }
+
+            input.addEventListener('focus', () => {
+                renderDropdown(input.value);
+                dropdown.classList.add('open');
+            });
+
+            input.addEventListener('input', () => {
+                renderDropdown(input.value);
+                dropdown.classList.add('open');
+            });
+
+            dropdown.addEventListener('click', (e) => {
+                const opt = e.target.closest('.facet-option');
+                if (opt) {
+                    toggle(opt.dataset.value);
+                }
+            });
+
+            chips.addEventListener('click', (e) => {
+                const x = e.target.closest('.facet-chip-x');
+                if (x) {
+                    toggle(x.dataset.value);
+                }
+            });
+
+            document.addEventListener('click', (e) => {
+                if (!e.target.closest('#' + inputId) && !e.target.closest('#' + dropdownId)) {
+                    dropdown.classList.remove('open');
+                }
+            });
+
+            return { renderDropdown, renderChips };
+        }
+
+        const topicFacet = initFacetSelect('topic', 'gvTopicInput', 'gvTopicChips', 'gvTopicDropdown', 'gvTopic');
+        const sourceFacet = initFacetSelect('source', 'gvSourceInput', 'gvSourceChips', 'gvSourceDropdown', 'gvSource');
+
+        async function loadFacets() {
+            try {
+                const resp = await fetch('/api/news-intel/facets');
+                if (!resp.ok) return;
+                const data = await resp.json();
+                gvFacetState.topic.items = data.topics || [];
+                gvFacetState.source.items = data.sources || [];
+                topicFacet.renderDropdown('');
+                sourceFacet.renderDropdown('');
+
+                // Set date input bounds from actual data range
+                const dr = data.date_range || {};
+                const dateFrom = document.getElementById('gvDateFrom');
+                const dateTo = document.getElementById('gvDateTo');
+                if (dr.min) {
+                    dateFrom.setAttribute('min', dr.min);
+                    dateTo.setAttribute('min', dr.min);
+                    dateFrom.setAttribute('placeholder', dr.min);
+                }
+                if (dr.max) {
+                    dateFrom.setAttribute('max', dr.max);
+                    dateTo.setAttribute('max', dr.max);
+                    dateTo.setAttribute('placeholder', dr.max);
+                }
+            } catch (err) {
+                console.error('Facets load error:', err);
+            }
+        }
+
         const COUNTRY_COORDS = {
             "United States": [39.8, -98.6], "United Kingdom": [54.0, -2.0],
             "China": [35.0, 105.0], "Russia": [62.0, 100.0],
@@ -3417,8 +3930,11 @@
 
         async function loadGlobalView() {
             initGlobalViewMap();
+            loadFacets();
+
+            const topicVal = document.getElementById('gvTopic')?.value || '';
             const params = {
-                topic: document.getElementById('gvTopic')?.value || '',
+                topic: topicVal,
                 date_from: document.getElementById('gvDateFrom')?.value || null,
                 date_to: document.getElementById('gvDateTo')?.value || null,
             };
@@ -3433,7 +3949,7 @@
                     fetch('/api/news-intel/articles', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ ...params, limit: 200 }),
+                        body: JSON.stringify({ ...params, limit: 10000 }),
                     }),
                     fetch('/api/market/latest'),
                 ]);
@@ -3459,13 +3975,13 @@
                     gvAllArticles = articlesData.articles || [];
                     gvArticles = gvAllArticles;
                     if (articlesData.warning) warningMsg = articlesData.warning;
-                    // Client-side keyword filter
+                    // Client-side keyword and source filter
                     const search = (document.getElementById('gvSearch')?.value || '').toLowerCase();
-                    const srcFilter = (document.getElementById('gvSource')?.value || '').toLowerCase();
-                    if (search || srcFilter) {
+                    const selectedSources = gvFacetState.source.selected;
+                    if (search || selectedSources.size > 0) {
                         gvArticles = gvArticles.filter(a => {
                             if (search && !(a.headline || '').toLowerCase().includes(search)) return false;
-                            if (srcFilter && !(a.source || '').toLowerCase().includes(srcFilter)) return false;
+                            if (selectedSources.size > 0 && !selectedSources.has(a.source || '')) return false;
                             return true;
                         });
                     }
@@ -3549,9 +4065,9 @@
                 });
                 // Rich popup matching data-admin.js
                 const topTopics = Object.entries(stat.topics || {})
-                    .sort((a, b) => b[1] - a[1]).slice(0, 6);
+                    .sort((a, b) => b[1] - a[1]);
                 const topSources = Object.entries(stat.sources || {})
-                    .sort((a, b) => b[1] - a[1]).slice(0, 4);
+                    .sort((a, b) => b[1] - a[1]).slice(0, 8);
                 const countryEsc = escapeHtml(stat.country);
                 let popup = `<div style="min-width:180px;font-size:0.85rem;">`;
                 popup += `<strong style="cursor:pointer;color:#1d4ed8;" onclick="filterGvByCountry('${countryEsc}')">${countryEsc}</strong>`;
@@ -3858,8 +4374,11 @@
 
             body.innerHTML = pageArticles.map(a => {
                 const isStaged = stagedItems.some(i => i.type === 'article' && i.data.headline === a.headline);
-                const topics = (a.topic_tags || []).slice(0, 3).map(t => `<span class="tag-chip">${escapeHtml(t)}</span>`).join('');
-                const geo = (a.geography_tags || a.country_tags || []).slice(0, 2).map(g => escapeHtml(normalizeCountry(g))).join(', ');
+                const allTopics = a.topic_tags || [];
+                const visibleTopics = allTopics.slice(0, 6).map(t => `<span class="tag-chip">${escapeHtml(t)}</span>`).join('');
+                const topicOverflow = allTopics.length > 6 ? `<span class="tag-chip" style="background:#f3f4f6;color:var(--text-light);">+${allTopics.length - 6}</span>` : '';
+                const topics = visibleTopics + topicOverflow;
+                const geo = (a.geography_tags || a.country_tags || []).slice(0, 4).map(g => escapeHtml(normalizeCountry(g))).join(', ');
                 return `<tr>
                     <td>${a.url ? `<a href="${escapeHtml(a.url)}" target="_blank" rel="noopener" style="color:#4f46e5;text-decoration:none;">${escapeHtml(a.headline || 'Untitled')}</a>` : escapeHtml(a.headline || 'Untitled')}</td>
                     <td style="white-space:nowrap;">${(a.date || '').toString().slice(0, 10)}</td>
@@ -3887,6 +4406,8 @@
         let imagingMap = null, imagingDeposits = null, imagingViirs = null, imagingConcessions = null, imagingGeneration = null;
         let imagingSolarResource = null, imagingSolarResourceConfig = null, scoutMarker = null;
         let pipelineAssetIds = new Set(), currentScoutSite = null, selectedScoutCompareIds = new Set();
+        let imagingMtsZones = null, imagingSupplyAreas = null, imagingDamZones = null, imagingSubstations = null;
+        let mtsZoneData = null, supplyAreaData = null, substationData = null, zoneMetricsCache = {};
 
         function initImagingMap() {
             if (imagingMap) {
@@ -4006,6 +4527,235 @@
             }
         }
 
+        // ── Grid Infrastructure Layer Management ──
+
+        async function toggleGridLayer(layerType) {
+            if (!imagingMap) return;
+            const legend = document.getElementById('gridInfraLegend');
+
+            if (layerType === 'mts') {
+                const checked = document.getElementById('imgMtsZonesToggle')?.checked;
+                if (checked) {
+                    if (!mtsZoneData) {
+                        try {
+                            const [zonesResp, metricsResp] = await Promise.all([
+                                fetch('/api/discovery/gcca/mts-zones'),
+                                fetch('/api/discovery/zone-metrics'),
+                            ]);
+                            mtsZoneData = await zonesResp.json();
+                            zoneMetricsCache = await metricsResp.json();
+                        } catch (e) { console.error('Failed to load MTS zones', e); return; }
+                    }
+                    if (imagingMtsZones) imagingMap.removeLayer(imagingMtsZones);
+                    imagingMtsZones = L.geoJSON(mtsZoneData, {
+                        style: mtsZoneStyle,
+                        onEachFeature: (feature, layer) => {
+                            layer.on('click', (e) => showMtsZonePopup(e, feature));
+                        },
+                    }).addTo(imagingMap);
+                    if (legend) legend.style.display = '';
+                } else {
+                    if (imagingMtsZones) { imagingMap.removeLayer(imagingMtsZones); imagingMtsZones = null; }
+                    updateGridLegendVisibility();
+                }
+            } else if (layerType === 'supply') {
+                const checked = document.getElementById('imgSupplyAreasToggle')?.checked;
+                if (checked) {
+                    if (!supplyAreaData) {
+                        try {
+                            const resp = await fetch('/api/discovery/gcca/supply-areas');
+                            supplyAreaData = await resp.json();
+                        } catch (e) { console.error('Failed to load supply areas', e); return; }
+                    }
+                    if (imagingSupplyAreas) imagingMap.removeLayer(imagingSupplyAreas);
+                    imagingSupplyAreas = L.geoJSON(supplyAreaData, {
+                        style: { color: '#f97316', weight: 2, fillOpacity: 0, dashArray: null },
+                    }).addTo(imagingMap);
+                    if (legend) legend.style.display = '';
+                } else {
+                    if (imagingSupplyAreas) { imagingMap.removeLayer(imagingSupplyAreas); imagingSupplyAreas = null; }
+                    updateGridLegendVisibility();
+                }
+            } else if (layerType === 'dam') {
+                const checked = document.getElementById('imgDamZonesToggle')?.checked;
+                if (checked) {
+                    if (!supplyAreaData) {
+                        try {
+                            const resp = await fetch('/api/discovery/gcca/supply-areas');
+                            supplyAreaData = await resp.json();
+                        } catch (e) { console.error('Failed to load supply areas', e); return; }
+                    }
+                    if (imagingDamZones) imagingMap.removeLayer(imagingDamZones);
+                    imagingDamZones = L.geoJSON(supplyAreaData, {
+                        style: (feature) => {
+                            const node = feature.properties?.dam_node;
+                            return {
+                                color: node === 'rsan' ? '#dc2626' : '#2563eb',
+                                weight: 2.5,
+                                fillOpacity: 0.08,
+                                fillColor: node === 'rsan' ? '#dc2626' : '#2563eb',
+                                dashArray: '8,6',
+                            };
+                        },
+                    }).addTo(imagingMap);
+                    if (legend) legend.style.display = '';
+                } else {
+                    if (imagingDamZones) { imagingMap.removeLayer(imagingDamZones); imagingDamZones = null; }
+                    updateGridLegendVisibility();
+                }
+            } else if (layerType === 'substations') {
+                const checked = document.getElementById('imgSubstationsToggle')?.checked;
+                if (checked) {
+                    if (!substationData) {
+                        try {
+                            const resp = await fetch('/api/discovery/gcca/substations');
+                            substationData = await resp.json();
+                            if (!Object.keys(zoneMetricsCache).length) {
+                                const mResp = await fetch('/api/discovery/zone-metrics');
+                                zoneMetricsCache = await mResp.json();
+                            }
+                        } catch (e) { console.error('Failed to load substations', e); return; }
+                    }
+                    if (imagingSubstations) imagingMap.removeLayer(imagingSubstations);
+                    imagingSubstations = L.geoJSON(substationData, {
+                        pointToLayer: (feature, latlng) => {
+                            const node = feature.properties?.dam_node;
+                            return L.circleMarker(latlng, {
+                                radius: 6,
+                                fillColor: node === 'rsan' ? '#dc2626' : '#2563eb',
+                                color: '#fff',
+                                weight: 2,
+                                fillOpacity: 0.9,
+                            });
+                        },
+                        onEachFeature: (feature, layer) => {
+                            layer.on('click', (e) => showSubstationPopup(e, feature));
+                        },
+                    }).addTo(imagingMap);
+                    if (legend) legend.style.display = '';
+                } else {
+                    if (imagingSubstations) { imagingMap.removeLayer(imagingSubstations); imagingSubstations = null; }
+                    updateGridLegendVisibility();
+                }
+            }
+        }
+
+        function showSubstationPopup(e, feature) {
+            const p = feature.properties || {};
+            const sub = p.substation || '';
+            const m = zoneMetricsCache[sub] || {};
+            let html = `<div style="min-width:280px;font-size:0.85rem;">`;
+            html += `<strong style="font-size:1rem;">⚡ ${escapeHtml(sub)}</strong>`;
+            html += `<div style="color:#6B7280;margin:2px 0 6px;">${escapeHtml(p.supply_area || '')} · ${(p.dam_node || '').toUpperCase()}</div>`;
+            if (p.transformer_voltage) html += `<div>Voltage: <strong>${escapeHtml(p.transformer_voltage)}</strong></div>`;
+            if (p.installed_capacity_mva) html += `<div>Installed: <strong>${escapeHtml(p.installed_capacity_mva)} MVA</strong></div>`;
+            if (p.transformer_count > 1) html += `<div>Transformers: <strong>${p.transformer_count}</strong></div>`;
+            if (p.status) html += `<div>Status: ${escapeHtml(p.status)}</div>`;
+            if (p.reippp_gen) html += `<div>REIPPP Gen: ${escapeHtml(p.reippp_gen)}</div>`;
+            if (m.avg_peak_usd) {
+                html += `<hr style="border:0;border-top:1px solid #e5e7eb;margin:6px 0;">`;
+                html += `<div>DAM Peak: <strong>${m.avg_peak_usd.toFixed(1)} USD/MWh</strong></div>`;
+                html += `<div>DAM Off-Peak: <strong>${m.avg_offpeak_usd.toFixed(1)} USD/MWh</strong></div>`;
+                const spread = m.arbitrage_spread_usd || 0;
+                const spreadColor = spread > 8 ? '#16a34a' : spread > 4 ? '#f59e0b' : '#dc2626';
+                html += `<div>Spread: <strong style="color:${spreadColor}">${spread.toFixed(1)} USD/MWh</strong></div>`;
+            }
+            html += `<div style="margin-top:8px;display:flex;gap:6px;">`;
+            html += `<button class="imaging-mini-btn" onclick="scoreScoutSite(${e.latlng.lat},${e.latlng.lng})">Score BESS</button>`;
+            html += `<button class="imaging-mini-btn" onclick="addZoneToScouting('${escapeHtml(sub)}',${e.latlng.lat},${e.latlng.lng},'${escapeHtml(p.dam_node || '')}')">+ Scouting</button>`;
+            html += `</div></div>`;
+            L.popup().setLatLng(e.latlng).setContent(html).openOn(imagingMap);
+        }
+
+        function updateGridLegendVisibility() {
+            const legend = document.getElementById('gridInfraLegend');
+            if (!legend) return;
+            const anyOn = imagingMtsZones || imagingSupplyAreas || imagingDamZones || imagingSubstations;
+            legend.style.display = anyOn ? '' : 'none';
+        }
+
+        function mtsZoneStyle(feature) {
+            const sub = feature.properties?.substation || feature.properties?.mts_1 || '';
+            const m = zoneMetricsCache[sub] || {};
+            const colorBy = document.getElementById('imgColorBy')?.value || 'arbitrage';
+            let val = 0;
+            if (colorBy === 'arbitrage') val = m.arbitrage_spread_usd || 0;
+            else if (colorBy === 'avg_price') val = m.avg_dam_price_usd || 0;
+            else if (colorBy === 're_penetration') val = m.re_capacity_mw || 0;
+            return {
+                color: '#3b82f6',
+                weight: 1.5,
+                fillColor: zoneColor(colorBy, val),
+                fillOpacity: 0.4,
+            };
+        }
+
+        function zoneColor(metric, value) {
+            // Interpolate green→yellow→red based on value relative to known ranges
+            let pct = 0;
+            if (metric === 'arbitrage') {
+                // Higher spread = better for BESS = green. Range ~0-15 USD/MWh
+                pct = Math.min(1, Math.max(0, value / 15));
+            } else if (metric === 'avg_price') {
+                // Higher price = more expensive = red. Range ~25-45 USD/MWh
+                pct = Math.min(1, Math.max(0, (value - 25) / 20));
+                pct = 1 - pct; // Invert: low price = green
+            } else if (metric === 're_penetration') {
+                // More RE = better charging for BESS = green. Range 0-500 MW
+                pct = Math.min(1, Math.max(0, value / 500));
+            }
+            // Green (120) → Yellow (60) → Red (0) in HSL
+            const hue = Math.round(pct * 120);
+            return `hsl(${hue}, 70%, 45%)`;
+        }
+
+        function recolorMtsZones() {
+            if (!imagingMtsZones) return;
+            imagingMtsZones.eachLayer((layer) => {
+                if (layer.feature) layer.setStyle(mtsZoneStyle(layer.feature));
+            });
+        }
+
+        function showMtsZonePopup(e, feature) {
+            const props = feature.properties || {};
+            const sub = props.substation || props.mts_1 || '';
+            const m = zoneMetricsCache[sub] || {};
+            let html = `<div style="min-width:280px;font-size:0.85rem;">`;
+            html += `<strong style="font-size:1rem;">⬡ ${escapeHtml(sub)}</strong>`;
+            html += `<div style="color:#6B7280;margin:2px 0 6px;">`;
+            html += `${escapeHtml(props.supplyarea || '')} · ${escapeHtml(props.localarea || '')}`;
+            html += `</div>`;
+            html += `<div style="margin-bottom:4px;">DAM Node: <strong>${(m.dam_node || '').toUpperCase()}</strong></div>`;
+            html += `<hr style="border:0;border-top:1px solid #e5e7eb;margin:6px 0;">`;
+            html += `<div>Avg Peak: <strong>${(m.avg_peak_usd || 0).toFixed(1)} USD/MWh</strong></div>`;
+            html += `<div>Avg Off-Peak: <strong>${(m.avg_offpeak_usd || 0).toFixed(1)} USD/MWh</strong></div>`;
+            const spread = m.arbitrage_spread_usd || 0;
+            const spreadColor = spread > 8 ? '#16a34a' : spread > 4 ? '#f59e0b' : '#dc2626';
+            html += `<div>Arbitrage Spread: <strong style="color:${spreadColor}">${spread.toFixed(1)} USD/MWh</strong></div>`;
+            html += `<hr style="border:0;border-top:1px solid #e5e7eb;margin:6px 0;">`;
+            html += `<div>RE Assets: <strong>${m.re_asset_count || 0}</strong> (${(m.re_capacity_mw || 0).toFixed(0)} MW)</div>`;
+            html += `<div style="margin-top:8px;display:flex;gap:6px;">`;
+            html += `<button class="imaging-mini-btn" onclick="scoreScoutSite(${e.latlng.lat},${e.latlng.lng},'bess')">Score BESS</button>`;
+            html += `<button class="imaging-mini-btn" onclick="addZoneToScouting('${escapeHtml(sub)}',${e.latlng.lat},${e.latlng.lng},'${escapeHtml(m.dam_node || '')}')">+ Scouting</button>`;
+            html += `</div></div>`;
+            L.popup().setLatLng(e.latlng).setContent(html).openOn(imagingMap);
+        }
+
+        function addZoneToScouting(substation, lat, lon, damNode) {
+            const item = {
+                source_type: 'bess_opportunity',
+                item_type: 'bess',
+                asset: {
+                    type: 'Feature',
+                    properties: { name: substation + ' MTS Zone', technology: 'Storage', country: 'South Africa', capacity_mw: 0, operator: '', dam_node: damNode },
+                    geometry: { type: 'Point', coordinates: [lon, lat] },
+                },
+            };
+            fetch('/api/scouting/items', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(item) })
+                .then(r => r.json()).then(() => { alert('Added to BESS Scouting pipeline'); })
+                .catch(e => console.error('Failed to add to scouting', e));
+        }
+
         function renderDepositPopup(props) {
             const v = props.viability || {};
             const pct = Math.round((v.score || 0));
@@ -4056,6 +4806,42 @@
             document.getElementById('searchInput').value = String(query || '');
             document.getElementById('searchInput').focus();
             window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        let pendingDiligenceAsset = null;
+
+        function startDiligenceSearch(asset) {
+            pendingDiligenceAsset = {
+                name: asset?.name || 'Unknown',
+                technology: asset?.technology || '',
+                capacity_mw: asset?.capacity_mw || 0,
+                country: asset?.country || '',
+                operator: asset?.operator || '',
+                owner: asset?.owner || '',
+                status: asset?.status || '',
+                lat: asset?.lat || 0,
+                lon: asset?.lon || 0,
+            };
+            const query = buildBrownfieldResearchQuery(asset || {});
+            switchMode('deep');
+            document.getElementById('searchInput').value = query;
+            document.getElementById('searchInput').focus();
+            // Auto-submit the diligence search
+            setTimeout(() => document.getElementById('searchButton').click(), 100);
+        }
+
+        function startDiligenceFromPipeline(item) {
+            startDiligenceSearch({
+                name: item?.asset_name || item?.name || 'Unknown',
+                technology: item?.technology || '',
+                capacity_mw: item?.capacity_mw || 0,
+                country: item?.country || '',
+                operator: item?.operator || '',
+                owner: item?.owner || '',
+                status: item?.status || '',
+                lat: item?.lat || 0,
+                lon: item?.lon || 0,
+            });
         }
 
         async function addGenerationToPipeline(asset) {
@@ -4109,7 +4895,8 @@
             }
             html += `<div class="imaging-card-actions">`;
             html += `<button type="button" class="imaging-mini-btn" onclick="prefillBrownfieldResearch(${escapeAttr(JSON.stringify(props))})">Research</button>`;
-            html += `<button type="button" class="imaging-mini-btn" onclick="addGenerationToPipeline(${escapeAttr(JSON.stringify(props))})">+ Pipeline</button>`;
+            html += `<button type="button" class="imaging-mini-btn" onclick="startDiligenceSearch(${escapeAttr(JSON.stringify(props))})">Diligence</button>`;
+            html += `<button type="button" class="imaging-mini-btn" onclick="addGenerationToPipeline(${escapeAttr(JSON.stringify(props))})">+ Scouting</button>`;
             html += `</div>`;
             if (props.wiki_url) {
                 html += `<div style="margin-top:8px;"><a href="${escapeHtml(props.wiki_url)}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;">GEM project page</a></div>`;
@@ -4139,6 +4926,7 @@
                     <div style="margin-top:6px;font-size:0.8rem;color:var(--text-light);">${escapeHtml(item.status || 'status unknown')}</div>
                     <div class="imaging-card-actions">
                         <button type="button" class="imaging-mini-btn" onclick="prefillBrownfieldResearchFromQuery(${escapeAttr(JSON.stringify(item.research_query || ''))})">Research</button>
+                        <button type="button" class="imaging-mini-btn" onclick="startDiligenceFromPipeline(${escapeAttr(JSON.stringify(item))})">Diligence</button>
                         <button type="button" class="imaging-mini-btn" onclick="focusImagingLocation(${Number(item.lat || 0)}, ${Number(item.lon || 0)})">Focus</button>
                         <button type="button" class="imaging-mini-btn danger" onclick="removePipelineAsset(${escapeAttr(JSON.stringify(item.id))})">Remove</button>
                     </div>
@@ -4176,7 +4964,7 @@
                     </div>
                 `).join('')}
                 <div class="imaging-card-actions">
-                    <button type="button" class="imaging-mini-btn" onclick="saveScoutedSite()">Add to Watchlist</button>
+                    <button type="button" class="imaging-mini-btn" onclick="saveScoutedSite()">Add to Scouting</button>
                     <button type="button" class="imaging-mini-btn" onclick="focusImagingLocation(${Number(site.lat)}, ${Number(site.lon)})">Focus</button>
                 </div>
             `;
@@ -4278,6 +5066,281 @@
                 container.textContent = `Compare error: ${error.message}`;
             }
         }
+
+        // ----- SEP-044: Scouting kanban functions -----
+        let activeScoutingTab = 'brownfield';
+        const SCOUTING_STAGES = ['identified', 'scored', 'feasibility', 'diligence', 'decision'];
+
+        function switchScoutingTab(tab) {
+            activeScoutingTab = tab;
+            document.querySelectorAll('.scouting-tab-btn').forEach(b => {
+                b.classList.toggle('active', b.dataset.scouttype === tab);
+            });
+            loadScoutingView();
+        }
+
+        async function loadScoutingView() {
+            const board = document.getElementById('kanbanBoard');
+            if (!board) return;
+            board.innerHTML = '<div class="kanban-empty">Loading...</div>';
+            try {
+                const response = await fetch(`/api/scouting/items?type=${encodeURIComponent(activeScoutingTab)}`);
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || 'Failed to load scouting items');
+                renderKanbanBoard(data.items || [], activeScoutingTab);
+            } catch (error) {
+                board.innerHTML = `<div class="kanban-empty">Error: ${escapeHtml(error.message)}</div>`;
+            }
+        }
+
+        function renderKanbanBoard(items, type) {
+            const board = document.getElementById('kanbanBoard');
+            if (!board) return;
+            const byStage = {};
+            SCOUTING_STAGES.forEach(s => byStage[s] = []);
+            items.forEach(item => {
+                const stage = item.scouting_stage || 'identified';
+                if (byStage[stage]) byStage[stage].push(item);
+            });
+            board.innerHTML = SCOUTING_STAGES.map(stage => `
+                <div class="kanban-column" data-stage="${stage}"
+                     ondragover="kanbanDragOver(event)" ondragleave="kanbanDragLeave(event)" ondrop="kanbanDrop(event, '${stage}')">
+                    <div class="kanban-column-header">
+                        <span class="kanban-column-title">${stage}</span>
+                        <span class="kanban-count-badge">${byStage[stage].length}</span>
+                    </div>
+                    <div class="kanban-cards">
+                        ${byStage[stage].length === 0
+                            ? '<div class="kanban-empty">No items</div>'
+                            : byStage[stage].map(item => renderScoutingCard(item, type, stage)).join('')}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function renderScoutingCard(item, type, stage) {
+            const name = escapeHtml(item.asset_name || item.name || 'Unnamed');
+            const country = escapeHtml(item.country || '');
+            const metric = type === 'greenfield'
+                ? `Score: ${item.overall_score ?? 'N/A'} (${escapeHtml(item.score_label || '')})`
+                : `${item.capacity_mw ? `${Number(item.capacity_mw).toLocaleString()} MW` : 'capacity unknown'}`;
+            const id = item.id;
+            const idAttr = escapeAttr(JSON.stringify(id));
+            let actions = '';
+            if (stage === 'identified') {
+                actions = `<button onclick="moveToStage(${idAttr}, '${type}', 'scored')">Score</button>
+                           <button class="danger" onclick="removeScoutingItem(${idAttr}, '${type}')">Remove</button>`;
+            } else if (stage === 'scored') {
+                actions = `<button onclick="moveToStage(${idAttr}, '${type}', 'feasibility')">Feasibility</button>
+                           <button onclick="moveToStage(${idAttr}, '${type}', 'diligence')">Diligence</button>
+                           <button class="danger" onclick="removeScoutingItem(${idAttr}, '${type}')">Remove</button>`;
+            } else if (stage === 'feasibility') {
+                actions = `<button onclick="openFeasibilityPanel(${idAttr}, '${type}')">Open Feasibility</button>
+                           <button onclick="moveToStage(${idAttr}, '${type}', 'diligence')">Diligence</button>`;
+            } else if (stage === 'diligence') {
+                actions = `<button onclick="moveToStage(${idAttr}, '${type}', 'decision')">Decision</button>`;
+            } else if (stage === 'decision') {
+                actions = `<button class="go" onclick="moveToStage(${idAttr}, '${type}', 'decision')">Go</button>
+                           <button class="danger" onclick="removeScoutingItem(${idAttr}, '${type}')">No-Go</button>`;
+            }
+            return `
+                <div class="kanban-card" draggable="true"
+                     ondragstart="kanbanDragStart(event, ${idAttr}, '${type}')"
+                     ondragend="kanbanDragEnd(event)">
+                    <strong>${name}</strong>
+                    <div class="kanban-card-meta">${country} · ${metric}</div>
+                    <div class="kanban-card-actions">${actions}</div>
+                </div>`;
+        }
+
+        function kanbanDragStart(event, itemId, type) {
+            event.dataTransfer.setData('text/plain', JSON.stringify({id: itemId, type: type}));
+            event.target.classList.add('dragging');
+        }
+        function kanbanDragEnd(event) {
+            event.target.classList.remove('dragging');
+        }
+        function kanbanDragOver(event) {
+            event.preventDefault();
+            event.currentTarget.classList.add('drag-over');
+        }
+        function kanbanDragLeave(event) {
+            event.currentTarget.classList.remove('drag-over');
+        }
+        async function kanbanDrop(event, targetStage) {
+            event.preventDefault();
+            event.currentTarget.classList.remove('drag-over');
+            try {
+                const payload = JSON.parse(event.dataTransfer.getData('text/plain'));
+                await moveToStage(payload.id, payload.type, targetStage);
+            } catch (e) { /* ignore bad drops */ }
+        }
+
+        async function moveToStage(itemId, type, stage) {
+            try {
+                const response = await fetch(`/api/scouting/items/${encodeURIComponent(itemId)}/stage`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ type, stage }),
+                });
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.error || 'Stage update failed');
+                }
+                await loadScoutingView();
+            } catch (error) {
+                alert('Stage update error: ' + error.message);
+            }
+        }
+
+        async function removeScoutingItem(itemId, type) {
+            try {
+                await fetch(`/api/scouting/items/${encodeURIComponent(itemId)}?type=${encodeURIComponent(type)}`, { method: 'DELETE' });
+                await loadScoutingView();
+            } catch (error) {
+                alert('Scouting delete error: ' + error.message);
+            }
+        }
+        // ----- SEP-045: Feasibility panel functions -----
+        let activeFeasibilityItemId = null;
+        let activeFeasibilityType = null;
+        let activeFeasibilityTab = 'production';
+        let feasibilityResultsCache = {};
+
+        async function openFeasibilityPanel(itemId, type) {
+            activeFeasibilityItemId = itemId;
+            activeFeasibilityType = type;
+            activeFeasibilityTab = 'production';
+            const panel = document.getElementById('feasibilityPanel');
+            panel.classList.remove('hidden');
+            document.querySelectorAll('#feasibilityTabs .scouting-tab-btn').forEach(b => {
+                b.classList.toggle('active', b.dataset.ftab === 'production');
+            });
+            try {
+                const resp = await fetch(`/api/scouting/items/${encodeURIComponent(itemId)}/feasibility`);
+                const data = await resp.json();
+                feasibilityResultsCache = {};
+                (data.results || []).forEach(r => { feasibilityResultsCache[r.tab] = r; });
+                const progress = data.progress || {completed: 0, total: 5};
+                document.getElementById('feasibilityProgressBadge').textContent = `${progress.completed}/${progress.total} done`;
+                // Try to get the item name
+                const items = document.querySelectorAll('.kanban-card strong');
+                document.getElementById('feasibilityItemName').textContent = `Feasibility Study`;
+                renderFeasibilityTab();
+            } catch (err) {
+                document.getElementById('feasibilityContent').innerHTML = `<div class="kanban-empty">Error: ${escapeHtml(err.message)}</div>`;
+            }
+        }
+
+        function closeFeasibilityPanel() {
+            document.getElementById('feasibilityPanel').classList.add('hidden');
+            activeFeasibilityItemId = null;
+            feasibilityResultsCache = {};
+        }
+
+        function switchFeasibilityTab(tab) {
+            activeFeasibilityTab = tab;
+            document.querySelectorAll('#feasibilityTabs .scouting-tab-btn').forEach(b => {
+                b.classList.toggle('active', b.dataset.ftab === tab);
+            });
+            renderFeasibilityTab();
+        }
+
+        function renderFeasibilityTab() {
+            const container = document.getElementById('feasibilityContent');
+            const tab = activeFeasibilityTab;
+            const result = feasibilityResultsCache[tab];
+            if (result) {
+                renderFeasibilityResult(container, result);
+            } else {
+                container.innerHTML = `
+                    <div style="text-align:center;padding:24px;">
+                        <p style="color:var(--text-light);font-size:0.88rem;margin-bottom:16px;">
+                            No ${tab} study has been run yet for this site.
+                        </p>
+                        <button type="button" class="feasibility-run-btn" onclick="runFeasibilityStudy('${tab}')">
+                            Run ${tab.charAt(0).toUpperCase() + tab.slice(1)} Study
+                        </button>
+                    </div>`;
+            }
+        }
+
+        function renderFeasibilityResult(container, result) {
+            const conclusion = result.conclusion || 'unknown';
+            const confidence = result.confidence || 'unknown';
+            const finding = escapeHtml(result.key_finding || result.findings?.key_finding || 'No finding available.');
+            const risks = result.risks || result.findings?.risks || [];
+            const gaps = result.gaps || result.findings?.gaps || [];
+            const sources = result.sources || result.findings?.sources || [];
+            const chart = result.chart_b64 || result.findings?.chart_b64 || null;
+            const tab = result.tab;
+
+            let html = `
+                <div style="margin-bottom:12px;">
+                    <span class="conclusion-badge ${conclusion}">${conclusion}</span>
+                    <span class="confidence-label">Confidence: ${confidence}</span>
+                </div>
+                <div class="feasibility-finding">${finding}</div>`;
+
+            if (chart) {
+                const src = chart.startsWith('data:') ? chart : `data:image/png;base64,${chart}`;
+                html += `<div class="feasibility-chart"><img src="${src}" alt="${tab} chart"></div>`;
+            }
+
+            if (risks.length > 0) {
+                html += `<div class="feasibility-list-section"><h5>Key Risks</h5><ul>`;
+                risks.forEach(r => { html += `<li>${escapeHtml(String(r))}</li>`; });
+                html += `</ul></div>`;
+            }
+
+            if (gaps.length > 0) {
+                html += `<div class="feasibility-list-section"><h5>Data Gaps</h5><ul>`;
+                gaps.forEach(g => { html += `<li>${escapeHtml(String(g))}</li>`; });
+                html += `</ul></div>`;
+            }
+
+            if (sources.length > 0) {
+                html += `<div class="feasibility-list-section"><h5>Sources</h5><ul>`;
+                sources.forEach(s => { html += `<li>${escapeHtml(String(s))}</li>`; });
+                html += `</ul></div>`;
+            }
+
+            html += `<button type="button" class="feasibility-run-btn" style="margin-top:14px;" onclick="runFeasibilityStudy('${tab}')">Re-run ${tab.charAt(0).toUpperCase() + tab.slice(1)} Study</button>`;
+
+            container.innerHTML = html;
+        }
+
+        async function runFeasibilityStudy(tab) {
+            if (!activeFeasibilityItemId) return;
+            const container = document.getElementById('feasibilityContent');
+            container.innerHTML = '<div class="feasibility-loading">Running analysis... This may take a moment.</div>';
+            try {
+                const resp = await fetch(`/api/scouting/items/${encodeURIComponent(activeFeasibilityItemId)}/feasibility/${tab}`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({item_type: activeFeasibilityType}),
+                });
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.error || 'Study failed');
+                feasibilityResultsCache[tab] = data;
+                // Refresh progress
+                const progressResp = await fetch(`/api/scouting/items/${encodeURIComponent(activeFeasibilityItemId)}/feasibility`);
+                const progressData = await progressResp.json();
+                const progress = progressData.progress || {completed: 0, total: 5};
+                document.getElementById('feasibilityProgressBadge').textContent = `${progress.completed}/${progress.total} done`;
+                (progressData.results || []).forEach(r => { feasibilityResultsCache[r.tab] = r; });
+                renderFeasibilityTab();
+                // Refresh kanban to update progress badge on card
+                await loadScoutingView();
+                // Re-show the panel (loadScoutingView may not affect it since it's separate)
+                document.getElementById('feasibilityPanel').classList.remove('hidden');
+            } catch (err) {
+                container.innerHTML = `<div class="kanban-empty">Error: ${escapeHtml(err.message)}</div>`;
+            }
+        }
+        // ----- end SEP-045 -----
+
+        // ----- end SEP-044 -----
 
         async function scoreScoutSite(lat, lon) {
             const technology = document.getElementById('imgScoutTechnology')?.value || 'solar';

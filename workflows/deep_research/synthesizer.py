@@ -2671,8 +2671,8 @@ def _passes_diligence_quality_gate(text: str, state: ResearchState) -> bool:
     if sections[0][0].strip().lower() != "executive summary":
         return False
 
-    # Must have at least 3 of the 6 diligence section titles
-    diligence_titles = list(_DILIGENCE_DOMAIN_SECTIONS.values())
+    # Must have at least 3 of the 6 diligence section titles (brownfield or BESS)
+    diligence_titles = list(_DILIGENCE_DOMAIN_SECTIONS.values()) + list(_BESS_DOMAIN_SECTIONS.values())
     matched = 0
     for title, _ in sections[1:]:
         cleaned = re.sub(r"\s+", " ", title).strip()
@@ -2858,6 +2858,247 @@ _DILIGENCE_SECTION_QUESTIONS = {
         "operational history, recent news?"
     ),
 }
+
+
+# --- BESS-specific domain mappings ---
+
+_BESS_DOMAIN_SECTIONS = {
+    "revenue_model": "Revenue Model",
+    "grid_connection": "Grid Connection",
+    "tariff_charging": "Tariff & Charging Cost",
+    "regulatory_licensing": "Regulatory & Licensing",
+    "market_structure": "Market Structure",
+    "risk_assessment": "Risk Assessment",
+}
+
+_BESS_SECTION_QUESTIONS = {
+    "revenue_model": (
+        "What is the bankable annual revenue from DAM arbitrage, TOU arbitrage, "
+        "and peaker displacement for a {capacity_mw}MW BESS in {country}? "
+        "What are the peak-offpeak price differentials and how many arbitrage "
+        "cycles per day are feasible?"
+    ),
+    "grid_connection": (
+        "What substation, voltage level, and transmission zone would serve a "
+        "{capacity_mw}MW BESS in {country}? What are the grid connection "
+        "requirements and typical timeline?"
+    ),
+    "tariff_charging": (
+        "What does it cost to charge a BESS under the applicable Eskom tariff "
+        "schedule in {country}? What are the seasonal TOU rate differentials "
+        "(high demand Jun-Aug vs low demand Sep-May) for peak, standard, and "
+        "off-peak periods?"
+    ),
+    "regulatory_licensing": (
+        "What NERSA licensing requirements apply to battery energy storage in "
+        "{country}? What grid code compliance is needed for BESS? Are there "
+        "storage-specific regulatory frameworks or is storage treated as "
+        "generation?"
+    ),
+    "market_structure": (
+        "How does the SAPP Day-Ahead Market work for storage dispatch in "
+        "{country}? What is the DAM trading volume and liquidity? Are bilateral "
+        "PPAs or cross-border trading viable alternatives?"
+    ),
+    "risk_assessment": (
+        "What are the key investment risks for BESS in {country}? Consider "
+        "ZAR/USD currency exposure, Eskom tariff escalation trajectory, "
+        "competing storage projects in pipeline, demand growth outlook, "
+        "and battery technology obsolescence risk."
+    ),
+}
+
+_BESS_ANALYST_SYSTEM_PROMPT = (
+    "You are a senior battery energy storage investment analyst specializing in "
+    "storage dispatch optimization and arbitrage revenue modeling in Southern "
+    "African power markets. You produce structured investment memos for BESS "
+    "projects, quantifying arbitrage spreads, TOU differentials, and grid "
+    "services revenue. For each section, synthesize domain-specific sources, "
+    "quantify where data permits, flag material risks and unanswered questions, "
+    "and cite inline using exact source titles in square brackets. "
+    "Do not produce planning steps, meta commentary, or procedural narration."
+)
+
+
+def generate_bess_diligence_charts(
+    asset_metadata: dict,
+    diligence_context: str = "",
+) -> list:
+    """Generate BESS-specific diligence charts as base64-encoded PNGs.
+
+    Returns list of (section_title, data_uri) tuples:
+    1. 24h DAM Price Profile with peak/offpeak shading
+    2. Monthly Arbitrage Revenue Estimate (low/mid/high)
+    3. Eskom TOU Tariff Waterfall by season
+    """
+    import base64 as b64mod
+    import io
+
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        logger.warning("matplotlib not available for BESS charts")
+        return []
+
+    charts = []
+    country = (asset_metadata.get("country") or "South Africa").strip()
+
+    # --- Chart 1: 24h DAM Price Profile ---
+    try:
+        from tools.imaging.grid_metrics import classify_peak_hours
+        from tools.market.sapp_client import parse_all_dam_files
+
+        dam_data = parse_all_dam_files()
+        # Pick node based on country
+        if "zimbabwe" in country.lower():
+            node = "zim"
+        else:
+            node = "rsan"  # default to RSAN for SA
+        usd_obs = dam_data.get(node, {}).get("usd", [])
+
+        if usd_obs:
+            hourly_sums: dict[int, list[float]] = {h: [] for h in range(24)}
+            for dt_str, price in usd_obs:
+                try:
+                    hour = int(dt_str[11:13])
+                    hourly_sums[hour].append(price)
+                except (ValueError, IndexError):
+                    continue
+
+            hours = list(range(24))
+            avg_prices = [
+                sum(hourly_sums[h]) / len(hourly_sums[h]) if hourly_sums[h] else 0
+                for h in hours
+            ]
+
+            fig, ax = plt.subplots(figsize=(9, 4.5))
+            # Peak shading
+            for h in hours:
+                if classify_peak_hours(h) == "peak":
+                    ax.axvspan(h - 0.5, h + 0.5, alpha=0.12, color="#dc2626")
+            ax.plot(hours, avg_prices, color="#2563eb", linewidth=2, marker="o", markersize=4)
+            ax.fill_between(hours, avg_prices, alpha=0.15, color="#2563eb")
+            ax.set_xlabel("Hour of Day")
+            ax.set_ylabel("Avg Price (USD/MWh)")
+            ax.set_title(f"SAPP DAM 24h Price Profile — {node.upper()}")
+            ax.set_xticks(range(0, 24, 2))
+            ax.grid(True, alpha=0.3)
+            # Add peak label
+            ax.text(7, max(avg_prices) * 0.95, "Peak", color="#dc2626",
+                    fontsize=8, ha="center", fontweight="bold")
+            ax.text(18, max(avg_prices) * 0.95, "Peak", color="#dc2626",
+                    fontsize=8, ha="center", fontweight="bold")
+            fig.tight_layout()
+
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png", dpi=100)
+            plt.close(fig)
+            buf.seek(0)
+            b64_str = b64mod.b64encode(buf.read()).decode("ascii")
+            charts.append(("SAPP DAM 24h Price Profile", f"data:image/png;base64,{b64_str}"))
+    except Exception as exc:
+        logger.warning("DAM price profile chart failed: %s", exc)
+
+    # --- Chart 2: Arbitrage Revenue Estimate ---
+    try:
+        from tools.imaging.grid_metrics import compute_node_price_stats
+        from tools.market.sapp_client import parse_all_dam_files
+
+        if not dam_data:
+            dam_data = parse_all_dam_files()
+        stats = compute_node_price_stats(dam_data)
+        node_stat = stats.get(node, {})
+        spread = node_stat.get("arbitrage_spread_usd", 0)
+
+        if spread > 0:
+            # Estimate: cycles/day * spread * capacity * days/month * RTE
+            cycles_per_day = [1, 1.5, 2]  # low/mid/high
+            rte = 0.85
+            capacity_mw = float(asset_metadata.get("capacity_mw", 100) or 100)
+            duration_h = 4  # 4-hour BESS
+
+            months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                      "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+            # High season: Jun-Aug, Low season: Sep-May
+            high_season = {5, 6, 7}  # 0-indexed months
+            days_per_month = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+            season_mult = [1.3 if m in high_season else 1.0 for m in range(12)]
+
+            fig, ax = plt.subplots(figsize=(10, 4.5))
+            x = range(12)
+            width = 0.25
+            labels = ["Conservative", "Base", "Optimistic"]
+            colors = ["#94a3b8", "#3b82f6", "#22c55e"]
+
+            for i, (cpd, label, color) in enumerate(zip(cycles_per_day, labels, colors)):
+                rev = [
+                    cpd * spread * capacity_mw * duration_h * rte * days_per_month[m]
+                    * season_mult[m] / 1000
+                    for m in range(12)
+                ]
+                bars = ax.bar([xi + i * width for xi in x], rev, width,
+                              label=label, color=color)
+
+            ax.set_ylabel("Revenue ($k/month)")
+            ax.set_title(f"Monthly Arbitrage Revenue — {capacity_mw:.0f} MW / {duration_h}h BESS")
+            ax.set_xticks([xi + width for xi in x])
+            ax.set_xticklabels(months, fontsize=8)
+            ax.legend(fontsize=8)
+            ax.grid(True, alpha=0.3, axis="y")
+            fig.tight_layout()
+
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png", dpi=100)
+            plt.close(fig)
+            buf.seek(0)
+            b64_str = b64mod.b64encode(buf.read()).decode("ascii")
+            charts.append(("Monthly Arbitrage Revenue Estimate", f"data:image/png;base64,{b64_str}"))
+    except Exception as exc:
+        logger.warning("Arbitrage revenue chart failed: %s", exc)
+
+    # --- Chart 3: Eskom TOU Tariff Waterfall ---
+    try:
+        from tools.regulatory.eskom_tariff_client import get_rate
+
+        periods = ["Peak", "Standard", "Off-Peak"]
+        seasons = [("High Demand\n(Jun-Aug)", "high"), ("Low Demand\n(Sep-May)", "low")]
+        rate_values = []
+        bar_labels = []
+        bar_colors = []
+        period_colors = {"Peak": "#dc2626", "Standard": "#f59e0b", "Off-Peak": "#22c55e"}
+
+        for season_label, season_key in seasons:
+            for period in periods:
+                rate = get_rate("Megaflex", tx_zone=0, voltage=1,
+                                season=season_key, period=period.lower().replace("-", ""))
+                rate_values.append(rate or 0)
+                bar_labels.append(f"{period}\n{season_label}")
+                bar_colors.append(period_colors[period])
+
+        fig, ax = plt.subplots(figsize=(10, 4.5))
+        bars = ax.bar(range(len(rate_values)), rate_values, color=bar_colors)
+        ax.set_ylabel("Rate (c/kWh excl VAT)")
+        ax.set_title("Eskom Megaflex TOU Tariff Schedule 2025/26")
+        ax.set_xticks(range(len(bar_labels)))
+        ax.set_xticklabels(bar_labels, fontsize=7, ha="center")
+        ax.grid(True, alpha=0.3, axis="y")
+        for bar, val in zip(bars, rate_values):
+            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 5,
+                    f"{val:.0f}", ha="center", va="bottom", fontsize=8)
+        fig.tight_layout()
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=100)
+        plt.close(fig)
+        buf.seek(0)
+        b64_str = b64mod.b64encode(buf.read()).decode("ascii")
+        charts.append(("Eskom TOU Tariff Waterfall", f"data:image/png;base64,{b64_str}"))
+    except Exception as exc:
+        logger.warning("Tariff waterfall chart failed: %s", exc)
+
+    return charts
 
 
 def _format_sources_by_domain(sources: List[Source]) -> dict:

@@ -60,10 +60,11 @@ def _get_auth_headers() -> Dict[str, str]:
 
 def fetch_newsroom_cached(max_results: int = 100):
     """
-    Fetch newsroom articles with caching (7-day rolling window).
+    Fetch newsroom articles with caching (90-day rolling window).
 
     Uses local cache to avoid repeated API calls. Cache refreshes
     daily (24-hour TTL) since newsroom updates ~400 articles/day.
+    New articles are merged with existing cache, deduplicated by URL.
 
     Args:
         max_results: Max articles to return (default: 100)
@@ -84,7 +85,7 @@ def fetch_newsroom_cached(max_results: int = 100):
 
     # Cache is stale - fetch fresh data
     logger.info("Newsroom cache stale, fetching fresh data...")
-    articles = _fetch_newsroom_api_raw(days_back=7, max_results=500)
+    articles = _fetch_newsroom_api_raw(days_back=90, max_results=3000)
 
     if articles:
         cache.update(articles)
@@ -103,9 +104,12 @@ def _fetch_newsroom_api_raw(days_back: int = 7, max_results: int = 500) -> List[
     """
     Raw API fetch without caching. Used by cache refresh.
 
+    Paginates through all available pages (API caps at 200 per page)
+    until max_results is reached or no more articles are returned.
+
     Args:
         days_back: Days to fetch (default: 7)
-        max_results: Max articles (default: 500 for cache population)
+        max_results: Max articles to collect across all pages (default: 500)
 
     Returns:
         List of article dicts from API
@@ -118,26 +122,48 @@ def _fetch_newsroom_api_raw(days_back: int = 7, max_results: int = 500) -> List[
             logger.warning("No NEWSROOM_JWT_TOKEN configured")
             return []
 
-        response = requests.get(
-            NEWSROOM_API_URL,
-            params={'limit': max_results, 'date_from': date_from},
-            headers=headers,
-            timeout=NEWSROOM_API_TIMEOUT
-        )
+        all_articles = []
+        seen_urls = set()
+        page = 1
+        page_size = 200
 
-        if response.status_code == 200:
+        while len(all_articles) < max_results:
+            response = requests.get(
+                NEWSROOM_API_URL,
+                params={'limit': page_size, 'date_from': date_from, 'page': page},
+                headers=headers,
+                timeout=NEWSROOM_API_TIMEOUT
+            )
+
+            if response.status_code == 401:
+                logger.error("Newsroom API 401 - check NEWSROOM_JWT_TOKEN")
+                return all_articles
+            elif response.status_code == 403:
+                logger.error("Newsroom API 403 - token lacks newsroom access")
+                return all_articles
+            elif response.status_code != 200:
+                logger.warning(f"Newsroom API returned {response.status_code}")
+                return all_articles
+
             data = response.json()
             articles = data.get('articles', [])
-            logger.info(f"✓ Newsroom API: {len(articles)} articles fetched")
-            return articles
-        elif response.status_code == 401:
-            logger.error("Newsroom API 401 - check NEWSROOM_JWT_TOKEN")
-        elif response.status_code == 403:
-            logger.error("Newsroom API 403 - token lacks newsroom access")
-        else:
-            logger.warning(f"Newsroom API returned {response.status_code}")
+            if not articles:
+                break
 
-        return []
+            new_articles = [a for a in articles if a.get('url') not in seen_urls]
+            if not new_articles:
+                break
+
+            all_articles.extend(new_articles)
+            seen_urls.update(a.get('url') for a in new_articles)
+            logger.info(f"✓ Newsroom API page {page}: {len(new_articles)} articles")
+
+            if len(articles) < page_size:
+                break
+            page += 1
+
+        logger.info(f"✓ Newsroom API total: {len(all_articles)} articles across {page} page(s)")
+        return all_articles[:max_results]
 
     except Exception as e:
         logger.warning(f"Newsroom API error: {e}")

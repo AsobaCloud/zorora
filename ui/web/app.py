@@ -85,7 +85,7 @@ def _news_intel_synthesis(articles, topic=None, date_from=None, date_to=None):
     )
 
 
-def fetch_newsroom_api(max_results=500):
+def fetch_newsroom_api(max_results=10000):
     """Compatibility wrapper that exposes newsroom articles for API handlers/tests."""
     global newsroom_api_warning
     articles, warning = fetch_newsroom_cached(max_results=max_results)
@@ -233,6 +233,7 @@ def _run_research_with_progress(
     depth: int,
     refined_query: str = None,
     research_type: str = None,
+    asset_metadata: dict = None,
 ):
     """Run research workflow in background thread and emit progress updates."""
     try:
@@ -252,6 +253,7 @@ def _run_research_with_progress(
             progress_callback=on_progress,
             refined_query=refined_query,
             research_type=research_type,
+            asset_metadata=asset_metadata,
         )
 
         research_id_actual = research_engine.save_research(state)
@@ -319,6 +321,7 @@ def start_research():
         depth = int(data.get('depth', 1))
         refined_query = (data.get('refined_query') or '').strip() or None
         research_type = (data.get('research_type') or '').strip() or None
+        asset_metadata = data.get('asset_metadata') or None
         if not research_type:
             research_type = infer_research_type(refined_query or query)
 
@@ -347,6 +350,7 @@ def start_research():
             kwargs={
                 "refined_query": refined_query,
                 "research_type": research_type,
+                "asset_metadata": asset_metadata,
             },
             daemon=True
         )
@@ -529,6 +533,43 @@ def research_chat(research_id):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/news-intel/facets', methods=['GET'])
+def get_news_intel_facets():
+    """Return available topics, sources, and date range from cached articles."""
+    try:
+        from collections import Counter
+
+        articles = fetch_newsroom_api(max_results=5000)
+
+        topic_counts = Counter()
+        source_counts = Counter()
+        dates = []
+
+        for article in articles:
+            for tag in (article.get("topic_tags") or []):
+                topic_counts[tag] += 1
+            src = article.get("source")
+            if src:
+                source_counts[src] += 1
+            d = (article.get("date") or "")[:10]
+            if d:
+                dates.append(d)
+
+        topics = [{"name": name, "count": count}
+                  for name, count in topic_counts.most_common()]
+        sources = [{"name": name, "count": count}
+                   for name, count in source_counts.most_common()]
+        date_range = {
+            "min": min(dates) if dates else None,
+            "max": max(dates) if dates else None,
+        }
+
+        return jsonify({"topics": topics, "sources": sources, "date_range": date_range})
+    except Exception as e:
+        logger.error(f"News intel facets error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/api/news-intel/articles', methods=['POST'])
 def get_news_intel_articles():
     """Fetch newsroom articles from API and filter by topic/date range."""
@@ -537,15 +578,15 @@ def get_news_intel_articles():
         topic = (data.get("topic") or "").strip()
         date_from = data.get("date_from")
         date_to = data.get("date_to")
-        limit = int(data.get("limit", 100))
-        limit = max(1, min(limit, 200))
+        limit = int(data.get("limit", 200))
+        limit = max(1, min(limit, 10000))
 
         start_date = _parse_date(date_from)
         end_date = _parse_date(date_to)
         if start_date and end_date and start_date > end_date:
             return jsonify({"error": "date_from must be <= date_to"}), 400
 
-        articles = fetch_newsroom_api(max_results=500)
+        articles = fetch_newsroom_api()
         warning = newsroom_api_warning
         filtered = _filter_newsroom_articles(
             articles,
@@ -581,15 +622,15 @@ def synthesize_news_intel():
         topic = (data.get("topic") or "").strip()
         date_from = data.get("date_from")
         date_to = data.get("date_to")
-        limit = int(data.get("limit", 100))
-        limit = max(1, min(limit, 200))
+        limit = int(data.get("limit", 200))
+        limit = max(1, min(limit, 10000))
 
         start_date = _parse_date(date_from)
         end_date = _parse_date(date_to)
         if start_date and end_date and start_date > end_date:
             return jsonify({"error": "date_from must be <= date_to"}), 400
 
-        articles = fetch_newsroom_api(max_results=500)
+        articles = fetch_newsroom_api()
         filtered = _filter_newsroom_articles(
             articles,
             topic=topic,
@@ -687,10 +728,10 @@ def get_news_intel_stats():
         topic = (data.get("topic") or "").strip()
         date_from = data.get("date_from")
         date_to = data.get("date_to")
-        limit = int(data.get("limit", 500))
-        limit = max(1, min(limit, 500))
+        limit = int(data.get("limit", 10000))
+        limit = max(1, min(limit, 10000))
 
-        articles, warning = fetch_newsroom_cached(max_results=500)
+        articles, warning = fetch_newsroom_cached(max_results=10000)
         filtered = _filter_newsroom_articles(
             articles, topic=topic, date_from=date_from, date_to=date_to, limit=limit,
         )
@@ -1072,6 +1113,223 @@ def delete_pipeline_asset(asset_id):
 
 
 # ---------------------------------------------------------------------------
+# Scouting kanban endpoints (SEP-044)
+# ---------------------------------------------------------------------------
+
+VALID_SCOUTING_TYPES = {"brownfield", "greenfield", "bess"}
+VALID_SCOUTING_STAGES = {"identified", "scored", "feasibility", "diligence", "decision"}
+
+
+@app.route('/api/scouting/items', methods=['GET'])
+def list_scouting_items():
+    """List scouting kanban items by type, optionally filtered by stage."""
+    try:
+        item_type = (request.args.get("type") or "").strip()
+        if item_type not in VALID_SCOUTING_TYPES:
+            return jsonify({"error": f"type must be one of {sorted(VALID_SCOUTING_TYPES)}"}), 400
+        stage = request.args.get("stage")
+        store = ImagingDataStore()
+        items = store.list_scouting_items(item_type, stage=stage)
+        store.close()
+        return jsonify({"items": items, "count": len(items)})
+    except Exception as e:
+        logger.error(f"Scouting list error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scouting/items/<item_id>/stage', methods=['PUT'])
+def update_scouting_item_stage(item_id):
+    """Move a scouting item to a different pipeline stage."""
+    try:
+        data = request.get_json(silent=True) or {}
+        item_type = (data.get("type") or "").strip()
+        stage = (data.get("stage") or "").strip()
+        if not item_type:
+            return jsonify({"error": "type is required"}), 400
+        if not stage:
+            return jsonify({"error": "stage is required"}), 400
+        if item_type not in VALID_SCOUTING_TYPES:
+            return jsonify({"error": f"type must be one of {sorted(VALID_SCOUTING_TYPES)}"}), 400
+        if stage not in VALID_SCOUTING_STAGES:
+            return jsonify({"error": f"stage must be one of {sorted(VALID_SCOUTING_STAGES)}"}), 400
+        store = ImagingDataStore()
+        store.update_scouting_stage(item_type, item_id, stage)
+        if item_type == "greenfield":
+            item = store.get_watchlist_site(item_id)
+        else:
+            item = store.get_pipeline_asset(item_id)
+        store.close()
+        return jsonify({"status": "ok", "item": item})
+    except Exception as e:
+        logger.error(f"Scouting stage update error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scouting/items', methods=['POST'])
+def create_scouting_item():
+    """Create a scouting item via the unified endpoint."""
+    try:
+        data = request.get_json() or {}
+        item_type = (data.get("type") or "").strip()
+        if item_type not in VALID_SCOUTING_TYPES:
+            return jsonify({"error": f"type must be one of {sorted(VALID_SCOUTING_TYPES)}"}), 400
+        store = ImagingDataStore()
+        if item_type == "greenfield":
+            site = data.get("site") or {}
+            if not site:
+                return jsonify({"error": "site is required for greenfield"}), 400
+            saved = store.upsert_watchlist_site(site)
+            store.close()
+            return jsonify({"status": "ok", "item": saved})
+        else:
+            source_type = (data.get("source_type") or item_type).strip()
+            asset = data.get("asset") or {}
+            if not asset:
+                return jsonify({"error": "asset is required"}), 400
+            saved = store.upsert_pipeline_asset(source_type=source_type, asset=asset)
+            store.close()
+            return jsonify({"status": "ok", "item": saved})
+    except Exception as e:
+        logger.error(f"Scouting create error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scouting/items/<item_id>', methods=['DELETE'])
+def delete_scouting_item(item_id):
+    """Delete a scouting item."""
+    try:
+        item_type = (request.args.get("type") or "").strip()
+        if not item_type:
+            return jsonify({"error": "type query parameter is required"}), 400
+        if item_type not in VALID_SCOUTING_TYPES:
+            return jsonify({"error": f"type must be one of {sorted(VALID_SCOUTING_TYPES)}"}), 400
+        store = ImagingDataStore()
+        if item_type == "greenfield":
+            store.delete_watchlist_site(item_id)
+        else:
+            store.delete_pipeline_asset(item_id)
+        store.close()
+        return jsonify({"status": "deleted"})
+    except Exception as e:
+        logger.error(f"Scouting delete error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Feasibility study endpoints (SEP-045)
+# ---------------------------------------------------------------------------
+
+FEASIBILITY_TABS = {"production", "trading", "grid", "regulatory", "financial"}
+
+
+@app.route('/api/scouting/items/<item_id>/feasibility', methods=['GET'])
+def get_feasibility_all(item_id):
+    """Return all tab results and progress for a scouting item."""
+    try:
+        store = ImagingDataStore()
+        results = store.get_feasibility_results(item_id)
+        progress = store.get_feasibility_progress(item_id)
+        store.close()
+        return jsonify({"results": results, "progress": progress})
+    except Exception as e:
+        logger.error(f"Feasibility get all error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scouting/items/<item_id>/feasibility/<tab>', methods=['GET'])
+def get_feasibility_tab(item_id, tab):
+    """Return a single tab result or 404 if not yet run."""
+    if tab not in FEASIBILITY_TABS:
+        return jsonify({"error": f"tab must be one of {sorted(FEASIBILITY_TABS)}"}), 400
+    try:
+        store = ImagingDataStore()
+        result = store.get_feasibility_result(item_id, tab)
+        store.close()
+        if result is None:
+            return jsonify({"error": f"Tab '{tab}' has not been run for item '{item_id}'"}), 404
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Feasibility get tab error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scouting/items/<item_id>/feasibility/<tab>', methods=['POST'])
+def run_feasibility_tab_endpoint(item_id, tab):
+    """Run a feasibility tab analysis, persist result, and return it."""
+    if tab not in FEASIBILITY_TABS:
+        return jsonify({"error": f"tab must be one of {sorted(FEASIBILITY_TABS)}"}), 400
+    try:
+        data = request.get_json(silent=True) or {}
+        item_type = (data.get("item_type") or "brownfield").strip()
+
+        store = ImagingDataStore()
+
+        # Retrieve item data to pass to workflow
+        item_data = {}
+        if item_type == "greenfield":
+            item = store.get_watchlist_site(item_id)
+        else:
+            item = store.get_pipeline_asset(item_id)
+
+        if item:
+            if item_type == "greenfield":
+                item_data = {
+                    "asset_name": item.get("name", ""),
+                    "technology": item.get("technology", ""),
+                    "country": item.get("country", ""),
+                    "lat": item.get("lat"),
+                    "lon": item.get("lon"),
+                    "capacity_mw": 0,
+                }
+            else:
+                item_data = {
+                    "asset_name": item.get("asset_name", ""),
+                    "technology": item.get("technology", ""),
+                    "capacity_mw": item.get("capacity_mw", 0),
+                    "country": item.get("country", ""),
+                    "lat": item.get("lat"),
+                    "lon": item.get("lon"),
+                }
+
+        # For financial tab, include prior results
+        extra_kwargs = {}
+        if tab == "financial":
+            extra_kwargs["prior_results"] = store.get_feasibility_results(item_id)
+
+        from workflows.feasibility import run_feasibility_tab
+        workflow_result = run_feasibility_tab(
+            item_id=item_id,
+            item_type=item_type,
+            tab=tab,
+            item_data=item_data,
+            **extra_kwargs,
+        )
+
+        # Persist result
+        findings = {
+            "key_finding": workflow_result.get("key_finding", ""),
+            "risks": workflow_result.get("risks", []),
+            "gaps": workflow_result.get("gaps", []),
+            "sources": workflow_result.get("sources", []),
+            "chart_b64": workflow_result.get("chart_b64"),
+        }
+        store.upsert_feasibility_result(
+            item_id=item_id,
+            item_type=item_type,
+            tab=tab,
+            conclusion=workflow_result.get("conclusion", "marginal"),
+            confidence=workflow_result.get("confidence", "medium"),
+            findings=findings,
+        )
+        store.close()
+
+        return jsonify(workflow_result)
+    except Exception as e:
+        logger.error(f"Feasibility run tab error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
 # Imaging (OSINT mineral intelligence) endpoints
 # ---------------------------------------------------------------------------
 
@@ -1190,6 +1448,116 @@ def refresh_imaging_data():
         })
     except Exception as e:
         logger.error(f"Imaging refresh error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Discovery (grid infrastructure) endpoints
+# ---------------------------------------------------------------------------
+
+_discovery_mts_cache = None
+_discovery_supply_cache = None
+_discovery_metrics_cache = None
+_discovery_substations_cache = None
+
+
+@app.route('/api/discovery/gcca/mts-zones', methods=['GET'])
+def get_discovery_mts_zones():
+    """Return MTS substation zones as GeoJSON with DAM node annotation."""
+    global _discovery_mts_cache
+    try:
+        if _discovery_mts_cache is None:
+            from tools.imaging.gcca_client import load_mts_zones
+            from tools.imaging.grid_metrics import SUPPLY_AREA_DAM_NODE
+            fc = load_mts_zones()
+            for f in fc.get("features", []):
+                area = f.get("properties", {}).get("supplyarea", "")
+                f["properties"]["dam_node"] = SUPPLY_AREA_DAM_NODE.get(area, "rsan")
+            _discovery_mts_cache = fc
+        return jsonify(_discovery_mts_cache)
+    except Exception as e:
+        logger.error(f"MTS zones error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/discovery/gcca/supply-areas', methods=['GET'])
+def get_discovery_supply_areas():
+    """Return supply area boundary polygons as GeoJSON with DAM node annotation."""
+    global _discovery_supply_cache
+    try:
+        if _discovery_supply_cache is None:
+            from tools.imaging.gcca_client import load_supply_areas
+            from tools.imaging.grid_metrics import SUPPLY_AREA_DAM_NODE
+            fc = load_supply_areas()
+            for f in fc.get("features", []):
+                area = f.get("properties", {}).get("supplyarea", "")
+                f["properties"]["dam_node"] = SUPPLY_AREA_DAM_NODE.get(area, "rsan")
+            _discovery_supply_cache = fc
+        return jsonify(_discovery_supply_cache)
+    except Exception as e:
+        logger.error(f"Supply areas error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/discovery/gcca/substations', methods=['GET'])
+def get_discovery_substations():
+    """Return MTS substation point locations as GeoJSON with DAM node annotation."""
+    global _discovery_substations_cache
+    try:
+        if _discovery_substations_cache is None:
+            from tools.imaging.gcca_client import load_substations
+            from tools.imaging.grid_metrics import SUPPLY_AREA_DAM_NODE
+            fc = load_substations()
+            for f in fc.get("features", []):
+                area = f.get("properties", {}).get("supply_area", "")
+                f["properties"]["dam_node"] = SUPPLY_AREA_DAM_NODE.get(area, "rsan")
+            _discovery_substations_cache = fc
+        return jsonify(_discovery_substations_cache)
+    except Exception as e:
+        logger.error(f"Substations error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+def _ensure_zone_metrics():
+    """Compute and cache zone metrics on first call."""
+    global _discovery_metrics_cache
+    if _discovery_metrics_cache is not None:
+        return _discovery_metrics_cache
+    from tools.imaging.gcca_client import load_mts_zones
+    from tools.imaging.grid_metrics import compute_zone_metrics
+    from tools.market.sapp_client import parse_all_dam_files
+    mts = load_mts_zones()
+    dam = parse_all_dam_files()
+    store = ImagingDataStore()
+    gen_fc = store.get_generation_assets()
+    store.close()
+    gen_features = gen_fc.get("features", []) if gen_fc else []
+    _discovery_metrics_cache = compute_zone_metrics(mts, dam, gen_features)
+    return _discovery_metrics_cache
+
+
+@app.route('/api/discovery/zone-metrics', methods=['GET'])
+def get_discovery_zone_metrics_all():
+    """Return DAM price stats + RE asset counts for all MTS zones."""
+    try:
+        metrics = _ensure_zone_metrics()
+        return jsonify(metrics)
+    except Exception as e:
+        logger.error(f"Zone metrics error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/discovery/zone-metrics/<substation>', methods=['GET'])
+def get_discovery_zone_metrics(substation):
+    """Return DAM price stats + RE asset count for a specific MTS zone."""
+    try:
+        metrics = _ensure_zone_metrics()
+        zone = metrics.get(substation)
+        if zone is None:
+            return jsonify({"error": f"Unknown substation: {substation}"}), 404
+        return jsonify(zone)
+    except Exception as e:
+        logger.error(f"Zone metrics error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 

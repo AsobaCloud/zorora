@@ -612,6 +612,59 @@ def decompose_diligence_query(query: str, asset_metadata: dict) -> List[SearchIn
     return intents
 
 
+def decompose_bess_diligence_query(query: str, asset_metadata: dict) -> List[SearchIntent]:
+    """Decompose a BESS diligence query into 6 storage-specific domain intents."""
+    country = asset_metadata.get("country", "")
+    capacity = asset_metadata.get("capacity_mw", "")
+    cap_str = f"{capacity}MW" if capacity else ""
+
+    intents = [
+        # 1. Revenue Model: arbitrage, frequency regulation, capacity payments
+        SearchIntent(
+            intent_query=f"{country} battery energy storage system revenue stacking arbitrage frequency regulation capacity payment 2025 2026",
+            parent_query=query,
+            is_primary=True,
+            domain="revenue_model",
+        ),
+        # 2. Grid Connection: interconnection, substation requirements
+        SearchIntent(
+            intent_query=f"{country} BESS grid connection requirements battery storage interconnection substation {cap_str}",
+            parent_query=query,
+            is_primary=False,
+            domain="grid_connection",
+        ),
+        # 3. Tariff & Charging Cost: TOU, Eskom Megaflex
+        SearchIntent(
+            intent_query=f"{country} electricity tariff time-of-use battery storage charging cost Eskom Megaflex 2025 2026",
+            parent_query=query,
+            is_primary=False,
+            domain="tariff_charging",
+        ),
+        # 4. Regulatory & Licensing: NERSA, grid code, storage regulations
+        SearchIntent(
+            intent_query=f"{country} battery energy storage licensing NERSA grid code storage regulations permit requirements",
+            parent_query=query,
+            is_primary=False,
+            domain="regulatory_licensing",
+        ),
+        # 5. Market Structure: SAPP DAM, bilateral trading, cross-border
+        SearchIntent(
+            intent_query=f"{country} SAPP day-ahead market battery storage bilateral trading cross-border electricity market reform",
+            parent_query=query,
+            is_primary=False,
+            domain="market_structure",
+        ),
+        # 6. Risk Assessment: currency, tariff escalation, competing storage
+        SearchIntent(
+            intent_query=f"{country} battery storage investment risk ZAR USD currency tariff escalation competing storage pipeline demand outlook",
+            parent_query=query,
+            is_primary=False,
+            domain="risk_assessment",
+        ),
+    ]
+    return intents
+
+
 def _passthrough(raw_query: str) -> dict:
     """Return a passthrough response that skips refinement."""
     return {
