@@ -880,7 +880,12 @@ def run_deep_research(
 
     is_diligence = research_type == "diligence" and asset_metadata
     if is_diligence:
-        intents = decompose_diligence_query(search_query, asset_metadata)
+        tech = (asset_metadata.get("technology") or "").lower()
+        if tech in ("storage", "bess", "battery"):
+            from engine.query_refiner import decompose_bess_diligence_query
+            intents = decompose_bess_diligence_query(search_query, asset_metadata)
+        else:
+            intents = decompose_diligence_query(search_query, asset_metadata)
     else:
         intents = decompose_query(search_query)
     if not intents:
