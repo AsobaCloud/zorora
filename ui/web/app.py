@@ -1216,6 +1216,120 @@ def delete_scouting_item(item_id):
 
 
 # ---------------------------------------------------------------------------
+# Feasibility study endpoints (SEP-045)
+# ---------------------------------------------------------------------------
+
+FEASIBILITY_TABS = {"production", "trading", "grid", "regulatory", "financial"}
+
+
+@app.route('/api/scouting/items/<item_id>/feasibility', methods=['GET'])
+def get_feasibility_all(item_id):
+    """Return all tab results and progress for a scouting item."""
+    try:
+        store = ImagingDataStore()
+        results = store.get_feasibility_results(item_id)
+        progress = store.get_feasibility_progress(item_id)
+        store.close()
+        return jsonify({"results": results, "progress": progress})
+    except Exception as e:
+        logger.error(f"Feasibility get all error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scouting/items/<item_id>/feasibility/<tab>', methods=['GET'])
+def get_feasibility_tab(item_id, tab):
+    """Return a single tab result or 404 if not yet run."""
+    if tab not in FEASIBILITY_TABS:
+        return jsonify({"error": f"tab must be one of {sorted(FEASIBILITY_TABS)}"}), 400
+    try:
+        store = ImagingDataStore()
+        result = store.get_feasibility_result(item_id, tab)
+        store.close()
+        if result is None:
+            return jsonify({"error": f"Tab '{tab}' has not been run for item '{item_id}'"}), 404
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Feasibility get tab error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scouting/items/<item_id>/feasibility/<tab>', methods=['POST'])
+def run_feasibility_tab_endpoint(item_id, tab):
+    """Run a feasibility tab analysis, persist result, and return it."""
+    if tab not in FEASIBILITY_TABS:
+        return jsonify({"error": f"tab must be one of {sorted(FEASIBILITY_TABS)}"}), 400
+    try:
+        data = request.get_json(silent=True) or {}
+        item_type = (data.get("item_type") or "brownfield").strip()
+
+        store = ImagingDataStore()
+
+        # Retrieve item data to pass to workflow
+        item_data = {}
+        if item_type == "greenfield":
+            item = store.get_watchlist_site(item_id)
+        else:
+            item = store.get_pipeline_asset(item_id)
+
+        if item:
+            if item_type == "greenfield":
+                item_data = {
+                    "asset_name": item.get("name", ""),
+                    "technology": item.get("technology", ""),
+                    "country": item.get("country", ""),
+                    "lat": item.get("lat"),
+                    "lon": item.get("lon"),
+                    "capacity_mw": 0,
+                }
+            else:
+                item_data = {
+                    "asset_name": item.get("asset_name", ""),
+                    "technology": item.get("technology", ""),
+                    "capacity_mw": item.get("capacity_mw", 0),
+                    "country": item.get("country", ""),
+                    "lat": item.get("lat"),
+                    "lon": item.get("lon"),
+                }
+
+        # For financial tab, include prior results
+        extra_kwargs = {}
+        if tab == "financial":
+            extra_kwargs["prior_results"] = store.get_feasibility_results(item_id)
+
+        from workflows.feasibility import run_feasibility_tab
+        workflow_result = run_feasibility_tab(
+            item_id=item_id,
+            item_type=item_type,
+            tab=tab,
+            item_data=item_data,
+            **extra_kwargs,
+        )
+
+        # Persist result
+        findings = {
+            "key_finding": workflow_result.get("key_finding", ""),
+            "risks": workflow_result.get("risks", []),
+            "gaps": workflow_result.get("gaps", []),
+            "sources": workflow_result.get("sources", []),
+            "chart_b64": workflow_result.get("chart_b64"),
+        }
+        store.upsert_feasibility_result(
+            item_id=item_id,
+            item_type=item_type,
+            tab=tab,
+            conclusion=workflow_result.get("conclusion", "marginal"),
+            confidence=workflow_result.get("confidence", "medium"),
+            findings=findings,
+        )
+        store.close()
+
+        return jsonify(workflow_result)
+    except Exception as e:
+        logger.error(f"Feasibility run tab error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
 # Imaging (OSINT mineral intelligence) endpoints
 # ---------------------------------------------------------------------------
 

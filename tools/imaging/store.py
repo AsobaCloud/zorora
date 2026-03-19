@@ -157,6 +157,20 @@ class ImagingDataStore:
                 )
             except sqlite3.OperationalError:
                 pass  # column already exists
+        # SEP-045: feasibility results table
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS feasibility_results (
+                id TEXT PRIMARY KEY,
+                item_id TEXT NOT NULL,
+                item_type TEXT NOT NULL,
+                tab TEXT NOT NULL,
+                conclusion TEXT,
+                confidence TEXT,
+                findings_json TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            )
+        """)
         conn.commit()
 
     # -- writes ---------------------------------------------------------------
@@ -570,6 +584,100 @@ class ImagingDataStore:
         parts.append(f"with {capacity_str}")
         parts.append("covering ownership, offtake, grid access, and acquisition risks")
         return " ".join(parts)
+
+    # -- SEP-045: feasibility results ------------------------------------------
+
+    def upsert_feasibility_result(
+        self,
+        item_id: str,
+        item_type: str,
+        tab: str,
+        conclusion: str,
+        confidence: str,
+        findings: dict,
+    ):
+        """Insert or replace a feasibility tab result."""
+        result_id = f"{item_id}:{tab}"
+        now_utc = datetime.now(timezone.utc).isoformat()
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT created_at FROM feasibility_results WHERE id = ?",
+            (result_id,),
+        )
+        existing = cur.fetchone()
+        created_at = existing["created_at"] if existing else now_utc
+        cur.execute(
+            """INSERT OR REPLACE INTO feasibility_results
+               (id, item_id, item_type, tab, conclusion, confidence,
+                findings_json, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                result_id,
+                item_id,
+                item_type,
+                tab,
+                conclusion,
+                confidence,
+                json.dumps(findings),
+                created_at,
+                now_utc,
+            ),
+        )
+        self.conn.commit()
+
+    def get_feasibility_results(self, item_id: str) -> list:
+        """Return all tab results for an item as a list of dicts."""
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT * FROM feasibility_results WHERE item_id = ?",
+            (item_id,),
+        )
+        return [self._row_to_feasibility_result(row) for row in cur.fetchall()]
+
+    def get_feasibility_result(self, item_id: str, tab: str) -> Optional[dict]:
+        """Return a single tab result or None if not yet run."""
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT * FROM feasibility_results WHERE item_id = ? AND tab = ?",
+            (item_id, tab),
+        )
+        row = cur.fetchone()
+        return self._row_to_feasibility_result(row) if row else None
+
+    def get_feasibility_progress(self, item_id: str) -> dict:
+        """Return completion summary: {completed, total, tabs}."""
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT tab, conclusion FROM feasibility_results WHERE item_id = ?",
+            (item_id,),
+        )
+        rows = cur.fetchall()
+        tabs = {row["tab"]: row["conclusion"] for row in rows}
+        return {
+            "completed": len(tabs),
+            "total": 5,
+            "tabs": tabs,
+        }
+
+    @staticmethod
+    def _row_to_feasibility_result(row: sqlite3.Row) -> dict:
+        findings = json.loads(row["findings_json"]) if row["findings_json"] else {}
+        result = {
+            "id": row["id"],
+            "item_id": row["item_id"],
+            "item_type": row["item_type"],
+            "tab": row["tab"],
+            "conclusion": row["conclusion"],
+            "confidence": row["confidence"],
+            "findings": findings,
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+        # Flatten findings keys into top-level for convenience
+        for k, v in findings.items():
+            if k not in result:
+                result[k] = v
+        return result
 
     # -- SEP-044: scouting stage management ------------------------------------
 

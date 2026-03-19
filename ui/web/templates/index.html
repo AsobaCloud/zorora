@@ -1890,6 +1890,112 @@
                 grid-template-columns: 1fr;
             }
         }
+
+        /* SEP-045: Feasibility panel styles */
+        #feasibilityPanel {
+            margin-top: 18px;
+            border: 1px solid var(--border-grey);
+            border-radius: 14px;
+            padding: 16px;
+            background: rgba(255,255,255,0.96);
+            box-shadow: 0 8px 24px rgba(15,23,42,0.05);
+        }
+        .feasibility-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        .feasibility-progress-badge {
+            margin-left: 10px;
+            font-size: 0.78rem;
+            font-weight: 600;
+            padding: 3px 10px;
+            border-radius: 10px;
+            background: #e5e7eb;
+            color: var(--text-light);
+        }
+        .feasibility-content {
+            min-height: 120px;
+        }
+        .conclusion-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            font-weight: 700;
+            text-transform: capitalize;
+        }
+        .conclusion-badge.favorable { background: #dcfce7; color: #166534; }
+        .conclusion-badge.marginal { background: #fef3c7; color: #92400e; }
+        .conclusion-badge.unfavorable { background: #fee2e2; color: #991b1b; }
+        .confidence-label {
+            font-size: 0.76rem;
+            color: var(--text-light);
+            margin-left: 8px;
+            text-transform: capitalize;
+        }
+        .feasibility-finding {
+            margin: 12px 0;
+            font-size: 0.88rem;
+            line-height: 1.55;
+            color: var(--text-dark);
+        }
+        .feasibility-list-section {
+            margin: 10px 0;
+        }
+        .feasibility-list-section h5 {
+            margin: 0 0 6px;
+            font-size: 0.82rem;
+            color: var(--text-light);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .feasibility-list-section ul {
+            margin: 0;
+            padding-left: 18px;
+            font-size: 0.84rem;
+            color: var(--text-dark);
+        }
+        .feasibility-list-section li {
+            margin-bottom: 4px;
+        }
+        .feasibility-chart {
+            margin: 12px 0;
+            text-align: center;
+        }
+        .feasibility-chart img {
+            max-width: 100%;
+            border-radius: 8px;
+            border: 1px solid var(--border-grey);
+        }
+        .feasibility-run-btn {
+            display: block;
+            margin: 20px auto;
+            padding: 10px 24px;
+            border: 1px solid var(--border-grey);
+            border-radius: 10px;
+            background: var(--text-dark);
+            color: #fff;
+            font-size: 0.88rem;
+            cursor: pointer;
+        }
+        .feasibility-loading {
+            text-align: center;
+            padding: 30px;
+            color: var(--text-light);
+            font-size: 0.88rem;
+        }
+        .kanban-card-progress {
+            font-size: 0.72rem;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 8px;
+            background: #dbeafe;
+            color: #1e40af;
+            margin-top: 6px;
+            display: inline-block;
+        }
     </style>
 </head>
 <body>
@@ -2306,6 +2412,26 @@
                     <button class="scouting-tab-btn" data-scouttype="bess" onclick="switchScoutingTab('bess')">BESS</button>
                 </div>
                 <div class="kanban-board" id="kanbanBoard"></div>
+
+                <div class="hidden" id="feasibilityPanel">
+                    <div class="feasibility-header">
+                        <div>
+                            <strong id="feasibilityItemName">Site Name</strong>
+                            <span class="feasibility-progress-badge" id="feasibilityProgressBadge">0/5 done</span>
+                        </div>
+                        <button type="button" class="imaging-mini-btn" onclick="closeFeasibilityPanel()">Close</button>
+                    </div>
+                    <div class="scouting-tabs" id="feasibilityTabs">
+                        <button class="scouting-tab-btn active" data-ftab="production" onclick="switchFeasibilityTab('production')">Production</button>
+                        <button class="scouting-tab-btn" data-ftab="trading" onclick="switchFeasibilityTab('trading')">Trading</button>
+                        <button class="scouting-tab-btn" data-ftab="grid" onclick="switchFeasibilityTab('grid')">Grid Connection</button>
+                        <button class="scouting-tab-btn" data-ftab="regulatory" onclick="switchFeasibilityTab('regulatory')">Regulatory</button>
+                        <button class="scouting-tab-btn" data-ftab="financial" onclick="switchFeasibilityTab('financial')">Financial</button>
+                    </div>
+                    <div id="feasibilityContent" class="feasibility-content">
+                        <div class="kanban-empty">Select a tab and run a study.</div>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -4945,7 +5071,8 @@
                            <button onclick="moveToStage(${idAttr}, '${type}', 'diligence')">Diligence</button>
                            <button class="danger" onclick="removeScoutingItem(${idAttr}, '${type}')">Remove</button>`;
             } else if (stage === 'feasibility') {
-                actions = `<button onclick="moveToStage(${idAttr}, '${type}', 'diligence')">Diligence</button>`;
+                actions = `<button onclick="openFeasibilityPanel(${idAttr}, '${type}')">Open Feasibility</button>
+                           <button onclick="moveToStage(${idAttr}, '${type}', 'diligence')">Diligence</button>`;
             } else if (stage === 'diligence') {
                 actions = `<button onclick="moveToStage(${idAttr}, '${type}', 'decision')">Decision</button>`;
             } else if (stage === 'decision') {
@@ -5010,6 +5137,145 @@
                 alert('Scouting delete error: ' + error.message);
             }
         }
+        // ----- SEP-045: Feasibility panel functions -----
+        let activeFeasibilityItemId = null;
+        let activeFeasibilityType = null;
+        let activeFeasibilityTab = 'production';
+        let feasibilityResultsCache = {};
+
+        async function openFeasibilityPanel(itemId, type) {
+            activeFeasibilityItemId = itemId;
+            activeFeasibilityType = type;
+            activeFeasibilityTab = 'production';
+            const panel = document.getElementById('feasibilityPanel');
+            panel.classList.remove('hidden');
+            document.querySelectorAll('#feasibilityTabs .scouting-tab-btn').forEach(b => {
+                b.classList.toggle('active', b.dataset.ftab === 'production');
+            });
+            try {
+                const resp = await fetch(`/api/scouting/items/${encodeURIComponent(itemId)}/feasibility`);
+                const data = await resp.json();
+                feasibilityResultsCache = {};
+                (data.results || []).forEach(r => { feasibilityResultsCache[r.tab] = r; });
+                const progress = data.progress || {completed: 0, total: 5};
+                document.getElementById('feasibilityProgressBadge').textContent = `${progress.completed}/${progress.total} done`;
+                // Try to get the item name
+                const items = document.querySelectorAll('.kanban-card strong');
+                document.getElementById('feasibilityItemName').textContent = `Feasibility Study`;
+                renderFeasibilityTab();
+            } catch (err) {
+                document.getElementById('feasibilityContent').innerHTML = `<div class="kanban-empty">Error: ${escapeHtml(err.message)}</div>`;
+            }
+        }
+
+        function closeFeasibilityPanel() {
+            document.getElementById('feasibilityPanel').classList.add('hidden');
+            activeFeasibilityItemId = null;
+            feasibilityResultsCache = {};
+        }
+
+        function switchFeasibilityTab(tab) {
+            activeFeasibilityTab = tab;
+            document.querySelectorAll('#feasibilityTabs .scouting-tab-btn').forEach(b => {
+                b.classList.toggle('active', b.dataset.ftab === tab);
+            });
+            renderFeasibilityTab();
+        }
+
+        function renderFeasibilityTab() {
+            const container = document.getElementById('feasibilityContent');
+            const tab = activeFeasibilityTab;
+            const result = feasibilityResultsCache[tab];
+            if (result) {
+                renderFeasibilityResult(container, result);
+            } else {
+                container.innerHTML = `
+                    <div style="text-align:center;padding:24px;">
+                        <p style="color:var(--text-light);font-size:0.88rem;margin-bottom:16px;">
+                            No ${tab} study has been run yet for this site.
+                        </p>
+                        <button type="button" class="feasibility-run-btn" onclick="runFeasibilityStudy('${tab}')">
+                            Run ${tab.charAt(0).toUpperCase() + tab.slice(1)} Study
+                        </button>
+                    </div>`;
+            }
+        }
+
+        function renderFeasibilityResult(container, result) {
+            const conclusion = result.conclusion || 'unknown';
+            const confidence = result.confidence || 'unknown';
+            const finding = escapeHtml(result.key_finding || result.findings?.key_finding || 'No finding available.');
+            const risks = result.risks || result.findings?.risks || [];
+            const gaps = result.gaps || result.findings?.gaps || [];
+            const sources = result.sources || result.findings?.sources || [];
+            const chart = result.chart_b64 || result.findings?.chart_b64 || null;
+            const tab = result.tab;
+
+            let html = `
+                <div style="margin-bottom:12px;">
+                    <span class="conclusion-badge ${conclusion}">${conclusion}</span>
+                    <span class="confidence-label">Confidence: ${confidence}</span>
+                </div>
+                <div class="feasibility-finding">${finding}</div>`;
+
+            if (chart) {
+                const src = chart.startsWith('data:') ? chart : `data:image/png;base64,${chart}`;
+                html += `<div class="feasibility-chart"><img src="${src}" alt="${tab} chart"></div>`;
+            }
+
+            if (risks.length > 0) {
+                html += `<div class="feasibility-list-section"><h5>Key Risks</h5><ul>`;
+                risks.forEach(r => { html += `<li>${escapeHtml(String(r))}</li>`; });
+                html += `</ul></div>`;
+            }
+
+            if (gaps.length > 0) {
+                html += `<div class="feasibility-list-section"><h5>Data Gaps</h5><ul>`;
+                gaps.forEach(g => { html += `<li>${escapeHtml(String(g))}</li>`; });
+                html += `</ul></div>`;
+            }
+
+            if (sources.length > 0) {
+                html += `<div class="feasibility-list-section"><h5>Sources</h5><ul>`;
+                sources.forEach(s => { html += `<li>${escapeHtml(String(s))}</li>`; });
+                html += `</ul></div>`;
+            }
+
+            html += `<button type="button" class="feasibility-run-btn" style="margin-top:14px;" onclick="runFeasibilityStudy('${tab}')">Re-run ${tab.charAt(0).toUpperCase() + tab.slice(1)} Study</button>`;
+
+            container.innerHTML = html;
+        }
+
+        async function runFeasibilityStudy(tab) {
+            if (!activeFeasibilityItemId) return;
+            const container = document.getElementById('feasibilityContent');
+            container.innerHTML = '<div class="feasibility-loading">Running analysis... This may take a moment.</div>';
+            try {
+                const resp = await fetch(`/api/scouting/items/${encodeURIComponent(activeFeasibilityItemId)}/feasibility/${tab}`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({item_type: activeFeasibilityType}),
+                });
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.error || 'Study failed');
+                feasibilityResultsCache[tab] = data;
+                // Refresh progress
+                const progressResp = await fetch(`/api/scouting/items/${encodeURIComponent(activeFeasibilityItemId)}/feasibility`);
+                const progressData = await progressResp.json();
+                const progress = progressData.progress || {completed: 0, total: 5};
+                document.getElementById('feasibilityProgressBadge').textContent = `${progress.completed}/${progress.total} done`;
+                (progressData.results || []).forEach(r => { feasibilityResultsCache[r.tab] = r; });
+                renderFeasibilityTab();
+                // Refresh kanban to update progress badge on card
+                await loadScoutingView();
+                // Re-show the panel (loadScoutingView may not affect it since it's separate)
+                document.getElementById('feasibilityPanel').classList.remove('hidden');
+            } catch (err) {
+                container.innerHTML = `<div class="kanban-empty">Error: ${escapeHtml(err.message)}</div>`;
+            }
+        }
+        // ----- end SEP-045 -----
+
         // ----- end SEP-044 -----
 
         async function scoreScoutSite(lat, lon) {
