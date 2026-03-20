@@ -37,7 +37,15 @@ def _parse_csv(
     """Generic CSV parser that returns {column_key: [(datetime, value), ...]}."""
     result: Dict[str, List[Tuple[str, float]]] = {}
     try:
-        with open(file_path, newline="", encoding="utf-8-sig") as f:
+        if file_path.startswith("http://") or file_path.startswith("https://"):
+            import io
+            import requests
+            resp = requests.get(file_path, timeout=30)
+            resp.raise_for_status()
+            f = io.StringIO(resp.content.decode("utf-8-sig"))
+        else:
+            f = open(file_path, newline="", encoding="utf-8-sig")
+        with f:
             reader = csv.DictReader(f)
             if reader.fieldnames is None:
                 return result

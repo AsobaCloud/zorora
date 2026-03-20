@@ -103,7 +103,7 @@ class PromoteModelCommand(RemoteCommand):
         try:
             response = input(f"{message} (yes/no): ")
             return response.lower() in ['yes', 'y']
-        except:
+        except Exception:
             return False
     
     def execute(self, args: List[str], context: Dict[str, Any]) -> str:
@@ -185,7 +185,7 @@ class RollbackModelCommand(RemoteCommand):
         try:
             response = input(f"{message} (yes/no): ")
             return response.lower() in ['yes', 'y']
-        except:
+        except Exception:
             return False
     
     def execute(self, args: List[str], context: Dict[str, Any]) -> str:

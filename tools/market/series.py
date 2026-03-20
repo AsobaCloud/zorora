@@ -55,13 +55,34 @@ SERIES_CATALOG: Dict[str, MarketSeries] = {
     "LIT": MarketSeries("LIT", "Lithium Miners ETF", "USD", "daily", "etf_proxies", "yfinance"),
     "URA": MarketSeries("URA", "Uranium Miners ETF", "USD", "daily", "etf_proxies", "yfinance"),
     "REMX": MarketSeries("REMX", "Rare Earth ETF", "USD", "daily", "etf_proxies", "yfinance"),
-    # --- World Bank Indicators (provider="worldbank", frequency="annual") ---
-    "NY.GDP.MKTP.CD": MarketSeries("NY.GDP.MKTP.CD", "World GDP (current USD)", "USD", "annual", "development", "worldbank"),
-    "NY.GDP.MKTP.KD.ZG": MarketSeries("NY.GDP.MKTP.KD.ZG", "World GDP Growth", "%", "annual", "development", "worldbank"),
-    "FP.CPI.TOTL.ZG": MarketSeries("FP.CPI.TOTL.ZG", "World Inflation (CPI)", "%", "annual", "development", "worldbank"),
-    "NE.TRD.GNFS.ZS": MarketSeries("NE.TRD.GNFS.ZS", "Trade (% of GDP)", "%", "annual", "development", "worldbank"),
-    "BX.KLT.DINV.WD.GD.ZS": MarketSeries("BX.KLT.DINV.WD.GD.ZS", "FDI Inflows (% GDP)", "%", "annual", "development", "worldbank"),
-    "SI.POV.DDAY": MarketSeries("SI.POV.DDAY", "Poverty ($2.15/day)", "%", "annual", "development", "worldbank"),
+    # --- SADC Electricity Indicators (provider="worldbank", frequency="annual") ---
+    # South Africa
+    "wb_zaf_elc_coal": MarketSeries("wb_zaf_elc_coal", "SA Electricity from Coal", "%", "annual", "sadc_electricity", "worldbank"),
+    "wb_zaf_elc_renew": MarketSeries("wb_zaf_elc_renew", "SA Renewable Electricity", "%", "annual", "sadc_electricity", "worldbank"),
+    "wb_zaf_elc_loss": MarketSeries("wb_zaf_elc_loss", "SA T&D Losses", "%", "annual", "sadc_electricity", "worldbank"),
+    "wb_zaf_elc_pc": MarketSeries("wb_zaf_elc_pc", "SA Per-Capita Consumption", "kWh", "annual", "sadc_electricity", "worldbank"),
+    "wb_zaf_elc_access": MarketSeries("wb_zaf_elc_access", "SA Electricity Access", "%", "annual", "sadc_electricity", "worldbank"),
+    # Zimbabwe
+    "wb_zwe_elc_coal": MarketSeries("wb_zwe_elc_coal", "ZW Electricity from Coal", "%", "annual", "sadc_electricity", "worldbank"),
+    "wb_zwe_elc_renew": MarketSeries("wb_zwe_elc_renew", "ZW Renewable Electricity", "%", "annual", "sadc_electricity", "worldbank"),
+    "wb_zwe_elc_loss": MarketSeries("wb_zwe_elc_loss", "ZW T&D Losses", "%", "annual", "sadc_electricity", "worldbank"),
+    "wb_zwe_elc_pc": MarketSeries("wb_zwe_elc_pc", "ZW Per-Capita Consumption", "kWh", "annual", "sadc_electricity", "worldbank"),
+    "wb_zwe_elc_access": MarketSeries("wb_zwe_elc_access", "ZW Electricity Access", "%", "annual", "sadc_electricity", "worldbank"),
+    # Mozambique
+    "wb_moz_elc_renew": MarketSeries("wb_moz_elc_renew", "MZ Renewable Electricity", "%", "annual", "sadc_electricity", "worldbank"),
+    "wb_moz_elc_access": MarketSeries("wb_moz_elc_access", "MZ Electricity Access", "%", "annual", "sadc_electricity", "worldbank"),
+    # Zambia
+    "wb_zmb_elc_renew": MarketSeries("wb_zmb_elc_renew", "ZM Renewable Electricity", "%", "annual", "sadc_electricity", "worldbank"),
+    "wb_zmb_elc_access": MarketSeries("wb_zmb_elc_access", "ZM Electricity Access", "%", "annual", "sadc_electricity", "worldbank"),
+    # --- Ember Energy (provider="ember", frequency="monthly") ---
+    "ember_zaf_coal": MarketSeries("ember_zaf_coal", "SA Coal Generation", "TWh", "monthly", "ember_generation", "ember"),
+    "ember_zaf_wind": MarketSeries("ember_zaf_wind", "SA Wind Generation", "TWh", "monthly", "ember_generation", "ember"),
+    "ember_zaf_solar": MarketSeries("ember_zaf_solar", "SA Solar Generation", "TWh", "monthly", "ember_generation", "ember"),
+    "ember_zaf_demand": MarketSeries("ember_zaf_demand", "SA Electricity Demand", "TWh", "monthly", "ember_generation", "ember"),
+    "ember_zaf_total_gen": MarketSeries("ember_zaf_total_gen", "SA Total Generation", "TWh", "monthly", "ember_generation", "ember"),
+    "ember_zaf_renewables_pct": MarketSeries("ember_zaf_renewables_pct", "SA Renewables Share", "%", "monthly", "ember_generation", "ember"),
+    "ember_zwe_coal": MarketSeries("ember_zwe_coal", "ZW Coal Generation", "TWh", "monthly", "ember_generation", "ember"),
+    "ember_zwe_demand": MarketSeries("ember_zwe_demand", "ZW Electricity Demand", "TWh", "monthly", "ember_generation", "ember"),
     # --- SAPP Day-Ahead Market (provider="sapp", frequency="hourly") ---
     "sapp_dam_rsan_usd": MarketSeries("sapp_dam_rsan_usd", "SAPP DAM RSA-North (USD)", "USD/MWh", "hourly", "sapp_prices", "sapp"),
     "sapp_dam_rsan_zar": MarketSeries("sapp_dam_rsan_zar", "SAPP DAM RSA-North (ZAR)", "ZAR/MWh", "hourly", "sapp_prices", "sapp"),

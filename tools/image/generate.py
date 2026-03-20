@@ -83,7 +83,7 @@ def generate_image(prompt: str, filename: str = "") -> str:
             try:
                 error_detail = response.json()
                 error_msg += f": {error_detail}"
-            except:
+            except Exception:
                 error_msg += f": {response.text[:200]}"
             return f"Error: Image generation failed - {error_msg}"
 

@@ -20,7 +20,7 @@ import boto3
 import requests
 import time
 from datetime import datetime, timedelta
-from typing import Dict, Tuple
+from typing import Tuple
 
 # Add project root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -73,7 +73,7 @@ def phase0_preflight():
             sys.exit(1)
         
         if response.status_code == 404:
-            print(f"✗ FAIL: Endpoint not found (HTTP 404)")
+            print("✗ FAIL: Endpoint not found (HTTP 404)")
             print("  This indicates:")
             print("    1. API Gateway is reachable")
             print("    2. BUT: Route is not configured correctly")
@@ -92,7 +92,7 @@ def phase0_preflight():
             print(f"✓ PASS: Endpoint reachable and responding (HTTP {response.status_code})")
         
     except requests.exceptions.ConnectionError as e:
-        print(f"✗ FAIL: Cannot connect to API Gateway")
+        print("✗ FAIL: Cannot connect to API Gateway")
         print(f"  Error: {str(e)}")
         print()
         print("  Check:")
@@ -102,7 +102,7 @@ def phase0_preflight():
         sys.exit(1)
     
     except requests.exceptions.Timeout:
-        print(f"✗ FAIL: Request timeout")
+        print("✗ FAIL: Request timeout")
         print("  Check:")
         print("    - API Gateway is deployed and healthy")
         print("    - Lambda function is not timing out")
@@ -159,7 +159,7 @@ def phase0_preflight():
                 print("  Lambda is parsing requests and validating inputs")
             else:
                 print("⚠ WARNING: Lambda returned 400 but error message unclear")
-        except:
+        except Exception:
             print("⚠ WARNING: Lambda returned 400 but response not JSON")
     elif response.status_code == 500:
         # Check if error indicates Lambda is running business logic
@@ -259,7 +259,7 @@ def phase1_setup(s3, bucket: str, customer_id: str) -> Tuple[str, str, str, str]
         Key=f"model_metrics/{customer_id}/production/model_{production_timestamp}/backtest_results.json",
         Body=json.dumps(production_metrics, indent=2)
     )
-    print(f"✓ Created production metrics")
+    print("✓ Created production metrics")
     print()
     
     print("Step 1.4: Create Challenger Model Entry")
@@ -314,7 +314,7 @@ def phase1_setup(s3, bucket: str, customer_id: str) -> Tuple[str, str, str, str]
         Key=f"model_metrics/{customer_id}/{customer_id}/challenger_{challenger_trained}/backtest_results.json",
         Body=json.dumps(challenger_metrics, indent=2)
     )
-    print(f"✓ Created challenger metrics")
+    print("✓ Created challenger metrics")
     print()
     
     print("Step 1.6: Initialize Audit Log")
@@ -329,7 +329,7 @@ def phase1_setup(s3, bucket: str, customer_id: str) -> Tuple[str, str, str, str]
         Key=f"audit_logs/{customer_id}/events.json",
         Body=json.dumps(audit_log, indent=2)
     )
-    print(f"✓ Created audit log")
+    print("✓ Created audit log")
     
     return production_model_id, challenger_model_id, production_timestamp, challenger_trained
 
@@ -343,9 +343,13 @@ def parse_command_result(result):
     if isinstance(result, str):
         try:
             # Try to extract JSON from formatted string
-            return json.loads(result)
-        except:
-            # If not JSON, return as-is
+            try:
+                return json.loads(result)
+            except Exception:
+                # If not JSON, return as-is
+                return result
+        except Exception:
+            # If any error occurs, return as-is
             return result
     return result
 
@@ -581,7 +585,7 @@ def phase4_errors(s3, bucket: str, customer_id: str, challenger_model_id: str):
     try:
         cmd = PromoteModelCommand(http_client, ui=None)
         try:
-            result = cmd.execute([customer_id, "nonexistent_model", "Test error handling"], context)
+            cmd.execute([customer_id, "nonexistent_model", "Test error handling"], context)
             assert False, "Command should have raised an exception"
         except Exception as e:
             error_msg = str(e).lower()
@@ -602,7 +606,7 @@ def phase4_errors(s3, bucket: str, customer_id: str, challenger_model_id: str):
     print("Step 4.2: Validate ml-promote (Short Reason)")
     try:
         try:
-            result = cmd.execute([customer_id, challenger_model_id, "short"], context)
+            cmd.execute([customer_id, challenger_model_id, "short"], context)
             assert False, "Command should have raised an exception"
         except Exception as e:
             error_msg = str(e).lower()
@@ -625,16 +629,16 @@ def phase5_cleanup(s3, bucket: str, customer_id: str, production_timestamp: str,
     try:
         # Delete registry
         s3.delete_object(Bucket=bucket, Key=f"customer_tailored/{customer_id}/latest_model.json")
-        print(f"✓ Deleted registry")
+        print("✓ Deleted registry")
         
         # Delete metrics files
         s3.delete_object(Bucket=bucket, Key=f"model_metrics/{customer_id}/production/model_{production_timestamp}/backtest_results.json")
         s3.delete_object(Bucket=bucket, Key=f"model_metrics/{customer_id}/{customer_id}/challenger_{challenger_trained}/backtest_results.json")
-        print(f"✓ Deleted metrics files")
+        print("✓ Deleted metrics files")
         
         # Delete audit log
         s3.delete_object(Bucket=bucket, Key=f"audit_logs/{customer_id}/events.json")
-        print(f"✓ Deleted audit log")
+        print("✓ Deleted audit log")
         
         # Delete archived files
         archive_prefix = f"customer_tailored/{customer_id}/archived/"

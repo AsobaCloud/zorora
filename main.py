@@ -3,15 +3,10 @@
 import sys
 import os
 import logging
-import threading
-import time
 from repl import REPL
 from config import LOGGING_LEVEL, LOGGING_FORMAT, LOG_FILE
 import config
-from workflows.market_workflow import MarketWorkflow
-from workflows.regulatory_workflow import RegulatoryWorkflow
-from tools.alerts.store import AlertStore
-from workflows.alert_runner import execute_alert
+from workflows.background_threads import start_all_background_threads
 
 # Configure logging
 # Always write to file
@@ -30,60 +25,6 @@ logging.basicConfig(
     handlers=handlers
 )
 logger = logging.getLogger(__name__)
-
-
-def _start_market_refresh_thread():
-    """Start a daemon thread that incrementally updates stale market series."""
-    def _refresh_loop():
-        while True:
-            try:
-                wf = MarketWorkflow()
-                updated = wf.update_all()
-                if updated:
-                    logger.info("Background refresh: updated %d series", updated)
-            except Exception as e:
-                logger.debug("Background refresh failed: %s", e)
-            time.sleep(config.MARKET_DATA.get("stale_threshold_hours", 24) * 3600)
-
-    t = threading.Thread(target=_refresh_loop, daemon=True, name="market-refresh")
-    t.start()
-    return t
-
-
-def _start_regulatory_refresh_thread():
-    """Start a daemon thread that incrementally updates stale regulatory sources."""
-    def _refresh_loop():
-        while True:
-            try:
-                workflow = RegulatoryWorkflow()
-                updated = workflow.update_all()
-                if updated:
-                    logger.info("Background regulatory refresh: updated %d sources", updated)
-            except Exception as e:
-                logger.debug("Background regulatory refresh failed: %s", e)
-            time.sleep(config.REGULATORY.get("stale_threshold_hours", 168) * 3600)
-
-    t = threading.Thread(target=_refresh_loop, daemon=True, name="regulatory-refresh")
-    t.start()
-    return t
-
-
-def _start_alert_check_thread():
-    """Start a daemon thread that executes due digest alerts."""
-    def _alert_loop():
-        while True:
-            try:
-                store = AlertStore()
-                due = store.get_due_alerts()
-                for alert in due:
-                    execute_alert(alert, store)
-            except Exception as e:
-                logger.debug("Alert check failed: %s", e)
-            time.sleep(config.ALERTS.get("check_interval_seconds", 300))
-
-    t = threading.Thread(target=_alert_loop, daemon=True, name="alert-check")
-    t.start()
-    return t
 
 
 def main():
@@ -119,10 +60,8 @@ def main():
     # Initialize and run REPL
     repl = REPL()
 
-    # Start background market data refresh
-    _start_market_refresh_thread()
-    _start_regulatory_refresh_thread()
-    _start_alert_check_thread()
+    # Start background data refresh threads
+    start_all_background_threads()
 
     # Register ONA platform commands (if configured)
     try:
