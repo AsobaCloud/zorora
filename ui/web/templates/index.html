@@ -2238,9 +2238,10 @@
                 <div id="gvMapCoverage" style="font-size:0.82rem;color:var(--text-light);margin-bottom:6px;"></div>
                 <div id="global-map-container"></div>
 
-                <div class="tab-bar" id="gvDataTabs" style="margin:16px 0 10px;">
+                <div class="tab-bar" id="gvDataTabs" style="margin:16px 0 10px;display:flex;align-items:center;">
                     <button class="active" data-gvtab="datasets">Commodity Datasets</button>
                     <button data-gvtab="articles">Articles</button>
+                    <button onclick="refreshAllMarketData()" style="margin-left:auto;padding:6px 14px;font-size:0.82rem;border:1px solid var(--border-grey);border-radius:8px;background:#fff;cursor:pointer;color:var(--text-dark);" id="refreshMarketBtn">↻ Refresh All Data</button>
                 </div>
                 <div id="gvDatasetsTab">
                     <div class="dataset-cards-grid" id="datasetCardsGrid">
@@ -4094,6 +4095,32 @@
             });
         }
 
+        const DATASET_GROUP_ORDER = ['sapp_prices', 'eskom_demand', 'eskom_station_buildup', 'eskom_re_generation', 'ember_generation', 'sadc_electricity', 'commodities', 'metals', 'fx', 'etf_proxies', 'treasuries', 'rates'];
+        const DATASET_GROUP_LABELS = {
+            sapp_prices: 'SAPP Day-Ahead Market',
+            eskom_demand: 'Eskom Demand',
+            eskom_station_buildup: 'Eskom Station Build-Up',
+            eskom_re_generation: 'Eskom RE Generation',
+            ember_generation: 'SA Generation Mix (Ember)',
+            sadc_electricity: 'SADC Electricity (World Bank)',
+            commodities: 'Commodities',
+            metals: 'Metals & Materials',
+            fx: 'FX Rates',
+            etf_proxies: 'ETF Proxies',
+            treasuries: 'Treasuries',
+            rates: 'Policy Rates',
+        };
+
+        function freshnessLabel(lastFetched) {
+            if (!lastFetched) return '';
+            const diff = Date.now() - new Date(lastFetched).getTime();
+            const hours = Math.floor(diff / 3600000);
+            if (hours < 1) return 'just now';
+            if (hours < 24) return hours + 'h ago';
+            const days = Math.floor(hours / 24);
+            return days + 'd ago';
+        }
+
         function renderDatasetCards(datasets) {
             const grid = document.getElementById('datasetCardsGrid');
             if (!grid) return;
@@ -4101,20 +4128,71 @@
                 grid.innerHTML = '<div style="color:var(--text-light);font-size:0.9rem;">No dataset data available.</div>';
                 return;
             }
-            grid.innerHTML = datasets.map(ds => {
-                const changeClass = (ds.pct_change || 0) >= 0 ? 'positive' : 'negative';
-                const changeSign = (ds.pct_change || 0) >= 0 ? '+' : '';
-                const isStaged = stagedItems.some(i => i.type === 'dataset' && i.data.series_id === ds.series_id);
-                return `<div class="dataset-card">
-                    <div class="dataset-card-name">${escapeHtml(ds.name)}</div>
-                    <div class="dataset-card-value">${ds.latest_value != null ? ds.latest_value.toLocaleString() : 'N/A'}</div>
-                    ${ds.pct_change != null ? `<div class="dataset-card-change ${changeClass}">${changeSign}${ds.pct_change}%</div>` : ''}
-                    <div class="dataset-card-meta">${escapeHtml(ds.unit)} | ${escapeHtml(ds.source)} | ${escapeHtml(ds.latest_date || '')}</div>
-                    <button class="stage-btn${isStaged ? ' staged' : ''}" onclick="stageItem('dataset', ${escapeAttr(JSON.stringify(ds))}); this.classList.add('staged'); this.textContent='Staged';">
-                        ${isStaged ? 'Staged' : '+Add'}
-                    </button>
-                </div>`;
-            }).join('');
+            // Group by group field
+            const groups = {};
+            datasets.forEach(ds => {
+                const g = ds.group || 'other';
+                if (!groups[g]) groups[g] = [];
+                groups[g].push(ds);
+            });
+            // Render in order
+            const orderedGroups = DATASET_GROUP_ORDER.filter(g => groups[g]);
+            // Add any groups not in the order
+            Object.keys(groups).forEach(g => { if (!orderedGroups.includes(g)) orderedGroups.push(g); });
+
+            let html = '';
+            orderedGroups.forEach(groupKey => {
+                const items = groups[groupKey];
+                if (!items || items.length === 0) return;
+                const label = DATASET_GROUP_LABELS[groupKey] || groupKey;
+                // Compute freshness from oldest last_fetched in group
+                const fetched = items.filter(d => d.last_fetched).map(d => d.last_fetched);
+                const oldest = fetched.length ? fetched.sort()[0] : null;
+                const fresh = freshnessLabel(oldest);
+                const isManual = groupKey === 'sapp_prices';
+                const freshText = isManual ? (fresh ? `manual · ${fresh}` : 'manual') : (fresh || '');
+
+                const groupId = 'dsGroup_' + groupKey;
+                html += `<div style="margin-bottom:8px;">`;
+                html += `<div onclick="document.getElementById('${groupId}').classList.toggle('hidden')" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border-grey);margin-bottom:6px;">`;
+                html += `<span style="font-size:0.75rem;color:var(--text-light);" id="${groupId}_arrow">▶</span>`;
+                html += `<span style="font-weight:600;font-size:0.85rem;color:var(--text-dark);">${escapeHtml(label)} (${items.length})</span>`;
+                html += `<span style="flex:1;border-bottom:1px dashed var(--border-grey);margin:0 8px;"></span>`;
+                html += `<span style="font-size:0.78rem;color:var(--text-light);">${escapeHtml(freshText)}</span>`;
+                html += `</div>`;
+                html += `<div id="${groupId}" class="dataset-cards-grid hidden">`;
+                items.forEach(ds => {
+                    const changeClass = (ds.pct_change || 0) >= 0 ? 'positive' : 'negative';
+                    const changeSign = (ds.pct_change || 0) >= 0 ? '+' : '';
+                    const isStaged = stagedItems.some(i => i.type === 'dataset' && i.data.series_id === ds.series_id);
+                    const freshLabel = ds.last_fetched ? freshnessLabel(ds.last_fetched) : '';
+                    html += `<div class="dataset-card">
+                        <div class="dataset-card-name">${escapeHtml(ds.name)}</div>
+                        <div class="dataset-card-value">${ds.latest_value != null ? ds.latest_value.toLocaleString() : 'N/A'}</div>
+                        ${ds.pct_change != null ? `<div class="dataset-card-change ${changeClass}">${changeSign}${ds.pct_change}%</div>` : ''}
+                        <div class="dataset-card-meta">${escapeHtml(ds.unit)} | ${escapeHtml(ds.source)} | ${escapeHtml(ds.latest_date || '')}${freshLabel ? ' · ' + freshLabel : ''}</div>
+                        <button class="stage-btn${isStaged ? ' staged' : ''}" onclick="stageItem('dataset', ${escapeAttr(JSON.stringify(ds))}); this.classList.add('staged'); this.textContent='Staged';">
+                            ${isStaged ? 'Staged' : '+Add'}
+                        </button>
+                    </div>`;
+                });
+                html += `</div></div>`;
+            });
+            grid.innerHTML = html;
+        }
+
+        async function refreshAllMarketData() {
+            const btn = document.getElementById('refreshMarketBtn');
+            if (btn) { btn.textContent = '↻ Refreshing...'; btn.disabled = true; }
+            try {
+                const resp = await fetch('/api/market/refresh', { method: 'POST' });
+                const data = await resp.json();
+                if (btn) btn.textContent = `↻ Updated ${data.updated || 0} series`;
+                setTimeout(() => { if (btn) { btn.textContent = '↻ Refresh All Data'; btn.disabled = false; } }, 3000);
+                loadGlobalView();
+            } catch (e) {
+                if (btn) { btn.textContent = '↻ Refresh failed'; btn.disabled = false; }
+            }
         }
 
         function formatRegulatoryDate(value) {

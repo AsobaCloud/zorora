@@ -131,7 +131,7 @@ Remember: Output ONLY the JSON. No thinking process, no tags, no extra text."""
         # Remove markdown code blocks
         if content.startswith("```"):
             lines = content.split("\n")
-            content = "\n".join(l for l in lines if not l.startswith("```"))
+            content = "\n".join(line for line in lines if not line.startswith("```"))
             content = content.strip()
 
         # Now try to extract JSON object

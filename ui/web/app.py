@@ -891,6 +891,13 @@ def get_market_latest():
                 pct_change = None
                 if prev_val and prev_val != 0:
                     pct_change = round(((latest_val - prev_val) / abs(prev_val)) * 100, 2)
+                # Compute freshness from fetch_metadata
+                staleness_hours = store.get_staleness(sid, provider=series.provider)
+                last_fetched = None
+                if staleness_hours is not None:
+                    from datetime import datetime, timedelta
+                    last_fetched = (datetime.utcnow() - timedelta(hours=staleness_hours)).isoformat() + "Z"
+
                 results.append({
                     "series_id": sid,
                     "name": series.label,
@@ -901,6 +908,7 @@ def get_market_latest():
                     "latest_date": latest_date,
                     "prev_value": prev_val,
                     "pct_change": pct_change,
+                    "last_fetched": last_fetched,
                 })
             except Exception as e:
                 logger.debug(f"Skipping series {sid}: {e}")
@@ -908,6 +916,19 @@ def get_market_latest():
         return jsonify(results)
     except Exception as e:
         logger.error(f"Market latest error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/market/refresh', methods=['POST'])
+def refresh_market_data_all():
+    """Force-refresh all market data immediately."""
+    try:
+        from workflows.market_workflow import MarketWorkflow
+        wf = MarketWorkflow()
+        count = wf.update_all(force=True)
+        return jsonify({"status": "ok", "updated": count})
+    except Exception as e:
+        logger.error(f"Market refresh error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 

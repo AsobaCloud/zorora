@@ -76,6 +76,9 @@ class MarketWorkflow:
         eskom_config = getattr(config, "ESKOM", {})
         if provider == "eskom" and not eskom_config.get("enabled", True):
             return False
+        ember_config = getattr(config, "EMBER", {})
+        if provider == "ember" and not ember_config.get("enabled", True):
+            return False
 
         staleness = self.store.get_staleness(series_id, provider=provider)
         if not force and staleness is not None and staleness < self.stale_hours:
@@ -92,8 +95,24 @@ class MarketWorkflow:
         if provider == "yfinance":
             obs = yfinance_client.fetch_observations(series_id, start_date=start_date)
         elif provider == "worldbank":
-            start_year = int(start_date[:4]) if start_date else None
-            obs = worldbank_client.fetch_observations(series_id, start_year=start_year)
+            # SADC electricity indicators: wb_zaf_elc_coal → country=ZAF, indicator=EG.ELC.COAL.ZS
+            wb_indicator_map = {
+                "elc_coal": "EG.ELC.COAL.ZS",
+                "elc_renew": "EG.ELC.RNEW.ZS",
+                "elc_loss": "EG.ELC.LOSS.ZS",
+                "elc_pc": "EG.USE.ELEC.KH.PC",
+                "elc_access": "EG.ELC.ACCS.ZS",
+            }
+            if series_id.startswith("wb_"):
+                parts = series_id.split("_", 2)  # wb, country, indicator_key
+                wb_country = parts[1].upper() if len(parts) > 1 else None
+                wb_key = parts[2] if len(parts) > 2 else ""
+                indicator = wb_indicator_map.get(wb_key, series_id)
+                start_year = int(start_date[:4]) if start_date else None
+                obs = worldbank_client.fetch_observations(indicator, country=wb_country, start_year=start_year)
+            else:
+                start_year = int(start_date[:4]) if start_date else None
+                obs = worldbank_client.fetch_observations(series_id, start_year=start_year)
         elif provider == "sapp":
             from tools.market import sapp_client
             # Derive node and currency from series_id: sapp_dam_rsan_usd
@@ -107,24 +126,51 @@ class MarketWorkflow:
             obs = sapp_client.fetch_observations(file_path, currency=currency)
         elif provider == "eskom":
             from tools.market import eskom_client
+            from datetime import datetime as _dt
             data_dir = eskom_config.get("data_dir", "data")
+            fetch_urls = eskom_config.get("fetch_urls", {})
+            now = _dt.utcnow()
+
+            def _eskom_source(config_key, local_file):
+                """Return HTTP URL if configured, else local file path."""
+                url_template = fetch_urls.get(config_key)
+                if url_template:
+                    return url_template.format(year=now.year, month=now.month)
+                return str(Path(data_dir) / eskom_config.get(local_file, local_file))
+
             # Route to correct parser based on series_id prefix
             if series_id.startswith("eskom_re_"):
                 col_key = series_id[len("eskom_re_"):]
-                file_path = str(Path(data_dir) / eskom_config.get("generation_file", "Hourly_Generation.csv"))
-                all_obs = eskom_client.fetch_generation_observations(file_path)
+                source = _eskom_source("generation", "generation_file")
+                all_obs = eskom_client.fetch_generation_observations(source)
                 obs = all_obs.get(col_key, [])
             elif series_id in ("eskom_residual_forecast", "eskom_rsa_contracted_forecast",
                                "eskom_residual_demand", "eskom_rsa_contracted_demand"):
                 col_key = series_id[len("eskom_"):]
-                file_path = str(Path(data_dir) / eskom_config.get("demand_file", "System_hourly_actual_and_forecasted_demand.csv"))
-                all_obs = eskom_client.fetch_demand_observations(file_path)
+                source = _eskom_source("demand", "demand_file")
+                all_obs = eskom_client.fetch_demand_observations(source)
                 obs = all_obs.get(col_key, [])
             else:
                 col_key = series_id[len("eskom_"):]
-                file_path = str(Path(data_dir) / eskom_config.get("station_buildup_file", "Station_Build_Up.csv"))
-                all_obs = eskom_client.fetch_station_buildup_observations(file_path)
+                source = _eskom_source("station_buildup", "station_buildup_file")
+                all_obs = eskom_client.fetch_station_buildup_observations(source)
                 obs = all_obs.get(col_key, [])
+        elif provider == "ember":
+            from tools.market import ember_client
+            # ember_zaf_coal → entity_code=ZAF, series_filter=Coal
+            ember_series_map = {
+                "coal": ("electricity-generation", "Coal"),
+                "wind": ("electricity-generation", "Wind"),
+                "solar": ("electricity-generation", "Solar"),
+                "demand": ("electricity-demand", "Demand"),
+                "total_gen": ("electricity-generation", "Total generation"),
+                "renewables_pct": ("electricity-generation", "Renewables"),
+            }
+            parts = series_id.split("_", 2)  # ember, country, key
+            entity_code = parts[1].upper() if len(parts) > 1 else "ZAF"
+            ember_key = parts[2] if len(parts) > 2 else ""
+            dataset, series_filter = ember_series_map.get(ember_key, ("electricity-generation", "Total generation"))
+            obs = ember_client.fetch_observations(dataset, entity_code=entity_code, series_filter=series_filter)
         else:
             obs = fred_client.fetch_observations(series_id, observation_start=start_date)
 

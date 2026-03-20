@@ -227,51 +227,50 @@ def gate1_endpoint_existence() -> Tuple[bool, List[Dict]]:
             
             status = response.status_code
             headers = dict(response.headers)
-            
             # Truncate body
             try:
                 body = response.json()
                 body_str = json.dumps(body, indent=2)[:2048]
                 if len(json.dumps(body)) > 2048:
                     body_str += "\n... (truncated)"
-            except:
+            except Exception:
                 body_str = response.text[:2048]
-                if len(response.text) > 2048:
-                    body_str += "... (truncated)"
+            if len(response.text) > 2048:
+                body_str += "... (truncated)"
             
             print(f"  HTTP Status: {status}")
             print(f"  Response Body: {body_str[:500]}...")
             
             # Pass criteria (aligned with ONA platform reality)
             if status == 200:
-                print(f"  ✓ PASS: HTTP 200 (endpoint exists and responds)")
+                print("  ✓ PASS: HTTP 200 (endpoint exists and responds)")
                 passed = True
             elif status == 400:
                 # Structured application error - proves Lambda is routing correctly
                 try:
                     error_body = response.json()
                     if 'error' in error_body or 'message' in error_body:
-                        print(f"  ✓ PASS: HTTP 400 with structured error (endpoint exists, Lambda routing works)")
+                        print("  ✓ PASS: HTTP 400 with structured error (endpoint exists, Lambda routing works)")
                         passed = True
                     else:
-                        print(f"  ✗ FAIL: HTTP 400 without structured error body")
+                        print("  ✗ FAIL: HTTP 400 without structured error body")
                         passed = False
-                except:
-                    print(f"  ✗ FAIL: HTTP 400 without JSON error body")
+                except Exception:
+                    print("  ✗ FAIL: HTTP 400 without JSON error body")
                     passed = False
             elif status == 500:
                 # Structured 500 error - proves endpoint exists and Lambda is invoked (Lambda implementation issue, not routing)
                 try:
                     error_body = response.json()
                     if 'error' in error_body or 'message' in error_body:
-                        print(f"  ✓ PASS: HTTP 500 with structured error (endpoint exists, Lambda invoked, but Lambda has implementation issue)")
+                        print("  ✓ PASS: HTTP 500 with structured error (endpoint exists, Lambda invoked, but Lambda has implementation issue)")
                         print(f"    Error: {error_body.get('error', error_body.get('message', 'Unknown error'))}")
                         passed = True
                     else:
-                        print(f"  ✗ FAIL: HTTP 500 without structured error body (Lambda crash)")
+                        print("  ✗ FAIL: HTTP 500 without structured error body (Lambda crash)")
                         passed = False
-                except:
-                    print(f"  ✗ FAIL: HTTP 500 without JSON error body (Lambda crash)")
+                except Exception:
+                    print("  ✗ FAIL: HTTP 500 without JSON error body (Lambda crash)")
                     passed = False
             elif status in [401, 403]:
                 if auth_token:
@@ -281,10 +280,10 @@ def gate1_endpoint_existence() -> Tuple[bool, List[Dict]]:
                 else:
                     # No token provided, endpoint requires auth - proves endpoint exists
                     print(f"  ✓ PASS: HTTP {status} (endpoint exists but requires authentication)")
-                    print(f"    Set ONA_API_TOKEN to test with authentication")
+                    print("    Set ONA_API_TOKEN to test with authentication")
                     passed = True
             elif status == 404:
-                print(f"  ✗ FAIL: HTTP 404 (endpoint does not exist or routing misconfigured)")
+                print("  ✗ FAIL: HTTP 404 (endpoint does not exist or routing misconfigured)")
                 passed = False
             elif status > 500:
                 print(f"  ✗ FAIL: HTTP {status} (Lambda wiring issue or server error)")
@@ -313,7 +312,7 @@ def gate1_endpoint_existence() -> Tuple[bool, List[Dict]]:
             print()
             
         except requests.exceptions.ConnectionError as e:
-            print(f"  ✗ FAIL: Connection error")
+            print("  ✗ FAIL: Connection error")
             print(f"    {str(e)}")
             
             artifact = {
@@ -332,7 +331,7 @@ def gate1_endpoint_existence() -> Tuple[bool, List[Dict]]:
             print()
             
         except requests.exceptions.Timeout as e:
-            print(f"  ✗ FAIL: Request timeout")
+            print("  ✗ FAIL: Request timeout")
             print(f"    {str(e)}")
             
             artifact = {
@@ -351,7 +350,7 @@ def gate1_endpoint_existence() -> Tuple[bool, List[Dict]]:
             print()
             
         except Exception as e:
-            print(f"  ✗ FAIL: Unexpected error")
+            print("  ✗ FAIL: Unexpected error")
             print(f"    {type(e).__name__}: {str(e)}")
             
             artifact = {
@@ -442,7 +441,7 @@ def gate2_zorora_reachability() -> Tuple[bool, List[Dict]]:
             AuditLogCommand,
         )
     except ImportError as e:
-        print(f"✗ FAIL: Cannot import Zorora components")
+        print("✗ FAIL: Cannot import Zorora components")
         print(f"  {str(e)}")
         return False, []
     
@@ -508,7 +507,7 @@ def gate2_zorora_reachability() -> Tuple[bool, List[Dict]]:
                 
                 # Extract HTTP details from client (if available)
                 # For now, we'll infer from result
-                print(f"  ✓ Command executed successfully")
+                print("  ✓ Command executed successfully")
                 print(f"  Result: {str(result)[:200]}...")
                 
                 artifact = {
@@ -527,7 +526,7 @@ def gate2_zorora_reachability() -> Tuple[bool, List[Dict]]:
                 
                 # Any HTTP error (401, 404, 500, etc.) or structured error proves reachability
                 if "HTTP" in error_str or "401" in error_str or "404" in error_str or "500" in error_str or "Server error" in error_str or "Not found" in error_str:
-                    print(f"  ✓ Command executed, HTTP error received (request was sent, proves reachability)")
+                    print("  ✓ Command executed, HTTP error received (request was sent, proves reachability)")
                     print(f"  Error: {error_str[:200]}")
                     
                     artifact = {
@@ -617,7 +616,7 @@ def gate3_safety_repeatability_stability() -> Tuple[bool, List[Dict]]:
             AuditLogCommand,
         )
     except ImportError as e:
-        print(f"✗ FAIL: Cannot import Zorora components")
+        print("✗ FAIL: Cannot import Zorora components")
         print(f"  {str(e)}")
         return False, []
     
@@ -677,7 +676,7 @@ def gate3_safety_repeatability_stability() -> Tuple[bool, List[Dict]]:
             }
             
             # Run 1
-            print(f"  Run #1:")
+            print("  Run #1:")
             try:
                 result1 = cmd_instance.execute(args, context)
                 output1 = str(result1)
@@ -690,7 +689,7 @@ def gate3_safety_repeatability_stability() -> Tuple[bool, List[Dict]]:
             time.sleep(0.5)
             
             # Run 2
-            print(f"  Run #2:")
+            print("  Run #2:")
             try:
                 result2 = cmd_instance.execute(args, context)
                 output2 = str(result2)
@@ -709,39 +708,39 @@ def gate3_safety_repeatability_stability() -> Tuple[bool, List[Dict]]:
                 # Mutating commands should fail safely with nonexistent IDs
                 if error1 is None or error2 is None:
                     safety_verdict = "unsafe"
-                    print(f"  ✗ SAFETY: Mutating command succeeded (should fail with nonexistent IDs)")
+                    print("  ✗ SAFETY: Mutating command succeeded (should fail with nonexistent IDs)")
                     all_passed = False
             
             # Repeatability check
             if error1 is not None and error2 is None:
                 repeatability_verdict = "not_repeatable"
-                print(f"  ✗ REPEATABILITY: First run failed, second succeeded")
+                print("  ✗ REPEATABILITY: First run failed, second succeeded")
                 all_passed = False
             elif error1 is None and error2 is not None:
                 repeatability_verdict = "not_repeatable"
-                print(f"  ✗ REPEATABILITY: First run succeeded, second failed")
+                print("  ✗ REPEATABILITY: First run succeeded, second failed")
                 all_passed = False
             elif error1 is not None and error2 is not None:
                 # Both failed - check if error messages are similar (shape consistency)
                 if error1[:100] != error2[:100]:
                     repeatability_verdict = "inconsistent_errors"
-                    print(f"  ⚠ REPEATABILITY: Both failed but error messages differ")
+                    print("  ⚠ REPEATABILITY: Both failed but error messages differ")
             elif output1 is not None and output2 is not None:
                 # Both succeeded - check response shape
                 # For now, just check if both are strings (shape consistency)
-                if type(output1) != type(output2):
+                if type(output1) is not type(output2):
                     repeatability_verdict = "shape_drift"
-                    print(f"  ✗ REPEATABILITY: Response shape changed")
+                    print("  ✗ REPEATABILITY: Response shape changed")
                     all_passed = False
             
             # Stability check
             if error1 is None and output1 is None:
                 stability_verdict = "silent_failure"
-                print(f"  ✗ STABILITY: Silent failure (no output, no error)")
+                print("  ✗ STABILITY: Silent failure (no output, no error)")
                 all_passed = False
             elif error2 is None and output2 is None:
                 stability_verdict = "silent_failure"
-                print(f"  ✗ STABILITY: Silent failure (no output, no error)")
+                print("  ✗ STABILITY: Silent failure (no output, no error)")
                 all_passed = False
             
             artifact = {
