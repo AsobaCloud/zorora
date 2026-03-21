@@ -586,6 +586,8 @@ def get_news_intel_articles():
         date_to = data.get("date_to")
         limit = int(data.get("limit", 200))
         limit = max(1, min(limit, 10000))
+        offset = int(data.get("offset", 0))
+        offset = max(0, offset)
 
         start_date = _parse_date(date_from)
         end_date = _parse_date(date_to)
@@ -599,8 +601,11 @@ def get_news_intel_articles():
             topic=topic,
             date_from=date_from,
             date_to=date_to,
-            limit=limit,
+            limit=100000,
         )
+
+        total_count = len(filtered)
+        page = filtered[offset:offset + limit]
 
         serialized = [
             {
@@ -612,9 +617,9 @@ def get_news_intel_articles():
                 "geography_tags": article.get("geography_tags", []),
                 "country_tags": article.get("country_tags", []),
             }
-            for article in filtered
+            for article in page
         ]
-        return jsonify({"count": len(serialized), "articles": serialized, "warning": warning})
+        return jsonify({"count": len(serialized), "total_count": total_count, "offset": offset, "articles": serialized, "warning": warning})
     except Exception as e:
         logger.error(f"News intel articles error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
