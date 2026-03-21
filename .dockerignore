@@ -1,0 +1,46 @@
+# Version control — never bake git history into an image
+.git
+.git/
+
+# Local dev config with hardcoded secrets — replaced by config.docker.py at build time
+config.py
+
+# Python cache and build artefacts
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.egg-info
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv
+venv
+env
+
+# SQLite databases (rebuilt at runtime; never bake stale developer state)
+*.db
+.zorora
+
+# Test artefacts
+.pytest_cache
+.coverage
+htmlcov/
+tests/__pycache__
+
+# IDE and OS noise
+.idea
+.vscode
+*.DS_Store
+*.swp
+*.swo
+
+# Plots generated at runtime
+plots/
+
+# Claude/planning artefacts
+.claude/
+.sep/
+.opencode/
