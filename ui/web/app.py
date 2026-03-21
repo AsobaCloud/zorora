@@ -221,6 +221,12 @@ def _stream_reply_events(reply: str):
     yield f"data: {json.dumps({'delta': '', 'done': True})}\n\n"
 
 
+@app.route('/health')
+def health():
+    """Health check endpoint for container orchestrators."""
+    return jsonify({"status": "ok"})
+
+
 @app.route('/')
 def index():
     """Render main research UI"""
@@ -894,7 +900,8 @@ def get_market_latest():
                 # Compute freshness from fetch_metadata
                 staleness_hours = store.get_staleness(sid, provider=series.provider)
                 last_fetched = None
-                if staleness_hours is not None:
+                # Only compute last_fetched when staleness_hours is numeric
+                if isinstance(staleness_hours, (int, float)):
                     from datetime import datetime, timedelta
                     last_fetched = (datetime.utcnow() - timedelta(hours=staleness_hours)).isoformat() + "Z"
 
