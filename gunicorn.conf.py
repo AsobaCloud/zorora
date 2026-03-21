@@ -18,7 +18,7 @@ errorlog = "-"
 loglevel = "info"
 
 
-def on_starting(server):
-    """Start background refresh threads once on server startup."""
+def post_worker_init(worker):
+    """Start background refresh threads after the worker is ready to serve."""
     from workflows.background_threads import start_all_background_threads
     start_all_background_threads()
