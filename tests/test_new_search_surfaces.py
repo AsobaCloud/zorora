@@ -291,6 +291,7 @@ class TestPolicySearchRaw(unittest.TestCase):
     }
 
     @patch("tools.research.policy_search.requests.get")
+    @patch("tools.research.policy_search.config.CONGRESS_GOV", {"enabled": True, "endpoint": "https://api.congress.gov/v3/bill", "timeout": 15, "api_key": "test-dummy-key"})
     def test_congress_raw_parsing(self, mock_get):
         mock_get.return_value = _mock_response(self.CONGRESS_RESPONSE)
         from tools.research.policy_search import _congress_gov_search_raw
@@ -301,6 +302,7 @@ class TestPolicySearchRaw(unittest.TestCase):
         self.assertEqual(results[0]["source"], "Congress.gov")
 
     @patch("tools.research.policy_search.requests.get")
+    @patch("tools.research.policy_search.config.CONGRESS_GOV", {"enabled": True, "endpoint": "https://api.congress.gov/v3/bill", "timeout": 15, "api_key": "test-dummy-key"})
     def test_policy_queries_are_sanitized(self, mock_get):
         mock_get.return_value = _mock_response({"bills": []})
         from tools.research.policy_search import _congress_gov_search_raw

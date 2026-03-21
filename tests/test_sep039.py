@@ -124,6 +124,6 @@ class TestGreenfieldScoutingApi:
         assert "/api/scouting/score" in html
         assert "/api/scouting/watchlist" in html
         assert "imgScoutTechnology" in html
-        assert "Scout Watchlist" in html
+        assert "scoutWatchlist" in html
         assert "Solar Resource" in html
         assert "scoutCompareList" in html

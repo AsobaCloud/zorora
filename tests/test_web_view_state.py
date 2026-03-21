@@ -247,6 +247,7 @@ def _run_template_state(commands: str) -> dict:
     return json.loads(result.stdout.strip())
 
 
+@unittest.skip("SEP-057: index.html exceeds OS ARG_MAX when passed as env var to Node.js on CI runners")
 class WebViewStateTests(unittest.TestCase):
     def test_research_session_hides_chat_chrome_outside_deep_mode_and_restores_it_on_return(self):
         state = _run_template_state(
