@@ -82,6 +82,7 @@ setup(
             "odse>=0.1.0",
             "sentence-transformers>=2.2.0",
             "faiss-cpu>=1.7.4",
+            "openpyxl>=3.0.0",
         ],
     },
     python_requires=">=3.8",
