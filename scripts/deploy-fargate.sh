@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # deploy-fargate.sh — Deploy Zorora as an ECS Fargate service
 # SEP-052: First Fargate service on the Ona platform
+# shellcheck disable=SC2016  # JMESPath queries use backticks inside single quotes
 set -euo pipefail
 
 # ── Configuration ──
