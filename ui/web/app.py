@@ -57,6 +57,8 @@ model_fetcher = ModelFetcher()
 research_progress = {}  # {research_id: {"status": str, "message": str, "phase": str}}
 chat_threads = {}  # lightweight in-memory thread store keyed by context id
 newsroom_api_warning = None
+_market_latest_cache = None  # (timestamp, response_list)
+_MARKET_CACHE_TTL = 60  # seconds
 
 
 def _parse_date(date_str: str):
@@ -888,6 +890,12 @@ def mark_alert_read(alert_id):
 @app.route('/api/market/latest', methods=['GET'])
 def get_market_latest():
     """Return latest observation per series from MarketDataStore."""
+    import time as _time
+    global _market_latest_cache
+    if _market_latest_cache is not None:
+        cached_at, cached_data = _market_latest_cache
+        if _time.time() - cached_at < _MARKET_CACHE_TTL:
+            return jsonify(cached_data)
     try:
         store = MarketDataStore()
         results = []
@@ -925,6 +933,7 @@ def get_market_latest():
             except Exception as e:
                 logger.debug(f"Skipping series {sid}: {e}")
         store.close()
+        _market_latest_cache = (_time.time(), results)
         return jsonify(results)
     except Exception as e:
         logger.error(f"Market latest error: {e}", exc_info=True)
