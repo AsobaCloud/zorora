@@ -3,10 +3,14 @@
 import sys
 import os
 import logging
+import threading
 from repl import REPL
 from config import LOGGING_LEVEL, LOGGING_FORMAT, LOG_FILE
 import config
 from workflows.background_threads import start_all_background_threads
+from workflows.regulatory_workflow import RegulatoryWorkflow
+from tools.alerts.store import AlertStore
+from workflows.alert_runner import execute_alert
 
 # Configure logging
 # Always write to file
@@ -25,6 +29,42 @@ logging.basicConfig(
     handlers=handlers
 )
 logger = logging.getLogger(__name__)
+
+
+def _start_regulatory_refresh_thread():
+    """Start the regulatory refresh background thread (patchable entry point)."""
+    def _loop():
+        try:
+            workflow = RegulatoryWorkflow()
+            updated = workflow.update_all()
+            if updated:
+                logger.info("Regulatory refresh: updated %d sources", updated)
+        except Exception as exc:
+            logger.debug("Regulatory refresh failed: %s", exc)
+
+    t = threading.Thread(target=_loop, daemon=True, name="regulatory-refresh")
+    t.start()
+    return t
+
+
+def _start_alert_check_thread():
+    """Start the alert check background thread (patchable entry point)."""
+    def _loop():
+        try:
+            store = AlertStore()
+            due = store.get_due_alerts()
+            for alert in due:
+                try:
+                    execute_alert(alert, store)
+                except Exception as exc:
+                    logger.debug("Alert execution failed for %s: %s", alert.get("id"), exc)
+            store.close()
+        except Exception as exc:
+            logger.debug("Alert check failed: %s", exc)
+
+    t = threading.Thread(target=_loop, daemon=True, name="alert-check")
+    t.start()
+    return t
 
 
 def main():

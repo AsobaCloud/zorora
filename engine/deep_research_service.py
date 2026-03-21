@@ -1078,13 +1078,20 @@ def run_deep_research(
     heartbeat_thread.start()
 
     try:
-        state.synthesis = synthesize(
-            state,
-            market_context=market_context or diligence_context,
-            progress_callback=progress_callback,
-            asset_metadata=asset_metadata if is_diligence else None,
-            diligence_context=diligence_context if is_diligence else "",
-        )
+        if is_diligence:
+            state.synthesis = synthesize(
+                state,
+                market_context=market_context or diligence_context,
+                progress_callback=progress_callback,
+                asset_metadata=asset_metadata,
+                diligence_context=diligence_context,
+            )
+        else:
+            state.synthesis = synthesize(
+                state,
+                market_context=market_context,
+                progress_callback=progress_callback,
+            )
         state.completed_at = datetime.now()
         state.current_iteration = 1
     finally:

@@ -78,7 +78,13 @@ def parse_newsroom_results(articles: List[Dict[str, Any]], query: str) -> List[S
     return sources
 
 
-def aggregate_sources(query: str, max_results_per_source: int = 10, include_brave_news: bool = False) -> List[Source]:
+def aggregate_sources(
+    query: str,
+    max_results_per_source: int = 10,
+    include_brave_news: bool = False,
+    force_policy: bool = False,
+    suppress_policy: bool = False,
+) -> List[Source]:
     """
     Aggregate sources from academic, web, newsroom, and optionally Brave News in parallel.
 
@@ -86,6 +92,8 @@ def aggregate_sources(query: str, max_results_per_source: int = 10, include_brav
         query: Research query
         max_results_per_source: Max results per source type
         include_brave_news: Whether to include Brave News API results (depth 3)
+        force_policy: Force-include policy channel even when query has no policy keywords
+        suppress_policy: Force-exclude policy channel regardless of query keywords
 
     Returns:
         List of Source objects
@@ -206,7 +214,12 @@ def aggregate_sources(query: str, max_results_per_source: int = 10, include_brav
             return []
 
     # Determine which conditional channels to include
-    include_policy = _query_matches_keywords(query, POLICY_KEYWORDS)
+    if suppress_policy:
+        include_policy = False
+    elif force_policy:
+        include_policy = True
+    else:
+        include_policy = _query_matches_keywords(query, POLICY_KEYWORDS)
     include_sec = _query_matches_keywords(query, SEC_KEYWORDS)
 
     # Fetch in parallel
