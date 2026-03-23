@@ -8,6 +8,7 @@ from datetime import date, datetime, timezone
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context
 
 from engine.research_engine import ResearchEngine
+from engine.storage import LocalStorage
 from engine.deep_research_service import run_deep_research, build_results_payload
 from engine.query_refiner import refine_query, infer_research_type
 from ui.web.config_manager import ConfigManager, ModelFetcher
@@ -52,6 +53,9 @@ research_engine = ResearchEngine()
 # Initialize config managers
 config_manager = ConfigManager()
 model_fetcher = ModelFetcher()
+
+# Persistent storage for feedback and chat history (SEP-059)
+_local_storage = LocalStorage()
 
 # Progress tracking for research workflows
 research_progress = {}  # {research_id: {"status": str, "message": str, "phase": str}}
@@ -520,6 +524,11 @@ def research_chat(research_id):
         thread = chat_threads.setdefault(thread_key, [])
         thread.append({"role": "user", "content": message, "at": datetime.now(timezone.utc).isoformat()})
         thread.append({"role": "assistant", "content": reply, "at": datetime.now(timezone.utc).isoformat()})
+        try:
+            _local_storage.append_chat_turn(thread_key, "user", message)
+            _local_storage.append_chat_turn(thread_key, "assistant", reply)
+        except Exception as _e:
+            logger.warning(f"Chat history persistence failed (non-fatal): {_e}")
 
         if bool(data.get("stream", False)):
             return Response(
@@ -538,6 +547,41 @@ def research_chat(research_id):
         )
     except Exception as e:
         logger.error(f"Research chat error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/research/<research_id>/chat/<message_id>/feedback', methods=['POST'])
+def research_chat_feedback(research_id, message_id):
+    """Persist thumbs up/down feedback for a research chat message (SEP-059)."""
+    try:
+        data = request.get_json() or {}
+        rating = data.get("rating")
+        if rating not in ("up", "down"):
+            return jsonify({"error": "rating must be 'up' or 'down'"}), 400
+        _local_storage.save_feedback(
+            research_id=research_id,
+            message_id=message_id,
+            rating=rating,
+        )
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        logger.error(f"Feedback save error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/research/<research_id>/chat/history', methods=['GET'])
+def research_chat_history(research_id):
+    """Return persisted chat history for a research session (SEP-059)."""
+    try:
+        thread_key = f"research:{research_id}"
+        rows = _local_storage.load_chat_thread(thread_key)
+        history = [
+            {"role": r["role"], "content": r["content"], "at": r.get("created_at", "")}
+            for r in rows
+        ]
+        return jsonify({"history": history})
+    except Exception as e:
+        logger.error(f"Chat history load error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 

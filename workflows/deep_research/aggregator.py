@@ -39,6 +39,74 @@ def _query_matches_keywords(query: str, keywords: set) -> bool:
     return any(kw in query_lower for kw in keywords)
 
 
+# Scouting pipeline stages that qualify as knowledge sources (SEP-059)
+_QUALIFYING_STAGES = {"feasibility", "diligence", "decision"}
+
+
+def scouting_knowledge_sources(query: str, imaging_store) -> List[Source]:
+    """Return internal Source objects from completed scouting cases relevant to query.
+
+    Only items at feasibility, diligence, or decision stage are included.
+    Relevance is determined by keyword overlap between the query and the asset
+    name, technology, country, and feasibility findings.
+    """
+    try:
+        query_tokens = set(query.lower().split())
+        results: List[Source] = []
+
+        for stage in _QUALIFYING_STAGES:
+            try:
+                items = imaging_store.list_scouting_items("brownfield", stage=stage)
+            except Exception:
+                items = []
+            for item in items:
+                name = item.get("asset_name") or item.get("name") or ""
+                technology = item.get("technology") or ""
+                country = item.get("country") or ""
+                item_id = item.get("id") or ""
+
+                # Gather feasibility findings text
+                findings_text = ""
+                try:
+                    feasibility_results = imaging_store.get_feasibility_results(item_id)
+                    for fr in feasibility_results:
+                        findings = fr.get("findings") or {}
+                        findings_text += " " + (findings.get("key_finding") or "")
+                        findings_text += " " + fr.get("conclusion", "")
+                        findings_text += " " + fr.get("tab", "")
+                except Exception:
+                    pass
+
+                haystack = f"{name} {technology} {country} {findings_text}".lower()
+                haystack_tokens = set(haystack.split())
+
+                overlap = query_tokens & haystack_tokens
+                # Filter out very short/common tokens
+                meaningful_overlap = {t for t in overlap if len(t) > 3}
+                if not meaningful_overlap:
+                    continue
+
+                url = f"scouting://brownfield/{item_id}"
+                title = f"[Internal] {name} — Scouting Feasibility"
+                snippet = findings_text.strip()[:300] if findings_text.strip() else f"{technology} in {country}"
+                source_id = Source.generate_id(url)
+
+                results.append(
+                    Source(
+                        source_id=source_id,
+                        url=url,
+                        title=title,
+                        source_type="internal",
+                        content_snippet=snippet,
+                    )
+                )
+
+        return results
+    except Exception as exc:
+        logger.warning(f"scouting_knowledge_sources failed: {exc}")
+        return []
+
+
 def parse_newsroom_results(articles: List[Dict[str, Any]], query: str) -> List[Source]:
     """Parse newsroom API articles into Source objects, filtering by query relevance."""
     keywords = _extract_keywords(query) if query else []
@@ -84,6 +152,7 @@ def aggregate_sources(
     include_brave_news: bool = False,
     force_policy: bool = False,
     suppress_policy: bool = False,
+    imaging_store=None,
 ) -> List[Source]:
     """
     Aggregate sources from academic, web, newsroom, and optionally Brave News in parallel.
@@ -246,6 +315,13 @@ def aggregate_sources(
                 logger.info(f"✓ {source_type}: {len(sources)} sources")
             except Exception as e:
                 logger.warning(f"{source_type} aggregation failed: {e}")
+
+    # SEP-059: inject scouting internal sources when an imaging store is provided
+    if imaging_store is not None:
+        internal = scouting_knowledge_sources(query=query, imaging_store=imaging_store)
+        if internal:
+            all_sources.extend(internal)
+            logger.info(f"Scouting internal sources added: {len(internal)}")
 
     logger.info(f"Total sources aggregated: {len(all_sources)}")
     return all_sources

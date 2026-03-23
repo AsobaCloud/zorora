@@ -94,6 +94,37 @@ class LocalStorage:
 
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_cited_by ON citations(cites_source_id)")
 
+        # SEP-059: thumbs up/down feedback on research chat messages
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS research_feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                research_id TEXT NOT NULL,
+                message_id TEXT NOT NULL,
+                rating TEXT NOT NULL CHECK (rating IN ('up', 'down')),
+                created_at TIMESTAMP NOT NULL DEFAULT (datetime('now')),
+                UNIQUE (research_id, message_id)
+            )
+        """)
+
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_feedback_research ON research_feedback(research_id)"
+        )
+
+        # SEP-059: persistent chat history (replaces in-memory chat_threads dict)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS research_chat_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                thread_key TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_chat_thread ON research_chat_history(thread_key)"
+        )
+
         conn.commit()
 
     def close(self):
@@ -163,6 +194,58 @@ class LocalStorage:
         self.conn.commit()
         logger.info(f"Saved research: {research_id} ({state.total_sources} sources)")
         return research_id
+
+    # ------------------------------------------------------------------
+    # SEP-059: feedback persistence
+    # ------------------------------------------------------------------
+
+    def save_feedback(self, research_id: str, message_id: str, rating: str) -> None:
+        """Upsert thumbs up/down feedback for a chat message."""
+        if rating not in ("up", "down"):
+            raise ValueError(f"rating must be 'up' or 'down', got {rating!r}")
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO research_feedback (research_id, message_id, rating)
+            VALUES (?, ?, ?)
+            ON CONFLICT (research_id, message_id) DO UPDATE SET
+                rating = excluded.rating,
+                created_at = datetime('now')
+            """,
+            (research_id, message_id, rating),
+        )
+        self.conn.commit()
+
+    def get_feedback(self, research_id: str) -> List[Dict[str, Any]]:
+        """Return all feedback rows for a research session."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT * FROM research_feedback WHERE research_id = ? ORDER BY created_at",
+            (research_id,),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    # ------------------------------------------------------------------
+    # SEP-059: chat history persistence
+    # ------------------------------------------------------------------
+
+    def append_chat_turn(self, thread_key: str, role: str, content: str) -> None:
+        """Append a single chat turn to a persisted thread."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "INSERT INTO research_chat_history (thread_key, role, content) VALUES (?, ?, ?)",
+            (thread_key, role, content),
+        )
+        self.conn.commit()
+
+    def load_chat_thread(self, thread_key: str) -> List[Dict[str, Any]]:
+        """Return all turns for a thread in insertion order."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT * FROM research_chat_history WHERE thread_key = ? ORDER BY id",
+            (thread_key,),
+        )
+        return [dict(row) for row in cursor.fetchall()]
 
     def search_research(self, query: Optional[str] = None, limit: int = 10) -> List[Dict[str, Any]]:
         """Fast search using SQLite index"""

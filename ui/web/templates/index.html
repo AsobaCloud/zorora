@@ -2846,7 +2846,14 @@
                 if (item.role === 'user') {
                     return `<div class="chat-message user">${escapeHtml(item.content)}</div>`;
                 }
-                return `<div class="chat-message assistant">${makeCitationsClickable(escapeHtml(item.content), currentSession?.sources || [])}</div>`;
+                const msgId = item.messageId || ('msg-' + idx);
+                return `<div class="chat-message assistant" data-message-id="${msgId}">
+                    ${makeCitationsClickable(escapeHtml(item.content), currentSession?.sources || [])}
+                    <div class="feedback-buttons">
+                        <button class="feedback-btn thumbs-up" onclick="submitFeedback('${msgId}','up')" title="Helpful">&#128077;</button>
+                        <button class="feedback-btn thumbs-down" onclick="submitFeedback('${msgId}','down')" title="Not helpful">&#128078;</button>
+                    </div>
+                </div>`;
             }).join('');
             thread.scrollTop = thread.scrollHeight;
         }
@@ -2888,6 +2895,20 @@
                         return;
                     }
                 }
+            }
+        }
+
+        async function submitFeedback(messageId, rating) {
+            if (!currentSession || currentSession.type !== 'research') return;
+            const researchId = currentSession.researchId;
+            try {
+                await fetch(`/api/research/${encodeURIComponent(researchId)}/chat/${encodeURIComponent(messageId)}/feedback`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ rating }),
+                });
+            } catch (e) {
+                console.warn('Feedback submission failed:', e);
             }
         }
 
