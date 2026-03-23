@@ -5,64 +5,96 @@
 
 Zorora is a local-first energy intelligence platform for acquisition diligence, regulatory monitoring, geospatial asset discovery, and market analysis. Built for energy traders and asset investors, it runs against local LLM endpoints with both terminal and web interfaces — all data stays on your machine.
 
-Current stable release: **v3.6.0** (March 13, 2026).
-
 **Learn more in the [full documentation](https://code.asoba.co)**.
 
 ![Zorora Web UI](docs/ui.png)
 
 ## Platform Modes
 
-- **Deep Research** — multi-source research across academic, web, and newsroom sources with credibility scoring, citation graphs, and contract-based synthesis with inline citations
-- **Diligence Search** — brownfield acquisition due diligence with domain-specific analysis (tariffs, regulations, performance, vendors), structured data from EIA/utility/World Bank databases, and automated diligence reports with embedded charts
-- **Digest** — stage articles and market datasets, then synthesize structured energy market and policy digests
-- **Alerts** — monitor topics and sources for new developments with configurable alert rules
-- **Regulatory** — track renewable portfolio standards, utility rates, generation assets, and regulatory environments by jurisdiction
-- **Global View** — interactive country map with click-to-filter topic/source popups and market dataset cards
-- **Imaging** — Leaflet-based OSINT geospatial view for mineral deposits, concessions, and generation assets with viability scoring overlays
+Zorora provides seven integrated intelligence modes:
+
+- **Deep Research** — multi-source research across academic, web, and newsroom sources with credibility scoring, citation graphs, and evidence-grounded synthesis with inline citations. Includes research memory: thumbs up/down feedback on responses, persistent chat threads across restarts, and automatic injection of scouting feasibility findings as internal RAG sources.
+
+- **Digest** — stage articles and market datasets, then synthesize structured energy market and policy digests with paginated article retrieval.
+
+- **Alerts** — monitor topics and sources for new developments with configurable alert rules and execution history.
+
+- **Regulatory** — track renewable portfolio standards, utility rates, generation assets, and regulatory environments by jurisdiction. Covers EIA data, OpenEI utility rates, NERSA events, and IPP Office filings.
+
+- **Global View** — interactive country map with click-to-filter topic/source popups and market dataset cards showing real-time commodity, FX, and energy market data.
+
+- **Discovery** — Leaflet-based geospatial view for mineral deposits (USGS MRDS), generation assets (GEM), GCCA transmission zones, substations, and supply areas with viability scoring overlays.
+
+- **Scouting** — kanban pipeline for brownfield, greenfield, and BESS site evaluation with 5-stage tracking (identified, scored, feasibility, diligence, decision). Includes automated feasibility studies across five dimensions: production, trading, grid, regulatory, and financial — each with LLM-synthesized conclusions, risk assessments, and confidence ratings. Greenfield and BESS sites are scored using NASA POWER resource data, grid proximity, DAM arbitrage spreads, and TOU tariff differentials.
+
+## Data Sources
+
+Zorora ingests 80 market series across 6 providers, refreshed automatically via background threads:
+
+| Provider | Series | Frequency | Coverage |
+|----------|--------|-----------|----------|
+| **FRED** | 13 | Daily | Oil, gas, coal, uranium, treasuries, FX (ZAR/USD, ZMW/USD), policy rates |
+| **yfinance** | 12 | Daily | Gold, copper, silver, platinum, palladium, aluminum, iron ore, lithium/uranium/rare earth ETFs |
+| **World Bank** | 18 | Annual | SADC electricity indicators — coal %, renewables %, T&D loss %, access %, per-capita consumption for ZA/ZW/MZ/ZM |
+| **Ember Energy** | 8 | Monthly | South Africa and Zimbabwe coal, wind, solar generation, demand, total gen, renewables share |
+| **SAPP** | 6 | Hourly | DAM prices for RSA-North, RSA-South, Zimbabwe in USD and ZAR |
+| **Eskom** | 27 | Hourly | System demand (4 series), RE generation (4 series), station-level build-up (19 series) |
+
+**On-demand sources** (fetched per request, not background-refreshed):
+- NASA POWER — solar irradiance, wind speed, temperature for greenfield site scoring
+- USGS MRDS — mineral deposit locations for Discovery map
+- Newsroom (Ona) — curated energy news articles with 1-hour cache
+- Academic search — PubMed, OpenAlex, Semantic Scholar for Deep Research
+- Brave Search — web and news results for Deep Research
+- World Bank Documents — policy and development reports
+- Congress.gov / Federal Register — US policy and regulatory filings
+- SEC EDGAR — corporate filings and financial statements
 
 ## Additional Capabilities
 
-- **Data analysis** — sandboxed Python execution with pandas, numpy, and matplotlib for structured dataset workflows
+- **Diligence search** — brownfield acquisition due diligence with domain-specific analysis (tariffs, regulations, performance, vendors) and automated diligence reports
 - **Comparative queries** — auto-detects "X vs Y" queries and generates dimension-based comparison tables
-- **Source quality** — credibility scoring, cross-reference detection, and full article content extraction
-- **Multi-provider LLM** — local models via LM Studio, plus HuggingFace, OpenAI, and Anthropic adapters
+- **Source quality** — multi-factor credibility scoring, cross-reference detection, predatory publisher filtering, and full article content extraction
+- **Research memory** — thumbs up/down feedback persisted to SQLite, chat thread persistence across restarts, and scouting feasibility findings injected as internal sources during research
+- **Market data cache** — in-memory cache with 60-second TTL for the market/latest endpoint, reducing 160+ SQLite queries to a single cache hit
+- **Multi-provider LLM** — local models via LM Studio, plus HuggingFace, OpenAI, and Anthropic adapters with specialized model roles (reasoning, codestral, vision, search)
 - **Dual interfaces** — terminal REPL with Rich UI and web UI with persistent history sidebar
-- **Follow-up chat** — conversational follow-ups grounded in source content snippets
+- **Follow-up chat** — conversational follow-ups grounded in source content with streaming SSE responses
+
+## Deployment
+
+### Local
+
+```bash
+pip install git+https://github.com/AsobaCloud/zorora.git
+zorora web
+```
+
+Or from source:
+
+```bash
+git clone https://github.com/AsobaCloud/zorora.git
+cd zorora
+pip install -e .
+zorora web
+```
+
+### Docker
+
+```bash
+docker build -t zorora .
+docker run -p 5000:5000 -v ~/.zorora:/home/zorora/.zorora zorora
+```
+
+The container runs gunicorn with 1 worker and 4 threads. Background data refresh threads start automatically via the `post_worker_init` hook. Health check available at `GET /health`.
+
+### Enterprise (Ona Platform)
+
+Zorora ships as a Fargate service in the Ona platform with permission-gated access via the application card. Deployment is handled by the CI/CD pipeline — pushing to `main` triggers automatic Docker build, ECR push, and ECS service update.
 
 ## Configuration
 
 Research depth profiles, model budgets, and synthesis settings are configured in `config.py`. See the [full documentation](https://code.asoba.co) for details.
-
-## Get Started
-
-For detailed setup instructions, see the [setup documentation](https://code.asoba.co).
-
-1. Install Zorora:
-
-    ```bash
-    pip install git+https://github.com/AsobaCloud/zorora.git
-    ```
-
-    Or from source:
-
-    ```bash
-    git clone https://github.com/AsobaCloud/zorora.git
-    cd zorora
-    pip install -e .
-    ```
-
-2. Run Zorora:
-
-    ```bash
-    zorora
-    ```
-
-    Or launch the web UI:
-
-    ```bash
-    zorora web
-    ```
 
 ## Reporting Issues
 
