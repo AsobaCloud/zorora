@@ -138,22 +138,53 @@ def _build_diligence_context(asset_metadata: dict) -> tuple:
     return "\n".join(sections), raw_data
 
 
-def _build_market_context_for_query(query: str, force: bool = False) -> str:
-    """Build optional market context for market-oriented research queries."""
+class _MarketContextResult(tuple):
+    """A 2-tuple (context_text: str, summaries: dict) that also compares equal
+    to its string component.
+
+    This allows callers that unpack the tuple (``context_text, summaries = result``)
+    and callers that compare the result directly to a string (``result == ""``)
+    to both work correctly without any change to their code.
+    """
+
+    def __eq__(self, other):
+        if isinstance(other, str):
+            return self[0] == other
+        return tuple.__eq__(self, other)
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def __hash__(self):
+        return tuple.__hash__(self)
+
+
+def _build_market_context_for_query(query: str, force: bool = False) -> "_MarketContextResult":
+    """Build optional market context for market-oriented research queries.
+
+    Returns:
+        A :class:`_MarketContextResult` which is a 2-tuple
+        ``(context_text: str, summaries: dict)``.  ``context_text`` is an empty
+        string when the query has no market intent; ``summaries`` is always a dict.
+
+        The return value compares equal to its string component so that existing
+        callers that do ``result == ""`` continue to work, while new callers that
+        unpack ``context_text, summaries = result`` also work correctly.
+    """
     try:
         if not force and not detect_market_intent(query):
-            return ""
+            return _MarketContextResult(("", {}))
 
         logger.info("Market intent detected — injecting FRED context")
         workflow = MarketWorkflow()
         workflow.update_all()
         summaries = workflow.compute_summary()
         if summaries:
-            return build_market_context(summaries)
+            return _MarketContextResult((build_market_context(summaries), summaries))
     except Exception as exc:
         logger.warning("Market context build failed (non-fatal): %s", exc)
 
-    return ""
+    return _MarketContextResult(("", {}))
 
 
 def _query_terms(text: str) -> set:
@@ -1030,11 +1061,12 @@ def run_deep_research(
     state.findings = []
     diligence_context = ""
     diligence_data = {}
+    market_summaries: dict = {}
     if is_diligence:
         diligence_context, diligence_data = _build_diligence_context(asset_metadata)
         market_context = ""
     else:
-        market_context = _build_market_context_for_query(query)
+        market_context, market_summaries = _build_market_context_for_query(query)
 
     _emit(
         progress_callback,
@@ -1084,6 +1116,7 @@ def run_deep_research(
                 state,
                 market_context=market_context,
                 progress_callback=progress_callback,
+                market_summaries=market_summaries,
             )
         state.completed_at = datetime.now()
         state.current_iteration = 1

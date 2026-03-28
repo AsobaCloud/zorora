@@ -2239,6 +2239,171 @@ def generate_diligence_charts(
     return charts
 
 
+# ---------------------------------------------------------------------------
+# Query-to-group keyword mapping for generate_research_charts()
+# ---------------------------------------------------------------------------
+
+_RESEARCH_CHART_GROUP_KEYWORDS: dict = {
+    "commodities": [
+        "oil", "crude", "brent", "wti", "gas", "natural gas", "commodity",
+        "commodities", "energy price", "energy prices",
+    ],
+    "sapp_prices": [
+        "sapp", "day-ahead", "dam", "electricity price", "electricity prices",
+        "power price", "power prices", "southern africa power", "sadc power",
+    ],
+    "eskom_re_generation": [
+        "eskom", "wind", "solar", "pv", "renewable", "renewables",
+        "wind generation", "solar generation", "re generation",
+    ],
+    "sadc_electricity": [
+        "south africa electricity", "south africa", "sa electricity",
+        "electricity coal", "electricity generation", "coal electricity",
+        "coal versus renewable", "coal vs renewable", "electricity mix",
+        "coal", "zimbabwe electricity",
+    ],
+    "metals": [
+        "copper", "silver", "platinum", "palladium", "aluminium", "aluminum",
+        "iron ore", "steel", "metal", "metals",
+    ],
+    "fx": [
+        "rand", "zar", "currency", "exchange rate", "fx", "forex",
+        "dollar", "usd",
+    ],
+    "treasuries": [
+        "treasury", "treasuries", "bond", "bonds", "yield", "interest rate",
+        "t-bill", "tbill",
+    ],
+}
+
+_RESEARCH_CHART_GROUP_SECTION_HINT: dict = {
+    "commodities": "Market Context",
+    "sapp_prices": "Market Context",
+    "eskom_re_generation": "Renewable Energy",
+    "sadc_electricity": "Electricity Sector",
+    "metals": "Market Context",
+    "fx": "Market Context",
+    "treasuries": "Market Context",
+}
+
+
+def _match_query_to_groups(query: str) -> list:
+    """Return ordered list of group names whose keywords match the query.
+
+    Returns at most 4 groups (cap matches to enforce chart limit).
+    """
+    if not query or not query.strip():
+        return []
+    q_lower = query.lower()
+    matched = []
+    for group, keywords in _RESEARCH_CHART_GROUP_KEYWORDS.items():
+        for kw in keywords:
+            if kw in q_lower:
+                matched.append(group)
+                break
+    return matched[:4]
+
+
+def generate_research_charts(query: str, market_summaries: dict) -> list:
+    """Generate matplotlib charts from structured market data for a research query.
+
+    Matches query terms against known series groups, then builds bar charts
+    from the ``last`` values in market_summaries.  Uses no live data store —
+    only the pre-computed summaries dict passed in.
+
+    Args:
+        query: The research query string.
+        market_summaries: Dict mapping series_id -> summary dict with at least
+            a "last" numeric value, "label" string, and "group" string.
+            Matches what MarketWorkflow.compute_summary() returns.
+
+    Returns:
+        List of (section_hint, chart_title, data_uri) 3-tuples.
+        At most 4 charts per call.  Empty list on no match or empty inputs.
+    """
+    import base64
+    import io
+
+    if not query or not query.strip():
+        return []
+    if not market_summaries:
+        return []
+
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        logger.warning("matplotlib not available for research charts")
+        return []
+
+    matched_groups = _match_query_to_groups(query)
+    if not matched_groups:
+        return []
+
+    # Build a lookup: group -> list of (series_id, summary_dict)
+    group_series: dict = {}
+    for series_id, summary in market_summaries.items():
+        grp = summary.get("group", "")
+        if grp:
+            group_series.setdefault(grp, []).append((series_id, summary))
+
+    charts = []
+    for group in matched_groups:
+        if len(charts) >= 4:
+            break
+        entries = group_series.get(group, [])
+        if not entries:
+            continue
+
+        # Filter to entries with a numeric "last" value
+        valid = [
+            (sid, s) for sid, s in entries
+            if s.get("last") is not None and isinstance(s.get("last"), (int, float))
+        ]
+        if not valid:
+            continue
+
+        # Cap at 8 series per chart for readability
+        valid = valid[:8]
+
+        labels = [s.get("label", sid) for sid, s in valid]
+        values = [float(s.get("last", 0)) for _, s in valid]
+        units = valid[0][1].get("unit", "") if valid else ""
+
+        section_hint = _RESEARCH_CHART_GROUP_SECTION_HINT.get(group, "Market Context")
+        group_display = group.replace("_", " ").title()
+        chart_title = f"{group_display} — Current Values"
+
+        try:
+            fig, ax = plt.subplots(figsize=(8, max(3, len(labels) * 0.5 + 1)))
+            colors = ["#3b82f6"] * len(labels)
+            ax.barh(labels, values, color=colors)
+            ax.set_xlabel(units if units else "Value")
+            ax.set_title(chart_title)
+            ax.grid(True, alpha=0.3, axis="x")
+            for i, v in enumerate(values):
+                ax.text(
+                    v + max(abs(x) for x in values) * 0.02 if max(abs(x) for x in values) > 0 else 0.02,
+                    i,
+                    f"{v:.2f}",
+                    va="center",
+                    fontsize=8,
+                )
+            fig.tight_layout()
+
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png", dpi=100)
+            plt.close(fig)
+            buf.seek(0)
+            b64 = base64.b64encode(buf.read()).decode("ascii")
+            charts.append((section_hint, chart_title, f"data:image/png;base64,{b64}"))
+        except Exception as exc:
+            logger.warning("Research chart generation failed for group %s: %s", group, exc)
+
+    return charts
+
+
 def _build_direct_synthesis_prompt(state: ResearchState, market_context: str = "") -> str:
     """Build a single-pass question-answering prompt over the ranked source set."""
     today = date.today().isoformat()
@@ -3350,7 +3515,7 @@ def synthesize_direct(
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def synthesize(state: ResearchState, progress_callback=None, market_context: str = "") -> str:
+def synthesize(state: ResearchState, progress_callback=None, market_context: str = "", market_summaries: dict = None) -> str:
     """
     Two-stage synthesis pipeline: outline → per-section expansion → assembly.
 
