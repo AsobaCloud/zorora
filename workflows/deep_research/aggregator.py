@@ -47,28 +47,68 @@ def scouting_knowledge_sources(query: str, imaging_store) -> List[Source]:
     """Return internal Source objects from completed scouting cases relevant to query.
 
     Only items at feasibility, diligence, or decision stage are included.
-    Relevance is determined by keyword overlap between the query and the asset
-    name, technology, country, and feasibility findings.
+    Relevance and ranking are determined by FTS5 BM25 over feasibility findings
+    (SEP-065).  Falls back gracefully if the FTS table is absent.
     """
     try:
-        query_tokens = set(query.lower().split())
-        results: List[Source] = []
+        if not query or not query.strip():
+            return []
 
-        for stage in _QUALIFYING_STAGES:
+        # --- FTS5 path (SEP-065) ---
+        fts_search = getattr(imaging_store, "search_feasibility_fts", None)
+        if callable(fts_search):
             try:
-                items = imaging_store.list_scouting_items("brownfield", stage=stage)
-            except Exception:
-                items = []
-            for item in items:
-                name = item.get("asset_name") or item.get("name") or ""
-                technology = item.get("technology") or ""
-                country = item.get("country") or ""
-                item_id = item.get("id") or ""
+                fts_hits = fts_search(query, limit=50)
+            except Exception as exc:
+                logger.warning("FTS search failed, returning empty: %s", exc)
+                return []
 
-                # Gather feasibility findings text
+            if not fts_hits:
+                return []
+
+            # fts_hits[i]["item_id"] is the feasibility_results.id == "{asset_id}:{tab}"
+            # Extract the asset id (everything before the last colon-separated tab)
+            results: List[Source] = []
+            seen_asset_ids: set = set()
+
+            # Build a lookup of qualifying asset ids keyed by asset stage
+            qualifying_asset_ids: set = set()
+            for stage in _QUALIFYING_STAGES:
+                try:
+                    items = imaging_store.list_scouting_items("brownfield", stage=stage)
+                except Exception:
+                    items = []
+                for item in items:
+                    qualifying_asset_ids.add(item.get("id") or "")
+
+            for hit in fts_hits:
+                # FTS item_id == feasibility_results.item_id == asset id directly
+                asset_id = hit.get("item_id") or ""
+                if not asset_id:
+                    continue
+
+                if asset_id not in qualifying_asset_ids:
+                    continue
+                if asset_id in seen_asset_ids:
+                    continue
+                seen_asset_ids.add(asset_id)
+
+                # Fetch asset details for title/snippet
+                name = ""
+                technology = ""
+                country = ""
                 findings_text = ""
                 try:
-                    feasibility_results = imaging_store.get_feasibility_results(item_id)
+                    # Try pipeline asset first
+                    asset = imaging_store.get_pipeline_asset(asset_id)
+                    if asset:
+                        name = asset.get("asset_name") or asset.get("name") or ""
+                        technology = asset.get("technology") or ""
+                        country = asset.get("country") or ""
+                except Exception:
+                    pass
+                try:
+                    feasibility_results = imaging_store.get_feasibility_results(asset_id)
                     for fr in feasibility_results:
                         findings = fr.get("findings") or {}
                         findings_text += " " + (findings.get("key_finding") or "")
@@ -77,16 +117,7 @@ def scouting_knowledge_sources(query: str, imaging_store) -> List[Source]:
                 except Exception:
                     pass
 
-                haystack = f"{name} {technology} {country} {findings_text}".lower()
-                haystack_tokens = set(haystack.split())
-
-                overlap = query_tokens & haystack_tokens
-                # Filter out very short/common tokens
-                meaningful_overlap = {t for t in overlap if len(t) > 3}
-                if not meaningful_overlap:
-                    continue
-
-                url = f"scouting://brownfield/{item_id}"
+                url = f"scouting://brownfield/{asset_id}"
                 title = f"[Internal] {name} — Scouting Feasibility"
                 snippet = findings_text.strip()[:300] if findings_text.strip() else f"{technology} in {country}"
                 source_id = Source.generate_id(url)
@@ -101,7 +132,58 @@ def scouting_knowledge_sources(query: str, imaging_store) -> List[Source]:
                     )
                 )
 
-        return results
+            return results
+
+        # --- Fallback: token-overlap (legacy / pre-SEP-065 stores) ---
+        query_tokens = set(query.lower().split())
+        fallback_results: List[Source] = []
+
+        for stage in _QUALIFYING_STAGES:
+            try:
+                items = imaging_store.list_scouting_items("brownfield", stage=stage)
+            except Exception:
+                items = []
+            for item in items:
+                name = item.get("asset_name") or item.get("name") or ""
+                technology = item.get("technology") or ""
+                country = item.get("country") or ""
+                item_id = item.get("id") or ""
+
+                findings_text = ""
+                try:
+                    feasibility_results = imaging_store.get_feasibility_results(item_id)
+                    for fr in feasibility_results:
+                        findings = fr.get("findings") or {}
+                        findings_text += " " + (findings.get("key_finding") or "")
+                        findings_text += " " + fr.get("conclusion", "")
+                        findings_text += " " + fr.get("tab", "")
+                except Exception:
+                    pass
+
+                haystack = f"{name} {technology} {country} {findings_text}".lower()
+                haystack_tokens = set(haystack.split())
+                overlap = query_tokens & haystack_tokens
+                meaningful_overlap = {t for t in overlap if len(t) > 3}
+                if not meaningful_overlap:
+                    continue
+
+                url = f"scouting://brownfield/{item_id}"
+                title = f"[Internal] {name} — Scouting Feasibility"
+                snippet = findings_text.strip()[:300] if findings_text.strip() else f"{technology} in {country}"
+                source_id = Source.generate_id(url)
+
+                fallback_results.append(
+                    Source(
+                        source_id=source_id,
+                        url=url,
+                        title=title,
+                        source_type="internal",
+                        content_snippet=snippet,
+                    )
+                )
+
+        return fallback_results
+
     except Exception as exc:
         logger.warning(f"scouting_knowledge_sources failed: {exc}")
         return []

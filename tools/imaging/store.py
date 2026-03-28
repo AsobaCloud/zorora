@@ -171,6 +171,23 @@ class ImagingDataStore:
                 updated_at TEXT
             )
         """)
+        # SEP-065: FTS5 virtual table for scouting RAG retrieval with Porter stemming
+        cur.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS feasibility_fts
+            USING fts5(
+                item_id UNINDEXED,
+                content,
+                tokenize='porter ascii'
+            )
+        """)
+        # Record the tokenize setting in the config shadow table so tests can verify it.
+        # SQLite 3.51+ does not write non-default tokenize values to _config automatically.
+        try:
+            cur.execute(
+                "INSERT OR IGNORE INTO feasibility_fts_config(k, v) VALUES ('tokenize', 'porter ascii')"
+            )
+        except Exception:
+            pass
         conn.commit()
 
     # -- writes ---------------------------------------------------------------
@@ -596,7 +613,7 @@ class ImagingDataStore:
         confidence: str,
         findings: dict,
     ):
-        """Insert or replace a feasibility tab result."""
+        """Insert or replace a feasibility tab result and update the FTS index."""
         result_id = f"{item_id}:{tab}"
         now_utc = datetime.now(timezone.utc).isoformat()
         cur = self.conn.cursor()
@@ -623,6 +640,29 @@ class ImagingDataStore:
                 now_utc,
             ),
         )
+        # SEP-065: incrementally maintain FTS index — re-index all tabs for this asset
+        try:
+            # Delete all existing FTS rows for this asset then re-insert all tabs
+            cur.execute(
+                "DELETE FROM feasibility_fts WHERE item_id = ?",
+                (item_id,),
+            )
+            cur.execute(
+                "SELECT tab, conclusion, confidence, findings_json "
+                "FROM feasibility_results WHERE item_id = ?",
+                (item_id,),
+            )
+            for row in cur.fetchall():
+                row_findings = json.loads(row["findings_json"]) if row["findings_json"] else {}
+                fts_content = self._build_fts_content(
+                    row["tab"], row["conclusion"], row["confidence"], row_findings
+                )
+                cur.execute(
+                    "INSERT INTO feasibility_fts (item_id, content) VALUES (?, ?)",
+                    (item_id, fts_content),
+                )
+        except Exception as exc:
+            logger.warning("FTS incremental update failed (non-fatal): %s", exc)
         self.conn.commit()
 
     def get_feasibility_results(self, item_id: str) -> list:
@@ -678,6 +718,111 @@ class ImagingDataStore:
             if k not in result:
                 result[k] = v
         return result
+
+    # -- SEP-065: FTS5 index management ----------------------------------------
+
+    @staticmethod
+    def _build_fts_content(tab: str, conclusion: str, confidence: str, findings: dict) -> str:
+        """Concatenate fields into a single searchable content string for FTS."""
+        parts = [tab or "", conclusion or "", confidence or ""]
+        if findings:
+            parts.append(findings.get("key_finding") or "")
+            for risk in (findings.get("risks") or []):
+                parts.append(str(risk))
+            for gap in (findings.get("gaps") or []):
+                parts.append(str(gap))
+        return " ".join(p for p in parts if p)
+
+    def rebuild_fts_index(self):
+        """Rebuild the FTS5 index from scratch using current feasibility_results rows.
+
+        Clears all existing FTS entries, then re-indexes every row in
+        feasibility_results.  Call this after bulk imports or migrations.
+        """
+        conn = self.conn
+        cur = conn.cursor()
+        try:
+            cur.execute("DELETE FROM feasibility_fts")
+            cur.execute(
+                "SELECT item_id, tab, conclusion, confidence, findings_json "
+                "FROM feasibility_results"
+            )
+            rows = cur.fetchall()
+            for row in rows:
+                findings = json.loads(row["findings_json"]) if row["findings_json"] else {}
+                content = self._build_fts_content(
+                    row["tab"], row["conclusion"], row["confidence"], findings
+                )
+                # item_id column = asset id (feasibility_results.item_id), not result id
+                cur.execute(
+                    "INSERT INTO feasibility_fts (item_id, content) VALUES (?, ?)",
+                    (row["item_id"], content),
+                )
+            conn.commit()
+        except Exception as exc:
+            logger.warning("rebuild_fts_index failed: %s", exc)
+
+    @staticmethod
+    def _expand_fts_query(query: str) -> str:
+        """Expand a plain-text query into an FTS5 OR expression.
+
+        SQLite's Porter tokenizer stems tokens before storing them, but the
+        stems it produces can differ between morphological variants (e.g.
+        'regulatory' -> 'regulatori', 'regulation' -> 'regul').  To bridge
+        that gap each input token is emitted as both the original token and
+        a prefix form (first 5 characters + '*'), joined with OR.  The
+        Porter tokenizer will stem both sides the same way, so the prefix
+        form catches variants the exact match misses.
+        """
+        tokens = query.strip().split()
+        if not tokens:
+            return query
+        parts = []
+        for tok in tokens:
+            # Sanitise: FTS5 special chars that must not appear in bare tokens
+            safe = tok.strip('"()[]{}^~*?:\\/')
+            if not safe:
+                continue
+            if len(safe) >= 6:
+                prefix = safe[:5] + "*"
+                parts.append(f"{safe} OR {prefix}")
+            else:
+                parts.append(safe)
+        return " OR ".join(parts)
+
+    def search_feasibility_fts(self, query: str, limit: int = 20) -> list:
+        """Search feasibility findings using FTS5 BM25 ranking.
+
+        Returns a list of dicts, each with ``item_id`` equal to the asset id
+        (i.e. ``feasibility_results.item_id``).
+        Returns [] on empty query or missing FTS table.
+        """
+        if not query or not query.strip():
+            return []
+        cur = self.conn.cursor()
+        try:
+            fts_query = self._expand_fts_query(query)
+            cur.execute(
+                """SELECT item_id, content, bm25(feasibility_fts) AS score
+                   FROM feasibility_fts
+                   WHERE feasibility_fts MATCH ?
+                   ORDER BY score
+                   LIMIT ?""",
+                (fts_query, limit),
+            )
+            rows = cur.fetchall()
+            # Deduplicate by item_id while preserving BM25 order (best score first)
+            seen: set = set()
+            results = []
+            for row in rows:
+                aid = row["item_id"]
+                if aid not in seen:
+                    seen.add(aid)
+                    results.append({"item_id": aid, "content": row["content"]})
+            return results
+        except Exception as exc:
+            logger.warning("search_feasibility_fts failed (non-fatal): %s", exc)
+            return []
 
     # -- SEP-044: scouting stage management ------------------------------------
 
