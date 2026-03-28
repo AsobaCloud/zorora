@@ -12,11 +12,13 @@ from typing import Callable, List, Optional
 
 import config
 from engine.models import ResearchState, Source, Finding
-from engine.query_refiner import SearchIntent, decompose_query, decompose_diligence_query
+from engine.query_refiner import SearchIntent, decompose_query, decompose_diligence_query, detect_market_intent
 from workflows.deep_research.aggregator import aggregate_sources
 from workflows.deep_research.credibility import score_source_credibility
 from workflows.deep_research.reranker import score_relevance, filter_relevant, _count_cross_references
 from workflows.deep_research.synthesizer import synthesize
+from workflows.market_workflow import MarketWorkflow
+from tools.market.context import build_market_context
 
 
 logger = logging.getLogger(__name__)
@@ -136,18 +138,13 @@ def _build_diligence_context(asset_metadata: dict) -> tuple:
     return "\n".join(sections), raw_data
 
 
-def _build_market_context_for_query(query: str) -> str:
+def _build_market_context_for_query(query: str, force: bool = False) -> str:
     """Build optional market context for market-oriented research queries."""
     try:
-        from engine.query_refiner import detect_market_intent
-
-        if not detect_market_intent(query):
+        if not force and not detect_market_intent(query):
             return ""
 
         logger.info("Market intent detected — injecting FRED context")
-        from workflows.market_workflow import MarketWorkflow
-        from tools.market.context import build_market_context
-
         workflow = MarketWorkflow()
         workflow.update_all()
         summaries = workflow.compute_summary()

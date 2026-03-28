@@ -124,6 +124,10 @@ def score_relevance(query: str, sources: List[Source],
         if source.publication_date:
             source.relevance_score += _freshness_bonus(source.publication_date)
 
+        # Newsroom boost: +0.10 for curated Ona articles
+        if getattr(source, "source_type", None) == "newsroom":
+            source.relevance_score += 0.10
+
     sources.sort(key=lambda s: s.relevance_score, reverse=True)
     return sources
 

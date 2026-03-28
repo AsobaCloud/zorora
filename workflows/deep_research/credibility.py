@@ -25,9 +25,9 @@ BASE_CREDIBILITY = {
     "europa.eu": {"score": 0.80, "reason": "European Union"},
     "un.org": {"score": 0.80, "reason": "United Nations"},
 
-    # Tier 4: Curated news (0.75)
-    "newsroom:": {"score": 0.75, "reason": "Asoba curated newsroom"},
-    "asoba.co/newsroom": {"score": 0.75, "reason": "Asoba newsroom"},
+    # Tier 4: Curated news (0.85)
+    "newsroom:": {"score": 0.85, "reason": "Asoba curated newsroom"},
+    "asoba.co/newsroom": {"score": 0.85, "reason": "Asoba newsroom"},
 
     # Tier 5: Major news (0.60-0.70)
     "reuters.com": {"score": 0.70, "reason": "Reuters (news wire)"},
