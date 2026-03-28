@@ -3350,7 +3350,7 @@ def synthesize_direct(
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def synthesize(state: ResearchState, progress_callback=None) -> str:
+def synthesize(state: ResearchState, progress_callback=None, market_context: str = "") -> str:
     """
     Two-stage synthesis pipeline: outline → per-section expansion → assembly.
 
@@ -3363,21 +3363,21 @@ def synthesize(state: ResearchState, progress_callback=None) -> str:
     """
     logger.info("Synthesizing findings (two-stage pipeline)...")
 
-    # Build market context if query involves financial topics
-    market_context = ""
-    try:
-        from engine.query_refiner import detect_market_intent
-        if detect_market_intent(state.original_query):
-            logger.info("Market intent detected — injecting FRED context")
-            from workflows.market_workflow import MarketWorkflow
-            from tools.market.context import build_market_context
-            wf = MarketWorkflow()
-            wf.update_all()
-            summaries = wf.compute_summary()
-            if summaries:
-                market_context = build_market_context(summaries)
-    except Exception as exc:
-        logger.warning("Market context build failed (non-fatal): %s", exc)
+    # Build market context if query involves financial topics and none was passed in
+    if not market_context:
+        try:
+            from engine.query_refiner import detect_market_intent
+            if detect_market_intent(state.original_query):
+                logger.info("Market intent detected — injecting FRED context")
+                from workflows.market_workflow import MarketWorkflow
+                from tools.market.context import build_market_context
+                wf = MarketWorkflow()
+                wf.update_all()
+                summaries = wf.compute_summary()
+                if summaries:
+                    market_context = build_market_context(summaries)
+        except Exception as exc:
+            logger.warning("Market context build failed (non-fatal): %s", exc)
 
     # Stage 1: Outline
     _emit_progress(progress_callback, "synthesis", "Generating outline from findings...")

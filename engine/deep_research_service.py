@@ -16,16 +16,12 @@ from engine.query_refiner import SearchIntent, decompose_query, decompose_dilige
 from workflows.deep_research.aggregator import aggregate_sources
 from workflows.deep_research.credibility import score_source_credibility
 from workflows.deep_research.reranker import score_relevance, filter_relevant, _count_cross_references
-from workflows.deep_research.synthesizer import synthesize_direct
+from workflows.deep_research.synthesizer import synthesize
 
 
 logger = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[str, str, str], None]
-
-# Backward-compat hook for existing tests: the shared service now routes
-# through direct synthesis, but callers may still patch `synthesize`.
-synthesize = synthesize_direct
 
 _CLUSTERING_SYSTEM_PROMPT = (
     "You are a senior energy and electricity market intelligence analyst. "
