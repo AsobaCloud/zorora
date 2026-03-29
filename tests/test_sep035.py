@@ -255,7 +255,7 @@ def test_run_deep_research_uses_direct_synthesis_and_skips_clustering(monkeypatc
 
     direct_calls = {}
 
-    def fake_synthesize_direct(state, market_context="", progress_callback=None):
+    def fake_synthesize_direct(state, market_context="", progress_callback=None, **kwargs):
         direct_calls["market_context"] = market_context
         direct_calls["findings"] = list(state.findings)
         state.synthesis = "## Executive Summary\nDirect answer [Grid Operations Update]."

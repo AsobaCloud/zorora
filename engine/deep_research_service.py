@@ -16,7 +16,7 @@ from engine.query_refiner import SearchIntent, decompose_query, decompose_dilige
 from workflows.deep_research.aggregator import aggregate_sources
 from workflows.deep_research.credibility import score_source_credibility
 from workflows.deep_research.reranker import score_relevance, filter_relevant, _count_cross_references
-from workflows.deep_research.synthesizer import synthesize
+from workflows.deep_research.synthesizer import synthesize, synthesize_direct
 from workflows.market_workflow import MarketWorkflow
 from tools.market.context import build_market_context
 
@@ -1104,7 +1104,7 @@ def run_deep_research(
 
     try:
         if is_diligence:
-            state.synthesis = synthesize(
+            state.synthesis = synthesize_direct(
                 state,
                 market_context=market_context or diligence_context,
                 progress_callback=progress_callback,
