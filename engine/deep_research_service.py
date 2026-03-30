@@ -1058,21 +1058,34 @@ def run_deep_research(
     )
     state.total_sources = len(state.sources_checked)
 
-    state.findings = []
     diligence_context = ""
     diligence_data = {}
     market_summaries: dict = {}
     if is_diligence:
+        state.findings = []
         diligence_context, diligence_data = _build_diligence_context(asset_metadata)
         market_context = ""
     else:
         market_context, market_summaries = _build_market_context_for_query(query)
-
-    _emit(
-        progress_callback,
-        "cross_reference",
-        f"Skipping finding clustering; sending {len(state.sources_checked)} ranked sources directly to synthesis.",
-    )
+        _emit(
+            progress_callback,
+            "cross_reference",
+            f"Clustering findings across {len(state.sources_checked)} ranked sources...",
+        )
+        try:
+            clustered = _cluster_findings(query, state.sources_checked)
+            if clustered:
+                state.findings = clustered
+            else:
+                state.findings = _fallback_findings(state.sources_checked)
+        except Exception as _cluster_err:
+            logger.warning("Finding clustering failed (non-fatal), using fallback: %s", _cluster_err)
+            state.findings = _fallback_findings(state.sources_checked)
+        _emit(
+            progress_callback,
+            "cross_reference",
+            f"Extracted {len(state.findings)} thematic findings from {len(state.sources_checked)} sources.",
+        )
     _emit(
         progress_callback,
         "synthesis",

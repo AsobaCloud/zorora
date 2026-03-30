@@ -247,11 +247,12 @@ def test_run_deep_research_uses_direct_synthesis_and_skips_clustering(monkeypatc
 
     cluster_calls = {"count": 0}
 
-    def fail_if_called(*args, **kwargs):
+    def fake_cluster_findings(query, sources):
         cluster_calls["count"] += 1
-        raise AssertionError("_cluster_findings should not run in direct synthesis path")
+        from engine.models import Finding
+        return [Finding(claim="Test finding", sources=["s1"], confidence="medium", average_credibility=0.75)]
 
-    monkeypatch.setattr(svc, "_cluster_findings", fail_if_called)
+    monkeypatch.setattr(svc, "_cluster_findings", fake_cluster_findings)
 
     direct_calls = {}
 
@@ -266,8 +267,8 @@ def test_run_deep_research_uses_direct_synthesis_and_skips_clustering(monkeypatc
 
     state = svc.run_deep_research("test query", depth=1)
 
-    assert cluster_calls["count"] == 0
-    assert direct_calls["findings"] == []
+    assert cluster_calls["count"] >= 1, "clustering must be called for non-diligence queries"
+    assert len(direct_calls["findings"]) >= 1, "findings must be populated after clustering"
     assert state.synthesis_model == "direct"
     assert state.synthesis.startswith("## Executive Summary")
 
