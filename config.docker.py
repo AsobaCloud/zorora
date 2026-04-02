@@ -5,6 +5,13 @@ import os
 from datetime import datetime
 from pathlib import Path
 
+def _env_flag(name: str, default: bool) -> bool:
+    """Parse boolean feature flags from environment variables."""
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
 # LM Studio API Configuration (OpenAI-compatible)
 API_URL = os.environ.get("LLM_API_URL", "http://localhost:1234/v1/chat/completions")
 MODEL = "qwen/qwen3-vl-4b"  # Regular model - fast and decisive
@@ -507,6 +514,15 @@ NEHANDA_LOCAL = {
     "top_k_default": 5,            # Default number of results
 }
 
+# Local SME corpus for diligence deep research
+LOCAL_SME_CORPUS = {
+    "enabled": _env_flag("ZORORA_LOCAL_SME_CORPUS_ENABLED", True),
+    "path": os.environ.get("ZORORA_LOCAL_SME_CORPUS_PATH", "data/sme_orthodoxies"),
+    "max_results_per_query": 6,
+    "snippet_chars": 320,
+    "body_chars": 4000,
+}
+
 # Model Endpoint Mapping (which endpoint each role uses)
 # Values: "local" for LM Studio, or HF endpoint key (e.g., "qwen-coder-32b")
 MODEL_ENDPOINTS = {
@@ -544,6 +560,13 @@ LOG_DIR = Path.home() / ".zorora" / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 # Log file with date suffix
 LOG_FILE = LOG_DIR / f"zorora_{datetime.now().strftime('%Y%m%d')}.log"
+
+# Product Surface Configuration
+# In containerized deployments, web workflows are primary for customers.
+WEB_RESEARCH_ENABLED = _env_flag("ZORORA_WEB_RESEARCH_ENABLED", True)
+WEB_MARKET_INTEL_ENABLED = _env_flag("ZORORA_WEB_MARKET_INTEL_ENABLED", True)
+REPL_LEGACY_ENABLED = _env_flag("ZORORA_REPL_LEGACY_ENABLED", False)
+REPL_CODEGEN_ENABLED = _env_flag("ZORORA_REPL_CODEGEN_ENABLED", False)
 
 # UI Configuration
 UI_ENABLED = True  # Master switch for rich UI

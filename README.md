@@ -3,7 +3,9 @@
 ![License](https://img.shields.io/badge/License-AGPLv3%2B%20%7C%20Commercial-blue.svg)
 ![Tests](https://github.com/AsobaCloud/zorora/actions/workflows/test.yml/badge.svg)
 
-Zorora is a local-first energy intelligence platform for acquisition diligence, regulatory monitoring, geospatial asset discovery, and market analysis. Built for energy traders and asset investors, it runs against local LLM endpoints with both terminal and web interfaces — all data stays on your machine.
+Zorora is a local-first energy intelligence platform for acquisition diligence, regulatory monitoring, geospatial asset discovery, and market analysis. Built for energy traders and asset investors, it runs against local LLM endpoints with web and terminal interfaces — all data stays on your machine.
+
+For customer-facing deployments, the **web UI is the primary product surface**. Legacy REPL development/code-generation commands are intended for internal/operator use.
 
 **Learn more in the [full documentation](https://code.asoba.co)**.
 
@@ -49,6 +51,7 @@ Zorora ingests 80 market series across 6 providers, refreshed automatically via 
 - World Bank Documents — policy and development reports
 - Congress.gov / Federal Register — US policy and regulatory filings
 - SEC EDGAR — corporate filings and financial statements
+- Local SME corpus — optional markdown knowledge base for diligence-mode Deep Research (`data/sme_orthodoxies/`)
 
 ## Additional Capabilities
 
@@ -95,6 +98,28 @@ Zorora ships as a Fargate service in the Ona platform with permission-gated acce
 ## Configuration
 
 Research depth profiles, model budgets, and synthesis settings are configured in `config.py`. See the [full documentation](https://code.asoba.co) for details.
+
+### Local SME Corpus (Diligence)
+
+Deep Research diligence runs can include local "subject matter expert" texts that represent different economic, financial, and operational orthodoxies for energy asset management.
+
+- Default folder: `data/sme_orthodoxies/`
+- Template file: `data/sme_orthodoxies/TEMPLATE_sme_orthodoxy.md`
+- Config keys: `LOCAL_SME_CORPUS` in `config.py` / `config.docker.py`
+- Env overrides:
+  - `ZORORA_LOCAL_SME_CORPUS_ENABLED=true|false`
+  - `ZORORA_LOCAL_SME_CORPUS_PATH=/absolute/or/relative/path`
+
+These entries are injected as internal evidence during diligence research and can be cited in synthesis like other ranked sources.
+
+### Product Surface Flags
+
+You can control customer-facing surface area with environment flags:
+
+- `ZORORA_WEB_RESEARCH_ENABLED` (default: `true`)
+- `ZORORA_WEB_MARKET_INTEL_ENABLED` (default: `true`)
+- `ZORORA_REPL_LEGACY_ENABLED` (default: `true` in local config, `false` in docker config)
+- `ZORORA_REPL_CODEGEN_ENABLED` (default: `true` in local config, `false` in docker config)
 
 ## Reporting Issues
 

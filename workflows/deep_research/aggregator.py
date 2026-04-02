@@ -15,6 +15,7 @@ from tools.research.newsroom import fetch_newsroom_api, _extract_keywords
 from tools.research.worldbank_search import worldbank_search_sources
 from tools.research.policy_search import policy_search_sources
 from tools.research.sec_search import sec_search_sources
+from tools.research.local_sme_corpus import load_local_sme_sources
 
 logger = logging.getLogger(__name__)
 
@@ -234,6 +235,9 @@ def aggregate_sources(
     include_brave_news: bool = False,
     force_policy: bool = False,
     suppress_policy: bool = False,
+    include_local_sme: bool = False,
+    sme_intent_domain: str = "",
+    asset_metadata: dict = None,
     imaging_store=None,
 ) -> List[Source]:
     """
@@ -364,6 +368,18 @@ def aggregate_sources(
             logger.warning(f"SEC EDGAR search failed: {e}")
             return []
 
+    def fetch_local_sme():
+        try:
+            return load_local_sme_sources(
+                query=query,
+                intent_domain=sme_intent_domain,
+                asset_metadata=asset_metadata,
+                max_results=max_results_per_source,
+            )
+        except Exception as e:
+            logger.warning(f"Local SME corpus fetch failed: {e}")
+            return []
+
     # Determine which conditional channels to include
     if suppress_policy:
         include_policy = False
@@ -374,7 +390,7 @@ def aggregate_sources(
     include_sec = _query_matches_keywords(query, SEC_KEYWORDS)
 
     # Fetch in parallel
-    max_workers = 4 + (1 if include_brave_news else 0) + 1 + (1 if include_policy else 0) + (1 if include_sec else 0)
+    max_workers = 4 + (1 if include_brave_news else 0) + 1 + (1 if include_policy else 0) + (1 if include_sec else 0) + (1 if include_local_sme else 0)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(fetch_academic): "academic",
@@ -388,6 +404,8 @@ def aggregate_sources(
             futures[executor.submit(fetch_policy)] = "policy"
         if include_sec:
             futures[executor.submit(fetch_sec)] = "sec_edgar"
+        if include_local_sme:
+            futures[executor.submit(fetch_local_sme)] = "local_sme"
 
         for future in as_completed(futures):
             source_type = futures[future]

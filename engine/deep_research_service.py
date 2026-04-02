@@ -957,6 +957,9 @@ def run_deep_research(
                 include_brave_news=include_brave_news,
                 force_policy=force_policy_flag,
                 suppress_policy=suppress_policy_flag,
+                include_local_sme=bool(is_diligence),
+                sme_intent_domain=(intent.domain or "") if is_diligence else "",
+                asset_metadata=asset_metadata if is_diligence else None,
             )
             intent_raw_sources.extend(variant_sources)
 
