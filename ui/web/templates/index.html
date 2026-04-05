@@ -647,6 +647,19 @@
             max-width: none;
         }
 
+        /* Scouting: five-column kanban needs full main width (default main-container is 900px) */
+        .main-container.main-container--scouting {
+            max-width: none;
+            padding: 24px 16px 24px;
+        }
+
+        #scoutingSection .global-view-panel {
+            max-width: none;
+            width: 100%;
+            margin: 0;
+            padding: 16px 0;
+        }
+
         .research-layout {
             display: flex;
             gap: 24px;
@@ -1069,6 +1082,12 @@
 
         .modal-small {
             max-width: 500px;
+        }
+
+        .modal-large {
+            max-width: min(1200px, 96vw);
+            width: 94%;
+            max-height: 92vh;
         }
 
         .modal-header {
@@ -1891,20 +1910,9 @@
             }
         }
 
-        /* SEP-045: Feasibility panel styles */
-        #feasibilityPanel {
-            margin-top: 18px;
-            border: 1px solid var(--border-grey);
-            border-radius: 14px;
-            padding: 16px;
-            background: rgba(255,255,255,0.96);
-            box-shadow: 0 8px 24px rgba(15,23,42,0.05);
-        }
-        .feasibility-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 12px;
+        /* SEP-045: Feasibility (modal body) */
+        #feasibilityModal .feasibility-content {
+            min-height: 220px;
         }
         .feasibility-progress-badge {
             margin-left: 10px;
@@ -2035,7 +2043,7 @@
             </div>
         </div>
 
-    <div class="main-container">
+    <div class="main-container" id="mainContainer">
         <div class="welcome-section">
             <h1 class="welcome-title">Zorora</h1>
             <p class="welcome-subtitle">
@@ -2433,40 +2441,6 @@
                     <button class="scouting-tab-btn" data-scouttype="bess" onclick="switchScoutingTab('bess')">BESS</button>
                 </div>
                 <div class="kanban-board" id="kanbanBoard"></div>
-
-                <div class="hidden" id="feasibilityPanel">
-                    <div class="feasibility-header">
-                        <div>
-                            <strong id="feasibilityItemName">Site Name</strong>
-                            <span class="feasibility-progress-badge" id="feasibilityProgressBadge">0/5 done</span>
-                        </div>
-                        <button type="button" class="imaging-mini-btn" onclick="closeFeasibilityPanel()">Close</button>
-                    </div>
-                    <div class="scouting-tabs" id="feasibilityTabs">
-                        <button class="scouting-tab-btn active" data-ftab="production" onclick="switchFeasibilityTab('production')">Production</button>
-                        <button class="scouting-tab-btn" data-ftab="trading" onclick="switchFeasibilityTab('trading')">Trading</button>
-                        <button class="scouting-tab-btn" data-ftab="grid" onclick="switchFeasibilityTab('grid')">Grid Connection</button>
-                        <button class="scouting-tab-btn" data-ftab="regulatory" onclick="switchFeasibilityTab('regulatory')">Regulatory</button>
-                        <button class="scouting-tab-btn" data-ftab="financial" onclick="switchFeasibilityTab('financial')">Financial</button>
-                    </div>
-                    <div id="feasibilityContent" class="feasibility-content">
-                        <div class="kanban-empty">Select a tab and run a study.</div>
-                    </div>
-                </div>
-
-                <div class="hidden" id="scoutingDetailPanel" style="margin-top:16px;border:1px solid var(--border-grey);border-radius:12px;background:#f9fafb;padding:16px;">
-                    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px;">
-                        <strong id="scoutingDetailTitle" style="font-size:1rem;color:var(--text-dark);">Site</strong>
-                        <button type="button" class="imaging-mini-btn" onclick="closeScoutingDetailPanel()">Close</button>
-                    </div>
-                    <div id="scoutingDetailMeta" style="font-size:0.84rem;color:var(--text-light);line-height:1.55;margin-bottom:12px;"></div>
-                    <label for="scoutingDetailNotes" style="display:block;font-size:0.82rem;font-weight:600;margin-bottom:6px;color:var(--text-dark);">Team notes</label>
-                    <textarea id="scoutingDetailNotes" class="search-input" style="width:100%;min-height:120px;resize:vertical;font-family:inherit;" placeholder="Contacts, site status, follow-ups…"></textarea>
-                    <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;">
-                        <button type="button" class="search-button" style="padding:8px 16px;font-size:0.88rem;" onclick="saveScoutingDetailNotes()">Save notes</button>
-                        <button type="button" class="imaging-mini-btn" onclick="focusImagingLocationFromScoutingDetail()">Show on Discovery map</button>
-                    </div>
-                </div>
             </div>
         </div>
 
@@ -2795,6 +2769,8 @@
             document.getElementById('globalViewSection').classList.toggle('hidden', activeMode !== 'global');
             document.getElementById('imagingSection').classList.toggle('hidden', activeMode !== 'imaging');
             document.getElementById('scoutingSection').classList.toggle('hidden', activeMode !== 'scouting');
+            const mainEl = document.getElementById('mainContainer');
+            if (mainEl) mainEl.classList.toggle('main-container--scouting', activeMode === 'scouting');
             document.getElementById('newSearchButton').classList.toggle('hidden', !showSessionChrome);
             document.getElementById('researchLayout').classList.toggle('hidden', !showResearchSession);
             document.getElementById('chatDock').classList.toggle('hidden', !showSessionChrome);
@@ -5427,10 +5403,9 @@
         async function openScoutingDetail(itemId, type) {
             activeScoutingDetailId = itemId;
             activeScoutingDetailType = type;
-            const panel = document.getElementById('scoutingDetailPanel');
-            if (!panel) return;
-            panel.classList.remove('hidden');
-            panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            const modal = document.getElementById('scoutingDetailModal');
+            if (!modal) return;
+            modal.style.display = 'flex';
             document.getElementById('scoutingDetailTitle').textContent = 'Loading…';
             document.getElementById('scoutingDetailMeta').innerHTML = '';
             document.getElementById('scoutingDetailNotes').value = '';
@@ -5467,8 +5442,8 @@
         }
 
         function closeScoutingDetailPanel() {
-            const panel = document.getElementById('scoutingDetailPanel');
-            if (panel) panel.classList.add('hidden');
+            const modal = document.getElementById('scoutingDetailModal');
+            if (modal) modal.style.display = 'none';
             activeScoutingDetailId = null;
             activeScoutingDetailType = null;
             window.__scoutingDetailItem = null;
@@ -5515,8 +5490,8 @@
             activeFeasibilityItemId = itemId;
             activeFeasibilityType = type;
             activeFeasibilityTab = 'production';
-            const panel = document.getElementById('feasibilityPanel');
-            panel.classList.remove('hidden');
+            const modal = document.getElementById('feasibilityModal');
+            if (modal) modal.style.display = 'flex';
             document.querySelectorAll('#feasibilityTabs .scouting-tab-btn').forEach(b => {
                 b.classList.toggle('active', b.dataset.ftab === 'production');
             });
@@ -5537,7 +5512,8 @@
         }
 
         function closeFeasibilityPanel() {
-            document.getElementById('feasibilityPanel').classList.add('hidden');
+            const modal = document.getElementById('feasibilityModal');
+            if (modal) modal.style.display = 'none';
             activeFeasibilityItemId = null;
             feasibilityResultsCache = {};
         }
@@ -5637,7 +5613,8 @@
                 // Refresh kanban to update progress badge on card
                 await loadScoutingView();
                 // Re-show the panel (loadScoutingView may not affect it since it's separate)
-                document.getElementById('feasibilityPanel').classList.remove('hidden');
+                const fm = document.getElementById('feasibilityModal');
+                if (fm) fm.style.display = 'flex';
             } catch (err) {
                 container.innerHTML = `<div class="kanban-empty">Error: ${escapeHtml(err.message)}</div>`;
             }
@@ -5893,6 +5870,52 @@
         syncSessionView();
         loadResearchHistory();
     </script>
+
+    <!-- Scouting: site details + notes -->
+    <div id="scoutingDetailModal" class="modal" style="display: none;">
+        <div class="modal-backdrop" onclick="closeScoutingDetailPanel()"></div>
+        <div class="modal-content modal-large" role="dialog" aria-modal="true" aria-labelledby="scoutingDetailTitle">
+            <div class="modal-header">
+                <h2 class="modal-title" id="scoutingDetailTitle">Site</h2>
+                <button type="button" class="modal-close" onclick="closeScoutingDetailPanel()" aria-label="Close">×</button>
+            </div>
+            <div class="modal-body">
+                <div id="scoutingDetailMeta" style="font-size:0.9rem;color:var(--text-light);line-height:1.6;margin-bottom:18px;"></div>
+                <label for="scoutingDetailNotes" style="display:block;font-size:0.82rem;font-weight:600;margin-bottom:8px;color:var(--text-dark);">Team notes</label>
+                <textarea id="scoutingDetailNotes" class="search-input" style="width:100%;min-height:220px;resize:vertical;font-family:inherit;" placeholder="Contacts, site status, follow-ups…"></textarea>
+                <div style="margin-top:16px;display:flex;flex-wrap:wrap;gap:10px;">
+                    <button type="button" class="search-button" style="padding:8px 18px;font-size:0.88rem;" onclick="saveScoutingDetailNotes()">Save notes</button>
+                    <button type="button" class="imaging-mini-btn" onclick="focusImagingLocationFromScoutingDetail()">Show on Discovery map</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scouting: feasibility studies -->
+    <div id="feasibilityModal" class="modal" style="display: none;">
+        <div class="modal-backdrop" onclick="closeFeasibilityPanel()"></div>
+        <div class="modal-content modal-large" role="dialog" aria-modal="true" aria-labelledby="feasibilityItemName">
+            <div class="modal-header" style="flex-wrap:wrap;align-items:flex-start;">
+                <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;flex:1;min-width:0;">
+                    <h2 class="modal-title" id="feasibilityItemName" style="margin:0;font-size:1.35rem;line-height:1.25;">Site Name</h2>
+                    <span class="feasibility-progress-badge" id="feasibilityProgressBadge">0/5 done</span>
+                </div>
+                <button type="button" class="modal-close" onclick="closeFeasibilityPanel()" aria-label="Close">×</button>
+            </div>
+            <div class="modal-body" style="padding-top:16px;">
+                <div class="scouting-tabs" id="feasibilityTabs">
+                    <button class="scouting-tab-btn active" data-ftab="production" onclick="switchFeasibilityTab('production')">Production</button>
+                    <button class="scouting-tab-btn" data-ftab="trading" onclick="switchFeasibilityTab('trading')">Trading</button>
+                    <button class="scouting-tab-btn" data-ftab="grid" onclick="switchFeasibilityTab('grid')">Grid Connection</button>
+                    <button class="scouting-tab-btn" data-ftab="regulatory" onclick="switchFeasibilityTab('regulatory')">Regulatory</button>
+                    <button class="scouting-tab-btn" data-ftab="financial" onclick="switchFeasibilityTab('financial')">Financial</button>
+                </div>
+                <div id="feasibilityContent" class="feasibility-content">
+                    <div class="kanban-empty">Select a tab and run a study.</div>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- Query Refinement Modal -->
     <div id="refinementModal" class="modal" style="display: none;">
@@ -6689,10 +6712,16 @@
         document.addEventListener('keydown', function(e) {
             // ESC to close modals
             if (e.key === 'Escape') {
+                const scoutingDetailModal = document.getElementById('scoutingDetailModal');
+                const feasibilityModal = document.getElementById('feasibilityModal');
                 const settingsModal = document.getElementById('settingsModal');
                 const endpointModal = document.getElementById('endpointModal');
-                
-                if (endpointModal.style.display === 'flex') {
+
+                if (scoutingDetailModal && scoutingDetailModal.style.display === 'flex') {
+                    closeScoutingDetailPanel();
+                } else if (feasibilityModal && feasibilityModal.style.display === 'flex') {
+                    closeFeasibilityPanel();
+                } else if (endpointModal.style.display === 'flex') {
                     closeEndpointModal();
                 } else if (settingsModal.style.display === 'flex') {
                     closeSettings();
