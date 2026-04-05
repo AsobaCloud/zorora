@@ -647,12 +647,16 @@
             max-width: none;
         }
 
-        /* Scouting: five-column kanban needs full main width (default main-container is 900px) */
-        .main-container.main-container--scouting {
+        /* Data-dense modes: maps, grids, kanban (default main-container is 900px) */
+        .main-container.main-container--wide {
             max-width: none;
             padding: 24px 16px 24px;
         }
 
+        #imagingSection .global-view-panel,
+        #globalViewSection .global-view-panel,
+        #regulatorySection .global-view-panel,
+        #alertsSection .global-view-panel,
         #scoutingSection .global-view-panel {
             max-width: none;
             width: 100%;
@@ -2770,7 +2774,8 @@
             document.getElementById('imagingSection').classList.toggle('hidden', activeMode !== 'imaging');
             document.getElementById('scoutingSection').classList.toggle('hidden', activeMode !== 'scouting');
             const mainEl = document.getElementById('mainContainer');
-            if (mainEl) mainEl.classList.toggle('main-container--scouting', activeMode === 'scouting');
+            const wideModes = ['scouting', 'imaging', 'global', 'regulatory', 'alerts'];
+            if (mainEl) mainEl.classList.toggle('main-container--wide', wideModes.includes(activeMode));
             document.getElementById('newSearchButton').classList.toggle('hidden', !showSessionChrome);
             document.getElementById('researchLayout').classList.toggle('hidden', !showResearchSession);
             document.getElementById('chatDock').classList.toggle('hidden', !showSessionChrome);
