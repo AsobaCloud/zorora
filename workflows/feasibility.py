@@ -26,11 +26,15 @@ def run_feasibility_tab(
     item_type: str,
     tab: str,
     item_data: dict,
+    prior_results: Optional[List[dict]] = None,
 ) -> dict:
     """Dispatch to per-tab analysis function.
 
     Returns dict with: conclusion, confidence, key_finding, risks, gaps, sources,
     and optionally chart_b64.
+
+    ``prior_results`` is used only for the ``financial`` tab (conclusions from other
+    tabs). Entries with tab ``financial`` are ignored to avoid stale self-reference.
     """
     if tab not in FEASIBILITY_TABS:
         raise ValueError(f"Invalid tab: {tab!r}. Must be one of {sorted(FEASIBILITY_TABS)}")
@@ -42,6 +46,10 @@ def run_feasibility_tab(
         "regulatory": _analyze_regulatory,
         "financial": _analyze_financial,
     }
+    if tab == "financial":
+        pr = prior_results or []
+        pr = [r for r in pr if r.get("tab") != "financial"]
+        return dispatch[tab](item_data=item_data, prior_results=pr)
     return dispatch[tab](item_data=item_data)
 
 

@@ -1,0 +1,54 @@
+{
+  "family": "ona-zorora-prod-efs-migrate",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512",
+  "executionRoleArn": "arn:aws:iam::905418405543:role/ona-zorora-task-execution-role",
+  "containerDefinitions": [
+    {
+      "name": "migrate",
+      "image": "public.ecr.aws/docker/library/alpine:3.19",
+      "essential": true,
+      "command": [
+        "sh",
+        "-c",
+        "set -eux; apk add --no-cache curl ca-certificates >/dev/null; curl -fSL \"$PRESIGNED_URL\" -o /tmp/zorora-home.tgz; tar -xzf /tmp/zorora-home.tgz -C /data; rm /tmp/zorora-home.tgz; echo '--- contents ---'; ls -la /data"
+      ],
+      "environment": [
+        {
+          "name": "PRESIGNED_URL",
+          "value": "https://example.invalid/override-at-run-task"
+        }
+      ],
+      "mountPoints": [
+        {
+          "sourceVolume": "zorora-zorora-home",
+          "containerPath": "/data",
+          "readOnly": false
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/ona-zorora-prod",
+          "awslogs-region": "af-south-1",
+          "awslogs-stream-prefix": "efs-migrate"
+        }
+      }
+    }
+  ],
+  "volumes": [
+    {
+      "name": "zorora-zorora-home",
+      "efsVolumeConfiguration": {
+        "fileSystemId": "fs-066661f81af6a1128",
+        "transitEncryption": "ENABLED",
+        "authorizationConfig": {
+          "accessPointId": "fsap-0766807bad409ae0c",
+          "iam": "DISABLED"
+        }
+      }
+    }
+  ]
+}

@@ -2358,6 +2358,23 @@
                     </div>
                 </div>
 
+                <div class="discovery-map-search" style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin:12px 0;">
+                    <div style="flex:1;min-width:220px;position:relative;">
+                        <label for="imgMapSearchInput" style="display:block;font-size:0.82rem;font-weight:600;margin-bottom:4px;color:var(--text-dark);">Find on map</label>
+                        <input id="imgMapSearchInput" class="search-input" type="text" placeholder="Plant, mine, project, or place…" autocomplete="off"
+                            onkeydown="if(event.key==='Enter'){event.preventDefault();runDiscoveryMapSearch();}" />
+                        <div id="imgMapSearchDropdown" class="hidden" style="position:absolute;left:0;right:0;top:100%;z-index:4000;background:#fff;border:1px solid var(--border-grey);border-radius:10px;max-height:280px;overflow-y:auto;margin-top:4px;box-shadow:0 10px 30px rgba(15,23,42,0.12);"></div>
+                    </div>
+                    <button type="button" class="search-button" style="padding:8px 16px;font-size:0.88rem;" onclick="runDiscoveryMapSearch()">Search</button>
+                    <div style="display:flex;gap:8px;align-items:flex-end;">
+                        <div>
+                            <label for="imgJumpLatLon" style="display:block;font-size:0.82rem;font-weight:600;margin-bottom:4px;color:var(--text-dark);">Jump to lat, lon</label>
+                            <input id="imgJumpLatLon" class="search-input" type="text" placeholder="-17.8, 31.05" style="width:168px;" />
+                        </div>
+                        <button type="button" class="search-button" style="padding:8px 16px;font-size:0.88rem;" onclick="jumpDiscoveryMapToLatLon()">Go</button>
+                    </div>
+                </div>
+
                 <div id="imaging-map-container" style="height:600px;border-radius:12px;margin-bottom:12px;"></div>
 
                 <div id="imagingSummary" class="imaging-summary">
@@ -2434,6 +2451,20 @@
                     </div>
                     <div id="feasibilityContent" class="feasibility-content">
                         <div class="kanban-empty">Select a tab and run a study.</div>
+                    </div>
+                </div>
+
+                <div class="hidden" id="scoutingDetailPanel" style="margin-top:16px;border:1px solid var(--border-grey);border-radius:12px;background:#f9fafb;padding:16px;">
+                    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px;">
+                        <strong id="scoutingDetailTitle" style="font-size:1rem;color:var(--text-dark);">Site</strong>
+                        <button type="button" class="imaging-mini-btn" onclick="closeScoutingDetailPanel()">Close</button>
+                    </div>
+                    <div id="scoutingDetailMeta" style="font-size:0.84rem;color:var(--text-light);line-height:1.55;margin-bottom:12px;"></div>
+                    <label for="scoutingDetailNotes" style="display:block;font-size:0.82rem;font-weight:600;margin-bottom:6px;color:var(--text-dark);">Team notes</label>
+                    <textarea id="scoutingDetailNotes" class="search-input" style="width:100%;min-height:120px;resize:vertical;font-family:inherit;" placeholder="Contacts, site status, follow-ups…"></textarea>
+                    <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;">
+                        <button type="button" class="search-button" style="padding:8px 16px;font-size:0.88rem;" onclick="saveScoutingDetailNotes()">Save notes</button>
+                        <button type="button" class="imaging-mini-btn" onclick="focusImagingLocationFromScoutingDetail()">Show on Discovery map</button>
                     </div>
                 </div>
             </div>
@@ -4503,6 +4534,7 @@
         // Imaging tab — OSINT mineral intelligence map
         // ===================================================================
         let imagingMap = null, imagingDeposits = null, imagingViirs = null, imagingConcessions = null, imagingGeneration = null;
+        let imagingSearchMarker = null;
         let imagingSolarResource = null, imagingSolarResourceConfig = null, scoutMarker = null;
         let pipelineAssetIds = new Set(), currentScoutSite = null, selectedScoutCompareIds = new Set();
         let imagingMtsZones = null, imagingSupplyAreas = null, imagingDamZones = null, imagingSubstations = null;
@@ -5225,22 +5257,23 @@
                 : `${item.capacity_mw ? `${Number(item.capacity_mw).toLocaleString()} MW` : 'capacity unknown'}`;
             const id = item.id;
             const idAttr = escapeAttr(JSON.stringify(id));
+            const dBtn = `<button type="button" onclick="event.stopPropagation();openScoutingDetail(${idAttr}, '${type}')">Details</button> `;
             let actions = '';
             if (stage === 'identified') {
-                actions = `<button onclick="moveToStage(${idAttr}, '${type}', 'scored')">Score</button>
-                           <button class="danger" onclick="removeScoutingItem(${idAttr}, '${type}')">Remove</button>`;
+                actions = dBtn + `<button type="button" onclick="moveToStage(${idAttr}, '${type}', 'scored')">Score</button>
+                           <button type="button" class="danger" onclick="removeScoutingItem(${idAttr}, '${type}')">Remove</button>`;
             } else if (stage === 'scored') {
-                actions = `<button onclick="moveToStage(${idAttr}, '${type}', 'feasibility')">Feasibility</button>
-                           <button onclick="moveToStage(${idAttr}, '${type}', 'diligence')">Diligence</button>
-                           <button class="danger" onclick="removeScoutingItem(${idAttr}, '${type}')">Remove</button>`;
+                actions = dBtn + `<button type="button" onclick="moveToStage(${idAttr}, '${type}', 'feasibility')">Feasibility</button>
+                           <button type="button" onclick="moveToStage(${idAttr}, '${type}', 'diligence')">Diligence</button>
+                           <button type="button" class="danger" onclick="removeScoutingItem(${idAttr}, '${type}')">Remove</button>`;
             } else if (stage === 'feasibility') {
-                actions = `<button onclick="openFeasibilityPanel(${idAttr}, '${type}')">Open Feasibility</button>
-                           <button onclick="moveToStage(${idAttr}, '${type}', 'diligence')">Diligence</button>`;
+                actions = dBtn + `<button type="button" onclick="openFeasibilityPanel(${idAttr}, '${type}')">Open Feasibility</button>
+                           <button type="button" onclick="moveToStage(${idAttr}, '${type}', 'diligence')">Diligence</button>`;
             } else if (stage === 'diligence') {
-                actions = `<button onclick="moveToStage(${idAttr}, '${type}', 'decision')">Decision</button>`;
+                actions = dBtn + `<button type="button" onclick="moveToStage(${idAttr}, '${type}', 'decision')">Decision</button>`;
             } else if (stage === 'decision') {
-                actions = `<button class="go" onclick="moveToStage(${idAttr}, '${type}', 'decision')">Go</button>
-                           <button class="danger" onclick="removeScoutingItem(${idAttr}, '${type}')">No-Go</button>`;
+                actions = dBtn + `<button type="button" class="go" onclick="moveToStage(${idAttr}, '${type}', 'decision')">Go</button>
+                           <button type="button" class="danger" onclick="removeScoutingItem(${idAttr}, '${type}')">No-Go</button>`;
             }
             return `
                 <div class="kanban-card" draggable="true"
@@ -5300,6 +5333,178 @@
                 alert('Scouting delete error: ' + error.message);
             }
         }
+
+        // ----- Discovery map search (SEP) -----
+        async function runDiscoveryMapSearch() {
+            if (!imagingMap) initImagingMap();
+            const input = document.getElementById('imgMapSearchInput');
+            const q = (input && input.value || '').trim();
+            const dd = document.getElementById('imgMapSearchDropdown');
+            if (!q || q.length < 2) {
+                if (dd) { dd.classList.add('hidden'); dd.innerHTML = ''; }
+                alert('Enter at least 2 characters.');
+                return;
+            }
+            if (dd) {
+                dd.classList.remove('hidden');
+                dd.innerHTML = '<div style="padding:12px;color:var(--text-light);font-size:0.85rem;">Searching…</div>';
+            }
+            try {
+                const [locResp, geoResp] = await Promise.all([
+                    fetch('/api/imaging/search?' + new URLSearchParams({ q, limit: '25' })),
+                    fetch('/api/geocode?' + new URLSearchParams({ q, limit: '5' })),
+                ]);
+                const locData = await locResp.json();
+                const geoData = await geoResp.json();
+                if (!locResp.ok) throw new Error(locData.error || 'Local search failed');
+                const local = locData.results || [];
+                const geo = (geoData.results || []).map(r => ({
+                    kind: 'place',
+                    name: (r.label || 'Place').split(',').slice(0, 2).join(',').trim(),
+                    lat: r.lat,
+                    lon: r.lon,
+                    detail: 'OpenStreetMap / Nominatim',
+                    country: '',
+                }));
+                const combined = [...local, ...geo];
+                if (!dd) return;
+                if (!combined.length) {
+                    dd.innerHTML = '<div style="padding:12px;color:var(--text-light);font-size:0.85rem;">No results.</div>';
+                    return;
+                }
+                window.__discoverySearchHits = combined;
+                dd.innerHTML = combined.map((r, i) => `
+                    <button type="button" class="discovery-search-hit" data-idx="${i}"
+                        style="display:block;width:100%;text-align:left;padding:10px 12px;border:none;border-bottom:1px solid #f3f4f6;background:#fff;cursor:pointer;font-size:0.85rem;">
+                        <div style="font-weight:600;color:#111827;">${escapeHtml(r.name)}</div>
+                        <div style="font-size:0.76rem;color:#6b7280;">${escapeHtml(r.kind)}${r.country ? ' · ' + escapeHtml(r.country) : ''}${r.detail ? ' — ' + escapeHtml(r.detail) : ''}</div>
+                    </button>
+                `).join('');
+                dd.querySelectorAll('.discovery-search-hit').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        const idx = parseInt(btn.dataset.idx, 10);
+                        const hit = window.__discoverySearchHits[idx];
+                        if (hit) flyDiscoveryMapTo(hit.lat, hit.lon, hit.name);
+                        dd.classList.add('hidden');
+                    });
+                });
+            } catch (e) {
+                if (dd) dd.innerHTML = '<div style="padding:12px;color:#b91c1c;font-size:0.85rem;">' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
+        function flyDiscoveryMapTo(lat, lon, title) {
+            if (!imagingMap) initImagingMap();
+            imagingMap.setView([lat, lon], Math.max(imagingMap.getZoom(), 10));
+            if (imagingSearchMarker) imagingMap.removeLayer(imagingSearchMarker);
+            imagingSearchMarker = L.circleMarker([lat, lon], {
+                radius: 10, fillColor: '#7c3aed', color: '#fff', weight: 2, fillOpacity: 0.92,
+            }).addTo(imagingMap);
+            imagingSearchMarker.bindPopup(escapeHtml(title || 'Selected')).openPopup();
+        }
+
+        function jumpDiscoveryMapToLatLon() {
+            const raw = (document.getElementById('imgJumpLatLon') && document.getElementById('imgJumpLatLon').value || '').trim();
+            const parts = raw.split(/[,\s]+/).filter(Boolean);
+            if (parts.length < 2) {
+                alert('Enter latitude and longitude, separated by a comma.');
+                return;
+            }
+            const lat = parseFloat(parts[0]);
+            const lon = parseFloat(parts[1]);
+            if (Number.isNaN(lat) || Number.isNaN(lon)) {
+                alert('Invalid numbers for latitude or longitude.');
+                return;
+            }
+            flyDiscoveryMapTo(lat, lon, `${lat.toFixed(4)}, ${lon.toFixed(4)}`);
+        }
+
+        // ----- Scouting card detail + notes (SEP) -----
+        let activeScoutingDetailId = null;
+        let activeScoutingDetailType = null;
+        window.__scoutingDetailItem = null;
+
+        async function openScoutingDetail(itemId, type) {
+            activeScoutingDetailId = itemId;
+            activeScoutingDetailType = type;
+            const panel = document.getElementById('scoutingDetailPanel');
+            if (!panel) return;
+            panel.classList.remove('hidden');
+            panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            document.getElementById('scoutingDetailTitle').textContent = 'Loading…';
+            document.getElementById('scoutingDetailMeta').innerHTML = '';
+            document.getElementById('scoutingDetailNotes').value = '';
+            window.__scoutingDetailItem = null;
+            try {
+                const resp = await fetch(`/api/scouting/items/${encodeURIComponent(itemId)}?type=${encodeURIComponent(type)}`);
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.error || 'Failed to load');
+                const it = data.item;
+                window.__scoutingDetailItem = it;
+                const title = it.asset_name || it.name || 'Unnamed';
+                document.getElementById('scoutingDetailTitle').textContent = title;
+                const lines = [];
+                if (type === 'greenfield') {
+                    lines.push(`Technology: ${it.technology || '—'}`);
+                    lines.push(`Country: ${it.country || '—'}`);
+                    lines.push(`Location: ${it.lat}, ${it.lon}`);
+                    lines.push(`Scout score: ${it.overall_score ?? '—'} (${it.score_label || '—'})`);
+                } else {
+                    lines.push(`Technology: ${it.technology || '—'}`);
+                    lines.push(`Capacity: ${it.capacity_mw != null ? it.capacity_mw + ' MW' : '—'}`);
+                    lines.push(`Status: ${it.status || '—'}`);
+                    lines.push(`Operator: ${it.operator || '—'} · Owner: ${it.owner || '—'}`);
+                    lines.push(`Country: ${it.country || '—'}`);
+                    lines.push(`Location: ${it.lat}, ${it.lon}`);
+                    if (it.source_type) lines.push(`Record type: ${it.source_type}`);
+                }
+                lines.push(`Pipeline stage: ${it.scouting_stage || '—'}`);
+                document.getElementById('scoutingDetailMeta').innerHTML = lines.map(l => `<div>${escapeHtml(l)}</div>`).join('');
+                document.getElementById('scoutingDetailNotes').value = it.notes || '';
+            } catch (e) {
+                document.getElementById('scoutingDetailMeta').innerHTML = '<div style="color:#b91c1c;">' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
+        function closeScoutingDetailPanel() {
+            const panel = document.getElementById('scoutingDetailPanel');
+            if (panel) panel.classList.add('hidden');
+            activeScoutingDetailId = null;
+            activeScoutingDetailType = null;
+            window.__scoutingDetailItem = null;
+        }
+
+        async function saveScoutingDetailNotes() {
+            if (!activeScoutingDetailId || !activeScoutingDetailType) return;
+            const notes = document.getElementById('scoutingDetailNotes').value || '';
+            try {
+                const resp = await fetch(`/api/scouting/items/${encodeURIComponent(activeScoutingDetailId)}/notes`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ type: activeScoutingDetailType, notes }),
+                });
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.error || 'Save failed');
+                if (data.item) window.__scoutingDetailItem = data.item;
+                await loadScoutingView();
+            } catch (e) {
+                alert('Save notes error: ' + e.message);
+            }
+        }
+
+        function focusImagingLocationFromScoutingDetail() {
+            const it = window.__scoutingDetailItem;
+            if (!it || it.lat == null || it.lon == null) {
+                alert('No coordinates for this item.');
+                return;
+            }
+            switchMode('imaging');
+            setTimeout(() => {
+                initImagingMap();
+                focusImagingLocation(Number(it.lat), Number(it.lon));
+            }, 350);
+        }
+
         // ----- SEP-045: Feasibility panel functions -----
         let activeFeasibilityItemId = null;
         let activeFeasibilityType = null;

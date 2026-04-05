@@ -371,7 +371,9 @@ def start_research():
         return jsonify({
             "research_id": research_id,
             "status": "started",
-            "query": query
+            "query": query,
+            "retrieved_at": datetime.now(timezone.utc).isoformat(),
+            "strict_citations_default": False,
         })
         
     except Exception as e:
@@ -543,6 +545,10 @@ def research_chat(research_id):
                 "mode": "evidence" if strict_citations else "advisory",
                 "used_source_ids": [s.get("source_id") for s in scoped_sources[:8] if s.get("source_id")],
                 "thread_size": len(thread),
+                "source_count": len(scoped_sources),
+                "strict_citations": strict_citations,
+                "used_background_knowledge": "[Background Knowledge]" in reply,
+                "generated_at": datetime.now(timezone.utc).isoformat(),
             }
         )
     except Exception as e:
@@ -771,7 +777,17 @@ def news_intel_chat():
                 headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'},
             )
 
-        return jsonify({"reply": reply, "mode": "evidence" if strict_citations else "advisory", "thread_size": len(thread)})
+        return jsonify(
+            {
+                "reply": reply,
+                "mode": "evidence" if strict_citations else "advisory",
+                "thread_size": len(thread),
+                "source_count": len(articles),
+                "strict_citations": strict_citations,
+                "used_background_knowledge": "[Background Knowledge]" in reply,
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
     except Exception as e:
         logger.error(f"News intel chat error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
@@ -1280,9 +1296,9 @@ def create_scouting_item():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/scouting/items/<item_id>', methods=['DELETE'])
-def delete_scouting_item(item_id):
-    """Delete a scouting item."""
+@app.route('/api/scouting/items/<item_id>', methods=['GET', 'DELETE'])
+def scouting_item_get_or_delete(item_id):
+    """Fetch one scouting item (GET) or delete it (DELETE)."""
     try:
         item_type = (request.args.get("type") or "").strip()
         if not item_type:
@@ -1290,14 +1306,57 @@ def delete_scouting_item(item_id):
         if item_type not in VALID_SCOUTING_TYPES:
             return jsonify({"error": f"type must be one of {sorted(VALID_SCOUTING_TYPES)}"}), 400
         store = ImagingDataStore()
-        if item_type == "greenfield":
-            store.delete_watchlist_site(item_id)
-        else:
-            store.delete_pipeline_asset(item_id)
-        store.close()
-        return jsonify({"status": "deleted"})
+        try:
+            if request.method == "GET":
+                if item_type == "greenfield":
+                    item = store.get_watchlist_site(item_id)
+                else:
+                    item = store.get_pipeline_asset(item_id)
+                if not item:
+                    return jsonify({"error": "not found"}), 404
+                return jsonify({"item": item})
+            if item_type == "greenfield":
+                store.delete_watchlist_site(item_id)
+            else:
+                store.delete_pipeline_asset(item_id)
+            return jsonify({"status": "deleted"})
+        finally:
+            store.close()
     except Exception as e:
-        logger.error(f"Scouting delete error: {e}", exc_info=True)
+        logger.error(f"Scouting item {request.method} error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scouting/items/<item_id>/notes', methods=['PATCH'])
+def patch_scouting_item_notes(item_id):
+    """Update team notes for a greenfield watchlist site or pipeline/bess asset."""
+    try:
+        data = request.get_json(silent=True) or {}
+        item_type = (data.get("type") or "").strip()
+        notes = data.get("notes")
+        if notes is None:
+            notes = ""
+        if not isinstance(notes, str):
+            return jsonify({"error": "notes must be a string"}), 400
+        if item_type not in VALID_SCOUTING_TYPES:
+            return jsonify({"error": f"type must be one of {sorted(VALID_SCOUTING_TYPES)}"}), 400
+        store = ImagingDataStore()
+        try:
+            if item_type == "greenfield":
+                if not store.get_watchlist_site(item_id):
+                    return jsonify({"error": "not found"}), 404
+                store.update_watchlist_notes(item_id, notes)
+                item = store.get_watchlist_site(item_id)
+            else:
+                if not store.get_pipeline_asset(item_id):
+                    return jsonify({"error": "not found"}), 404
+                store.update_pipeline_notes(item_id, notes)
+                item = store.get_pipeline_asset(item_id)
+            return jsonify({"status": "ok", "item": item})
+        finally:
+            store.close()
+    except Exception as e:
+        logger.error(f"Scouting notes patch error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
@@ -1488,6 +1547,75 @@ def get_imaging_generation():
     except Exception as e:
         logger.error(f"Imaging generation error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/imaging/search', methods=['GET'])
+def imaging_discovery_search():
+    """Search local discovery datasets (deposits, concessions, generation, scouting rows)."""
+    try:
+        q = (request.args.get("q") or "").strip()
+        limit = request.args.get("limit", 20, type=int) or 20
+        if len(q) < 2:
+            return jsonify({"results": [], "query": q})
+        store = ImagingDataStore()
+        try:
+            results = store.search_discovery(q, limit=limit)
+        finally:
+            store.close()
+        return jsonify({"results": results, "query": q})
+    except Exception as e:
+        logger.error(f"Imaging search error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/geocode', methods=['GET'])
+def geocode_lookup():
+    """Proxy place search via Nominatim (OpenStreetMap). Use for jump-to-place when not in local DB."""
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    try:
+        q = (request.args.get("q") or "").strip()
+        limit = request.args.get("limit", 5, type=int) or 5
+        limit = max(1, min(limit, 10))
+        if len(q) < 2:
+            return jsonify({"results": []})
+        params = urllib.parse.urlencode(
+            {"q": q, "format": "json", "limit": str(limit), "addressdetails": "0"}
+        )
+        url = f"https://nominatim.openstreetmap.org/search?{params}"
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Zorora/1.0 (energy discovery; +https://github.com/AsobaCloud/zorora)",
+                "Accept-Language": "en",
+            },
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            payload = json.loads(resp.read().decode())
+        results = []
+        for r in payload:
+            try:
+                lat = float(r["lat"])
+                lon = float(r["lon"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            results.append(
+                {
+                    "label": r.get("display_name") or q,
+                    "lat": lat,
+                    "lon": lon,
+                }
+            )
+        return jsonify({"results": results})
+    except urllib.error.HTTPError as e:
+        logger.warning("Geocode HTTP error: %s", e)
+        return jsonify({"results": [], "error": str(e)}), 200
+    except Exception as e:
+        logger.warning("Geocode error: %s", e)
+        return jsonify({"results": [], "error": str(e)}), 200
 
 
 @app.route('/api/imaging/config', methods=['GET'])

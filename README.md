@@ -82,6 +82,14 @@ pip install -e .
 zorora web
 ```
 
+On macOS (and other PEP 668–managed Python installs), create a virtual environment before `pip install` so dependencies such as `rich` resolve correctly:
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt && pip install -e .
+pytest
+```
+
 ### Docker
 
 ```bash
@@ -94,6 +102,20 @@ The container runs gunicorn with 1 worker and 4 threads. Background data refresh
 ### Enterprise (Ona Platform)
 
 Zorora ships as a Fargate service in the Ona platform with permission-gated access via the application card. Deployment is handled by the CI/CD pipeline — pushing to `main` triggers automatic Docker build, ECR push, and ECS service update.
+
+Without a persistent volume, Fargate tasks use **ephemeral** local disk: SQLite files under `/home/zorora/.zorora` are **not** kept across new deployments.
+
+**Recommended:** attach **Amazon EFS in Regional (Multi-AZ) mode** — in the console this is a **Regional** file system (data and metadata replicated across **multiple Availability Zones** in the region). Use **EFS Standard** for the active working set. **Do not** use **One Zone** storage for this path if you want the same durability model as a typical multi-AZ Fargate deployment. Mount the file system at `/home/zorora/.zorora` in the ECS task definition (TLS in transit + IAM optional but common).
+
+**Reference storage price (Africa — Cape Town `af-south-1`, verify live / [EFS pricing](https://aws.amazon.com/efs/pricing/)):** Regional (Multi-AZ) **EFS Standard** is listed at **$0.39 per GB-month** on the public price list (effective date on the offer was 2025-09). Elastic Throughput read/write, lifecycle transitions, and cross-AZ EC2 data transfer are extra line items.
+
+| Regional (Multi-AZ) option | About (USD / GB-month, `af-south-1`) |
+|-----------------------------|-------------------------------------:|
+| EFS Standard (recommended for this mount) | $0.39 |
+
+Step-by-step **Regional (Multi-AZ) EFS** creation, security groups, IAM, and **ECS task definition JSON** (`volumes` / `mountPoints` for `/home/zorora/.zorora`): [`docs/deployment/ECS_EFS_REGIONAL_MULTIAZ.md`](docs/deployment/ECS_EFS_REGIONAL_MULTIAZ.md).
+
+**Production (`ona-zorora-prod`):** EFS + task definition revision with mount are recorded in [`infra/ona-zorora-prod-efs-applied.md`](infra/ona-zorora-prod-efs-applied.md) (do not duplicate-create the file system).
 
 ## Configuration
 

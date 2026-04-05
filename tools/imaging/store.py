@@ -157,6 +157,10 @@ class ImagingDataStore:
                 )
             except sqlite3.OperationalError:
                 pass  # column already exists
+        try:
+            cur.execute("ALTER TABLE pipeline_assets ADD COLUMN notes TEXT DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass
         # SEP-045: feasibility results table
         cur.execute("""
             CREATE TABLE IF NOT EXISTS feasibility_results (
@@ -342,11 +346,21 @@ class ImagingDataStore:
         asset_id = existing["id"] if existing else f"{source_type}:{source_asset_id}"
         created_at = existing["created_at"] if existing else now_utc
 
+        preserved_notes = ""
+        if existing:
+            cur.execute("SELECT notes FROM pipeline_assets WHERE id = ?", (asset_id,))
+            nr = cur.fetchone()
+            if nr and nr["notes"] is not None:
+                preserved_notes = str(nr["notes"])
+        notes_val = props.get("notes", preserved_notes)
+        if notes_val is None:
+            notes_val = ""
+
         cur.execute(
             """INSERT OR REPLACE INTO pipeline_assets
                (id, source_type, source_asset_id, asset_name, technology, capacity_mw, status,
-                operator, owner, country, lat, lon, research_query, metadata_json, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                operator, owner, country, lat, lon, research_query, metadata_json, notes, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 asset_id,
                 source_type,
@@ -362,6 +376,7 @@ class ImagingDataStore:
                 lon,
                 research_query,
                 json.dumps({"properties": props, "geometry": geometry}),
+                notes_val,
                 created_at,
                 now_utc,
             ),
@@ -498,6 +513,103 @@ class ImagingDataStore:
                 "properties": props,
             })
         return {"type": "FeatureCollection", "features": features}
+
+    def search_discovery(self, query: str, limit: int = 20) -> list[dict]:
+        """Search deposits, concessions, generation assets, pipeline, and watchlist by name/text."""
+        raw = (query or "").strip()
+        if len(raw) < 2:
+            return []
+        lim = max(1, min(int(limit or 20), 40))
+        per = max(min(lim // 3, 12), 6)
+        pat = f"%{raw.lower()}%"
+        cur = self.conn.cursor()
+        out: list[dict] = []
+
+        def _append(kind: str, row, name: str, detail: str):
+            lat, lon = row["lat"], row["lon"]
+            if lat is None or lon is None:
+                return
+            out.append(
+                {
+                    "kind": kind,
+                    "id": row["id"],
+                    "name": name or row["id"],
+                    "lat": float(lat),
+                    "lon": float(lon),
+                    "detail": detail,
+                    "country": row["country"] or "",
+                }
+            )
+
+        cur.execute(
+            """SELECT id, name, lat, lon, country, commodity, deposit_type FROM deposits
+               WHERE LOWER(COALESCE(name,'')) LIKE ? OR LOWER(COALESCE(commodity,'')) LIKE ?
+                  OR LOWER(COALESCE(country,'')) LIKE ? OR LOWER(COALESCE(deposit_type,'')) LIKE ?
+               LIMIT ?""",
+            (pat, pat, pat, pat, per),
+        )
+        for row in cur.fetchall():
+            det = row["commodity"] or ""
+            if row["deposit_type"]:
+                det = f"{det} · {row['deposit_type']}" if det else row["deposit_type"]
+            _append("deposit", row, row["name"] or "", det)
+
+        cur.execute(
+            """SELECT id, name, lat, lon, country, mineral_type, operator FROM concessions
+               WHERE LOWER(COALESCE(name,'')) LIKE ? OR LOWER(COALESCE(operator,'')) LIKE ?
+                  OR LOWER(COALESCE(mineral_type,'')) LIKE ? OR LOWER(COALESCE(country,'')) LIKE ?
+               LIMIT ?""",
+            (pat, pat, pat, pat, per),
+        )
+        for row in cur.fetchall():
+            det = row["mineral_type"] or ""
+            if row["operator"]:
+                det = f"{det} · {row['operator']}" if det else row["operator"]
+            _append("concession", row, row["name"] or "", det)
+
+        cur.execute(
+            """SELECT id, name, lat, lon, country, technology, capacity_mw, status FROM generation_assets
+               WHERE LOWER(COALESCE(name,'')) LIKE ? OR LOWER(COALESCE(operator,'')) LIKE ?
+                  OR LOWER(COALESCE(owner,'')) LIKE ? OR LOWER(COALESCE(country,'')) LIKE ?
+                  OR LOWER(COALESCE(technology,'')) LIKE ? OR LOWER(COALESCE(status,'')) LIKE ?
+               LIMIT ?""",
+            (pat, pat, pat, pat, pat, pat, per),
+        )
+        for row in cur.fetchall():
+            mw = row["capacity_mw"]
+            mw_s = f"{mw:g} MW" if mw is not None else ""
+            det = f"{row['technology'] or ''} · {mw_s}".strip(" ·")
+            st = row["status"] or ""
+            if st:
+                det = f"{det} · {st}" if det else st
+            _append("generation", row, row["name"] or "", det)
+
+        cur.execute(
+            """SELECT id, asset_name, lat, lon, country, technology, capacity_mw, source_type FROM pipeline_assets
+               WHERE LOWER(COALESCE(asset_name,'')) LIKE ? OR LOWER(COALESCE(country,'')) LIKE ?
+                  OR LOWER(COALESCE(technology,'')) LIKE ? OR LOWER(COALESCE(operator,'')) LIKE ?
+                  OR LOWER(COALESCE(owner,'')) LIKE ?
+               LIMIT ?""",
+            (pat, pat, pat, pat, pat, per),
+        )
+        for row in cur.fetchall():
+            kind = "bess" if row["source_type"] == "bess" else "pipeline"
+            mw = row["capacity_mw"]
+            mw_s = f"{mw:g} MW" if mw is not None else ""
+            det = f"{row['technology'] or ''} · {mw_s}".strip(" ·")
+            _append(kind, row, row["asset_name"] or "", det)
+
+        cur.execute(
+            """SELECT id, name, lat, lon, country, technology FROM scouting_watchlist
+               WHERE LOWER(COALESCE(name,'')) LIKE ? OR LOWER(COALESCE(country,'')) LIKE ?
+                  OR LOWER(COALESCE(technology,'')) LIKE ?
+               LIMIT ?""",
+            (pat, pat, pat, per),
+        )
+        for row in cur.fetchall():
+            _append("greenfield", row, row["name"] or "", row["technology"] or "")
+
+        return out[:lim]
 
     def get_pipeline_asset(self, asset_id: str) -> Optional[dict]:
         """Return a single brownfield pipeline asset by id."""
@@ -842,6 +954,22 @@ class ImagingDataStore:
         )
         self.conn.commit()
 
+    def update_watchlist_notes(self, site_id: str, notes: str):
+        now_utc = datetime.now(timezone.utc).isoformat()
+        self.conn.execute(
+            "UPDATE scouting_watchlist SET notes = ?, updated_at = ? WHERE id = ?",
+            (notes or "", now_utc, site_id),
+        )
+        self.conn.commit()
+
+    def update_pipeline_notes(self, asset_id: str, notes: str):
+        now_utc = datetime.now(timezone.utc).isoformat()
+        self.conn.execute(
+            "UPDATE pipeline_assets SET notes = ?, updated_at = ? WHERE id = ?",
+            (notes or "", now_utc, asset_id),
+        )
+        self.conn.commit()
+
     def list_scouting_items(self, item_type: str, stage: str = None) -> list[dict]:
         """List scouting items by type, optionally filtered by stage."""
         if item_type not in self.VALID_ITEM_TYPES:
@@ -874,6 +1002,9 @@ class ImagingDataStore:
     @staticmethod
     def _row_to_pipeline_asset(row: sqlite3.Row) -> dict:
         metadata = json.loads(row["metadata_json"]) if row["metadata_json"] else {}
+        notes = ""
+        if "notes" in row.keys() and row["notes"] is not None:
+            notes = str(row["notes"])
         return {
             "id": row["id"],
             "source_type": row["source_type"],
@@ -889,6 +1020,7 @@ class ImagingDataStore:
             "lon": row["lon"],
             "research_query": row["research_query"],
             "metadata": metadata,
+            "notes": notes,
             "scouting_stage": row["scouting_stage"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
@@ -896,6 +1028,9 @@ class ImagingDataStore:
 
     @staticmethod
     def _row_to_watchlist_site(row: sqlite3.Row) -> dict:
+        notes = ""
+        if "notes" in row.keys() and row["notes"] is not None:
+            notes = str(row["notes"])
         return {
             "id": row["id"],
             "name": row["name"],
@@ -905,7 +1040,7 @@ class ImagingDataStore:
             "lon": row["lon"],
             "overall_score": row["overall_score"],
             "score_label": row["score_label"],
-            "notes": row["notes"],
+            "notes": notes,
             "factors": json.loads(row["factors_json"]) if row["factors_json"] else [],
             "resource_summary": json.loads(row["resource_json"]) if row["resource_json"] else {},
             "scouting_stage": row["scouting_stage"],
