@@ -10,7 +10,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from tools.imaging.viability import score_all_deposits
+
 logger = logging.getLogger(__name__)
+
+_SQLITE_BUSY_TIMEOUT_S = 30.0
 
 
 class ImagingDataStore:
@@ -30,10 +34,15 @@ class ImagingDataStore:
 
     def _get_connection(self) -> sqlite3.Connection:
         if not hasattr(self._local, "conn"):
-            self._local.conn = sqlite3.connect(
-                str(self.db_path), check_same_thread=False
+            conn = sqlite3.connect(
+                str(self.db_path),
+                timeout=_SQLITE_BUSY_TIMEOUT_S,
+                check_same_thread=False,
             )
-            self._local.conn.row_factory = sqlite3.Row
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            self._local.conn = conn
         return self._local.conn
 
     @property
@@ -200,6 +209,7 @@ class ImagingDataStore:
         """Insert or replace deposit features and update metadata."""
         if not features:
             return
+        features = score_all_deposits(features)
         conn = self.conn
         cur = conn.cursor()
         now_utc = datetime.now(timezone.utc).isoformat()
@@ -451,7 +461,43 @@ class ImagingDataStore:
                 "geometry": {"type": "Point", "coordinates": [row["lon"], row["lat"]]},
                 "properties": props,
             })
+
+        missing_idx = [
+            i for i, f in enumerate(features)
+            if not (f.get("properties") or {}).get("viability")
+        ]
+        if missing_idx:
+            to_score = [features[i] for i in missing_idx]
+            scored = score_all_deposits(to_score)
+            now_utc = datetime.now(timezone.utc).isoformat()
+            for i, sf in zip(missing_idx, scored):
+                features[i] = sf
+                dep_id = rows[i]["id"]
+                cur.execute(
+                    """UPDATE deposits SET properties_json = ?, fetched_at = ?
+                       WHERE id = ?""",
+                    (json.dumps(sf["properties"]), now_utc, dep_id),
+                )
+            self.conn.commit()
+
         return {"type": "FeatureCollection", "features": features}
+
+    def get_generation_layer_fingerprint(self) -> str:
+        """Revision token for generation-backed aggregates (zone metrics invalidation)."""
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT record_count, last_fetched_at FROM fetch_metadata WHERE layer = ?",
+            ("generation_assets",),
+        )
+        meta = cur.fetchone()
+        cur.execute(
+            "SELECT COUNT(*) as n, IFNULL(SUM(LENGTH(properties_json)), 0) as blen "
+            "FROM generation_assets"
+        )
+        agg = cur.fetchone()
+        mc = meta["record_count"] if meta else None
+        mt = (meta["last_fetched_at"] or "") if meta else ""
+        return f"{mc}|{mt}|{agg['n']}|{agg['blen']}"
 
     def get_concessions(
         self, country: Optional[str] = None,

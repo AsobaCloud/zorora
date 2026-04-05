@@ -17,7 +17,6 @@ from tools.specialist.client import create_specialist_client
 from tools.market.store import MarketDataStore
 from tools.market.series import SERIES_CATALOG
 from tools.imaging.store import ImagingDataStore
-from tools.imaging.viability import score_all_deposits
 from tools.imaging.mrds_client import fetch_deposits
 from tools.imaging.generation_client import load_generation_assets
 from tools.imaging.resource_client import fetch_resource_summary
@@ -1495,9 +1494,8 @@ def get_imaging_deposits():
             deposits = fetch_deposits()
             store.upsert_deposits(deposits.get("features", []))
         geojson = store.get_deposits(commodity=commodity, country=country)
-        scored_features = score_all_deposits(geojson.get("features", []))
         store.close()
-        return jsonify({"type": "FeatureCollection", "features": scored_features})
+        return jsonify(geojson)
     except Exception as e:
         logger.error(f"Imaging deposits error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
@@ -1672,6 +1670,7 @@ def refresh_imaging_data():
 _discovery_mts_cache = None
 _discovery_supply_cache = None
 _discovery_metrics_cache = None
+_discovery_metrics_gen_fp = None
 _discovery_substations_cache = None
 
 
@@ -1733,9 +1732,17 @@ def get_discovery_substations():
 
 
 def _ensure_zone_metrics():
-    """Compute and cache zone metrics on first call."""
-    global _discovery_metrics_cache
-    if _discovery_metrics_cache is not None:
+    """Compute and cache zone metrics; invalidate when generation layer changes."""
+    global _discovery_metrics_cache, _discovery_metrics_gen_fp
+    store = ImagingDataStore()
+    try:
+        gen_fp = store.get_generation_layer_fingerprint()
+    finally:
+        store.close()
+    if (
+        _discovery_metrics_cache is not None
+        and _discovery_metrics_gen_fp == gen_fp
+    ):
         return _discovery_metrics_cache
     from tools.imaging.gcca_client import load_mts_zones
     from tools.imaging.grid_metrics import compute_zone_metrics
@@ -1743,10 +1750,13 @@ def _ensure_zone_metrics():
     mts = load_mts_zones()
     dam = parse_all_dam_files()
     store = ImagingDataStore()
-    gen_fc = store.get_generation_assets()
-    store.close()
+    try:
+        gen_fc = store.get_generation_assets()
+    finally:
+        store.close()
     gen_features = gen_fc.get("features", []) if gen_fc else []
     _discovery_metrics_cache = compute_zone_metrics(mts, dam, gen_features)
+    _discovery_metrics_gen_fp = gen_fp
     return _discovery_metrics_cache
 
 
@@ -1782,6 +1792,7 @@ def get_discovery_zone_metrics(substation):
 @app.route('/api/scouting/score', methods=['POST'])
 def score_greenfield_site():
     """Score a clicked greenfield candidate site."""
+    store = None
     try:
         data = request.get_json() or {}
         if "lat" not in data or "lon" not in data:
@@ -1806,11 +1817,13 @@ def score_greenfield_site():
             name=(data.get("name") or "").strip() or None,
             country=(data.get("country") or "").strip() or None,
         )
-        store.close()
         return jsonify({"site": site})
     except Exception as e:
         logger.error(f"Scouting score error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
+    finally:
+        if store is not None:
+            store.close()
 
 
 @app.route('/api/scouting/watchlist', methods=['GET'])

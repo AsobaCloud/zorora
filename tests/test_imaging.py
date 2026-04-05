@@ -516,6 +516,8 @@ class TestImagingStore:
         result = store.get_deposits()
         assert result["type"] == "FeatureCollection"
         assert len(result["features"]) == 3
+        for feat in result["features"]:
+            assert "viability" in feat["properties"]
         store.close()
 
     def test_imaging_store_staleness(self, tmp_path):
@@ -590,9 +592,15 @@ class TestImagingEndpoints:
 
     def test_deposits_api_endpoint(self, client, tmp_path):
         """GET /api/imaging/deposits returns 200 with GeoJSON structure."""
+        from tools.imaging.viability import score_all_deposits
+
+        scored_fc = {
+            "type": "FeatureCollection",
+            "features": score_all_deposits(SAMPLE_MRDS_GEOJSON["features"]),
+        }
         with patch("ui.web.app.ImagingDataStore") as MockStore:
             mock_instance = MagicMock()
-            mock_instance.get_deposits.return_value = SAMPLE_MRDS_GEOJSON
+            mock_instance.get_deposits.return_value = scored_fc
             mock_instance.get_staleness.return_value = 0.5
             MockStore.return_value = mock_instance
 
