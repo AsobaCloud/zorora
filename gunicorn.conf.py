@@ -22,3 +22,5 @@ def post_worker_init(worker):
     """Start background refresh threads after the worker is ready to serve."""
     from workflows.background_threads import start_all_background_threads
     start_all_background_threads()
+    from ui.web.app import warm_market_latest_cache
+    warm_market_latest_cache()

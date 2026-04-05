@@ -61,7 +61,7 @@ research_progress = {}  # {research_id: {"status": str, "message": str, "phase":
 chat_threads = {}  # lightweight in-memory thread store keyed by context id
 newsroom_api_warning = None
 _market_latest_cache = None  # (timestamp, response_list)
-_MARKET_CACHE_TTL = 60  # seconds
+_MARKET_CACHE_TTL = 300  # seconds (5m; series reads are heavy on EFS)
 
 
 def _parse_date(date_str: str):
@@ -595,6 +595,11 @@ def get_news_intel_facets():
     """Return available topics, sources, and date range from cached articles."""
     try:
         from collections import Counter
+        from tools.utils.newsroom_cache import get_cache
+
+        pre = get_cache().get_facets()
+        if pre is not None:
+            return jsonify(pre)
 
         articles = fetch_newsroom_api(max_results=5000)
 
@@ -946,18 +951,11 @@ def mark_alert_read(alert_id):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/market/latest', methods=['GET'])
-def get_market_latest():
-    """Return latest observation per series from MarketDataStore."""
-    import time as _time
-    global _market_latest_cache
-    if _market_latest_cache is not None:
-        cached_at, cached_data = _market_latest_cache
-        if _time.time() - cached_at < _MARKET_CACHE_TTL:
-            return jsonify(cached_data)
+def _build_market_latest_rows():
+    """Read all catalog series from MarketDataStore; caller owns cache timestamp."""
+    store = MarketDataStore()
+    results = []
     try:
-        store = MarketDataStore()
-        results = []
         for sid, series in SERIES_CATALOG.items():
             try:
                 df = store.get_series_df(sid, provider=series.provider)
@@ -969,13 +967,13 @@ def get_market_latest():
                 pct_change = None
                 if prev_val and prev_val != 0:
                     pct_change = round(((latest_val - prev_val) / abs(prev_val)) * 100, 2)
-                # Compute freshness from fetch_metadata
                 staleness_hours = store.get_staleness(sid, provider=series.provider)
                 last_fetched = None
-                # Only compute last_fetched when staleness_hours is numeric
                 if isinstance(staleness_hours, (int, float)):
                     from datetime import datetime, timedelta
-                    last_fetched = (datetime.utcnow() - timedelta(hours=staleness_hours)).isoformat() + "Z"
+                    last_fetched = (
+                        datetime.utcnow() - timedelta(hours=staleness_hours)
+                    ).isoformat() + "Z"
 
                 results.append({
                     "series_id": sid,
@@ -991,7 +989,39 @@ def get_market_latest():
                 })
             except Exception as e:
                 logger.debug(f"Skipping series {sid}: {e}")
+    finally:
         store.close()
+    return results
+
+
+def warm_market_latest_cache() -> None:
+    """Prime in-process market JSON cache (Gunicorn post_worker_init)."""
+    import time as _time
+
+    global _market_latest_cache
+    if _market_latest_cache is not None:
+        cached_at, _ = _market_latest_cache
+        if _time.time() - cached_at < _MARKET_CACHE_TTL:
+            return
+    try:
+        rows = _build_market_latest_rows()
+        _market_latest_cache = (_time.time(), rows)
+        logger.info("Market latest cache warmed (%d series)", len(rows))
+    except Exception as e:
+        logger.warning("Market latest warm failed: %s", e)
+
+
+@app.route('/api/market/latest', methods=['GET'])
+def get_market_latest():
+    """Return latest observation per series from MarketDataStore."""
+    import time as _time
+    global _market_latest_cache
+    if _market_latest_cache is not None:
+        cached_at, cached_data = _market_latest_cache
+        if _time.time() - cached_at < _MARKET_CACHE_TTL:
+            return jsonify(cached_data)
+    try:
+        results = _build_market_latest_rows()
         _market_latest_cache = (_time.time(), results)
         return jsonify(results)
     except Exception as e:
