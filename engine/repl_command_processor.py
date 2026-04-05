@@ -16,6 +16,16 @@ class REPLCommandProcessor:
         self.command_error_cls = command_error_cls
         self.http_error_cls = http_error_cls
 
+    def _is_repl_enabled(self) -> bool:
+        return bool(getattr(config, "REPL_LEGACY_ENABLED", True))
+
+    def _is_repl_codegen_enabled(self) -> bool:
+        return bool(getattr(config, "REPL_CODEGEN_ENABLED", True))
+
+    def _show_deprecated_codegen_message(self, command_name: str):
+        self.repl.ui.console.print(f"[yellow]{command_name} is deprecated in customer mode.[/yellow]")
+        self.repl.ui.console.print("[dim]Use the web UI for research and market intelligence workflows.[/dim]")
+
     def handle_workflow_command(self, command: str):
         """
         Handle workflow-forcing slash commands and remote commands.
@@ -23,6 +33,11 @@ class REPLCommandProcessor:
         Returns tuple of (response, execution_time) if handled, None otherwise.
         """
         cmd_lower = command.lower().strip()
+
+        if not self._is_repl_enabled():
+            self.repl.ui.console.print("[yellow]REPL legacy workflows are disabled in this deployment.[/yellow]")
+            self.repl.ui.console.print("[dim]Use the web UI for customer-facing workflows.[/dim]")
+            return None
 
         # Check for remote commands first (before slash commands)
         # Remote commands use format: ml-<command> <args> (with or without leading /)
@@ -138,6 +153,9 @@ class REPLCommandProcessor:
 
         # /code <prompt> - Force code generation
         elif cmd_lower.startswith("/code "):
+            if not self._is_repl_codegen_enabled():
+                self._show_deprecated_codegen_message("/code")
+                return None
             prompt = command[6:].strip()
             if not prompt:
                 self.repl.ui.console.print("[red]Usage: /code <prompt>[/red]")
@@ -179,6 +197,9 @@ class REPLCommandProcessor:
 
         # /develop <request> - Multi-step code development workflow
         elif cmd_lower.startswith("/develop "):
+            if not self._is_repl_codegen_enabled():
+                self._show_deprecated_codegen_message("/develop")
+                return None
             request = command[9:].strip()
             if not request:
                 self.repl.ui.console.print("[red]Usage: /develop <development request>[/red]")
@@ -449,13 +470,11 @@ class REPLCommandProcessor:
 
   [cyan]/search <query>[/cyan]         - Force research workflow (newsroom + web + synthesis)
   [cyan]/ask <query>[/cyan]            - Force conversational mode (no web search)
-  [cyan]/code <prompt>[/cyan]          - Force code generation with Codestral
   [cyan]/academic <query>[/cyan]       - Search academic papers (Scholar, PubMed, CORE, arXiv, bioRxiv, medRxiv, PMC + Sci-Hub)
   [cyan]/deep [--depth N] <query>[/cyan] - Deep research with credibility scoring (depth 1-3)
   [cyan]/analyst <query>[/cyan]        - Query Nehanda RAG (energy policy documents)
   [cyan]/image <prompt>[/cyan]         - Generate image with FLUX (text-to-image)
   [cyan]/vision <path> [task][/cyan]   - Analyze image with vision model
-  [cyan]/develop <request>[/cyan]      - Multi-step code development (explore, plan, execute, lint)
   [cyan]/digest <days> [topic][/cyan] - Generate news trend digest by continent
   [cyan]/market [subcommand][/cyan]    - Market data dashboard (commodities|treasuries|fx|rates|metals|etf_proxies|update)
 
@@ -470,6 +489,17 @@ class REPLCommandProcessor:
   [cyan]/visualize[/cyan]               - Show context usage statistics
   [cyan]/help[/cyan]                    - Show this help message
   [cyan]exit[/cyan]                     - Exit the REPL
+"""
+        if self._is_repl_codegen_enabled():
+            help_text += """
+[bold cyan]Legacy Dev Commands (Internal):[/bold cyan]
+
+  [cyan]/code <prompt>[/cyan]          - Force code generation with Codestral
+  [cyan]/develop <request>[/cyan]      - Multi-step code development (explore, plan, execute, lint)
+"""
+        else:
+            help_text += """
+[dim]Legacy dev commands (/code, /develop) are disabled in customer mode.[/dim]
 """
         if self.repl.remote_commands:
             help_text += """
