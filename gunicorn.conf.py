@@ -1,5 +1,7 @@
 """Gunicorn configuration for Zorora production deployment."""
 
+import threading
+
 bind = "0.0.0.0:5000"
 
 # Single worker: background threads use module-level state; multiple workers
@@ -22,5 +24,11 @@ def post_worker_init(worker):
     """Start background refresh threads after the worker is ready to serve."""
     from workflows.background_threads import start_all_background_threads
     start_all_background_threads()
+    # Warm market cache without blocking worker readiness (ALB health checks).
     from ui.web.app import warm_market_latest_cache
-    warm_market_latest_cache()
+
+    threading.Thread(
+        target=warm_market_latest_cache,
+        daemon=True,
+        name="market-latest-warm",
+    ).start()
