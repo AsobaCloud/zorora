@@ -5440,15 +5440,45 @@
             return raw;
         }
 
+        /** One-line desk summary for detail meta — always show so Scored isn’t opaque. */
+        function scoutingDeskMetaLine(it) {
+            const stage = it.scouting_stage || '';
+            const fac = it.factors || [];
+            const hasSnapshot = fac.length > 0 || (it.overall_score != null && it.overall_score !== '');
+            if (hasSnapshot) {
+                const lbl = humanizeScoutScoreLabel(it.score_label) || '—';
+                const er = it.rubric_earned;
+                const rp = it.rubric_possible;
+                const pct = it.overall_score;
+                let mid = '';
+                if (er != null && rp != null && Number(rp) > 0) {
+                    mid = `${Number(er)} / ${Number(rp)} rubric pts`;
+                    if (pct != null && pct !== '') mid += ` → ${pct}% (full template)`;
+                } else if (pct != null && pct !== '') {
+                    mid = `${pct}%`;
+                } else {
+                    mid = 'see breakdown';
+                }
+                return `Desk screen: ${mid} — ${lbl} · ${fac.length} dimension(s)`;
+            }
+            if (stage === 'scored') {
+                return 'Desk screen: not saved — still no rubric snapshot for this card; the breakdown below explains how to capture one.';
+            }
+            return 'Desk screen: not run yet — use Score on the card or move to Scored to run the desk screen.';
+        }
+
         function renderScoutingCard(item, type, stage) {
             const name = escapeHtml(item.asset_name || item.name || 'Unnamed');
             const country = escapeHtml(item.country || '');
             const lbl = escapeHtml(humanizeScoutScoreLabel(item.score_label));
+            const hasDeskSnapshot = (item.factors && item.factors.length) || (item.overall_score != null && item.overall_score !== '');
             let metric = type === 'greenfield'
                 ? `Score: ${item.overall_score ?? 'N/A'} (${lbl})`
                 : `${item.capacity_mw ? `${Number(item.capacity_mw).toLocaleString()} MW` : 'capacity unknown'}`;
             if (type !== 'greenfield' && item.overall_score != null && item.overall_score !== '') {
                 metric = `Score: ${item.overall_score} (${lbl}) · ${item.capacity_mw ? `${Number(item.capacity_mw).toLocaleString()} MW` : 'capacity unknown'}`;
+            } else if (type !== 'greenfield' && stage === 'scored' && !hasDeskSnapshot) {
+                metric = `Scored — no desk screen saved · ${item.capacity_mw ? `${Number(item.capacity_mw).toLocaleString()} MW` : 'capacity unknown'}`;
             }
             const id = item.id;
             const idAttr = escapeAttr(JSON.stringify(id));
@@ -5458,7 +5488,8 @@
                 actions = dBtn + `<button type="button" onclick="openScoutingScoreFlow(${idAttr}, '${type}')">Score</button>
                            <button type="button" class="danger" onclick="removeScoutingItem(${idAttr}, '${type}')">Remove</button>`;
             } else if (stage === 'scored') {
-                actions = dBtn + `<button type="button" onclick="moveToStage(${idAttr}, '${type}', 'feasibility')">Feasibility</button>
+                const screenBtn = hasDeskSnapshot ? '' : `<button type="button" onclick="openScoutingScoreFlow(${idAttr}, '${type}')">Desk screen</button> `;
+                actions = dBtn + screenBtn + `<button type="button" onclick="moveToStage(${idAttr}, '${type}', 'feasibility')">Feasibility</button>
                            <button type="button" onclick="moveToStage(${idAttr}, '${type}', 'diligence')">Diligence</button>
                            <button type="button" class="danger" onclick="removeScoutingItem(${idAttr}, '${type}')">Remove</button>`;
             } else if (stage === 'feasibility') {
@@ -5635,6 +5666,12 @@
             document.getElementById('scoutingDetailMeta').innerHTML = '';
             document.getElementById('scoutingDetailNotes').value = '';
             window.__scoutingDetailItem = null;
+            const scoreSecEarly = document.getElementById('scoutingDetailScoringSection');
+            const scoreBodyEarly = document.getElementById('scoutingDetailScoringBody');
+            if (scoreSecEarly && scoreBodyEarly) {
+                scoreSecEarly.classList.remove('hidden');
+                scoreBodyEarly.innerHTML = '<div class="kanban-empty" style="padding:8px 0;">Loading desk screen…</div>';
+            }
             try {
                 const resp = await fetch(`/api/scouting/items/${encodeURIComponent(itemId)}?type=${encodeURIComponent(type)}`);
                 const data = await resp.json();
@@ -5648,7 +5685,6 @@
                     lines.push(`Technology: ${it.technology || '—'}`);
                     lines.push(`Country: ${it.country || '—'}`);
                     lines.push(`Location: ${it.lat}, ${it.lon}`);
-                    lines.push(`Scout score: ${it.overall_score ?? '—'} (${humanizeScoutScoreLabel(it.score_label) || '—'})`);
                 } else {
                     lines.push(`Technology: ${it.technology || '—'}`);
                     lines.push(`Capacity: ${it.capacity_mw != null ? it.capacity_mw + ' MW' : '—'}`);
@@ -5657,10 +5693,8 @@
                     lines.push(`Country: ${it.country || '—'}`);
                     lines.push(`Location: ${it.lat}, ${it.lon}`);
                     if (it.source_type) lines.push(`Record type: ${it.source_type}`);
-                    if (it.overall_score != null && it.overall_score !== '') {
-                        lines.push(`Scout score: ${it.overall_score} (${humanizeScoutScoreLabel(it.score_label) || '—'})`);
-                    }
                 }
+                lines.push(scoutingDeskMetaLine(it));
                 lines.push(`Pipeline stage: ${it.scouting_stage || '—'}`);
                 document.getElementById('scoutingDetailMeta').innerHTML = lines.map(l => `<div>${escapeHtml(l)}</div>`).join('');
                 const scoreSec = document.getElementById('scoutingDetailScoringSection');
@@ -5675,8 +5709,8 @@
                     } else {
                         const stage = it.scouting_stage || '';
                         const stageNote = stage === 'scored'
-                            ? 'This card is in <strong>Scored</strong>, but there is no desk-screen snapshot. Moving a card here by drag only updates the stage — it does not run the rubric.'
-                            : 'Use <strong>Score</strong> on the card, review the breakdown, then <strong>Move to Scored</strong> to save factors here.';
+                            ? 'This card is in <strong>Scored</strong>, but Zorora has no saved desk-screen breakdown yet — only the pipeline stage was updated. Run the desk screen once to store points and factor rows here (and on the card).'
+                            : 'Use <strong>Score</strong> on the card, review the breakdown, then save to Scored to store factors on this record.';
                         scoreBody.innerHTML = `
                             <div style="font-size:0.88rem;color:var(--text-light);line-height:1.55;margin-bottom:14px;" role="status">
                                 ${stageNote}
@@ -5690,6 +5724,10 @@
                 document.getElementById('scoutingDetailNotes').value = it.notes || '';
             } catch (e) {
                 document.getElementById('scoutingDetailMeta').innerHTML = '<div style="color:#b91c1c;">' + escapeHtml(e.message) + '</div>';
+                if (scoreSecEarly && scoreBodyEarly) {
+                    scoreSecEarly.classList.remove('hidden');
+                    scoreBodyEarly.innerHTML = '<div style="color:#b91c1c;font-size:0.88rem;">Could not load desk screen.</div>';
+                }
             }
         }
 
@@ -6150,9 +6188,9 @@
             </div>
             <div class="modal-body">
                 <div id="scoutingDetailMeta" style="font-size:0.9rem;color:var(--text-light);line-height:1.6;margin-bottom:18px;"></div>
-                <div id="scoutingDetailScoringSection" class="hidden" style="margin-bottom:18px;">
-                    <div style="font-size:0.82rem;font-weight:600;margin-bottom:8px;color:var(--text-dark);">Desk screening</div>
-                    <div id="scoutingDetailScoringBody" style="max-height:240px;overflow-y:auto;padding-right:4px;"></div>
+                <div id="scoutingDetailScoringSection" class="hidden" style="margin-bottom:18px;padding:12px 14px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;">
+                    <div style="font-size:0.82rem;font-weight:600;margin-bottom:8px;color:var(--text-dark);">Saved desk screening</div>
+                    <div id="scoutingDetailScoringBody" style="max-height:280px;overflow-y:auto;padding-right:4px;"></div>
                 </div>
                 <label for="scoutingDetailNotes" style="display:block;font-size:0.82rem;font-weight:600;margin-bottom:8px;color:var(--text-dark);">Team notes</label>
                 <textarea id="scoutingDetailNotes" class="search-input" style="width:100%;min-height:220px;resize:vertical;font-family:inherit;" placeholder="Contacts, site status, follow-ups…"></textarea>
