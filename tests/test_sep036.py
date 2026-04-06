@@ -1595,26 +1595,23 @@ def test_diligence_sources_tagged_with_intent_domain():
             credibility_score=0.6,
         )]
 
-    captured_state = [None]
-    def mock_synthesize(state, **kwargs):
-        captured_state[0] = state
-        return "test synthesis"
-
     def passthrough_score(intent_query, sources, variants, max_sources, relevance_min):
         return sources
 
+    # Diligence uses synthesize_direct (not synthesize). In CI there is no local LLM;
+    # stub synthesis so we assert on source tagging, which is complete before synthesis.
     with patch("engine.deep_research_service.aggregate_sources", side_effect=mock_aggregate), \
          patch("engine.deep_research_service._score_and_filter_intent_sources", side_effect=passthrough_score), \
-         patch("engine.deep_research_service.synthesize", side_effect=mock_synthesize):
-        run_deep_research(
+         patch("engine.deep_research_service.synthesize_direct", return_value="test synthesis"):
+        state = run_deep_research(
             "Diligence for Test Solar Farm",
             depth=1,
             research_type="diligence",
             asset_metadata=_ZA_SOLAR_ASSET,
         )
 
-    assert captured_state[0] is not None, "synthesize_direct was not called"
-    sources = captured_state[0].sources_checked
+    assert state is not None
+    sources = state.sources_checked
     assert len(sources) > 0, "No sources in state"
 
     # Every source must have a non-empty intent_domain
