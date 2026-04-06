@@ -10,11 +10,11 @@ site constraints, and regulatory / permitting context before full feasibility
 (e.g. NREL renewable siting & procurement analysis programmes, DOE large-scale
 solar siting resources, RE Data Explorer–style static geospatial screening).
 
-UX rule encoded here: **do not emit a final “strong/moderate/speculative”
-product label as *the* score when any rubric dimension is still unevaluated**
-— that reads like a completed grade. Instead ``score_label`` becomes
-``incomplete_desk`` and ``strength_tier`` holds the numeric tier; the UI can
-show completeness, caveats, and (optionally) a *subset* read for transparency.
+Scoring rule: **regular rubric**. Every declared row has a max; missing or
+unknown input is **0 points on that row**. The total is always
+``sum(earned) / sum(max)`` over **all** rows — never renormalize to a subset
+denominator. ``score_label`` is ``incomplete_desk`` until every row has known
+inputs so the headline tier is not presented as a finalized grade.
 """
 
 from __future__ import annotations
@@ -117,25 +117,6 @@ def _diligence_screening_ux(
     evaluated_n = total - len(pending)
     is_complete = not pending
 
-    evaluated_factors = [
-        f
-        for f in factors
-        if f.get("status") == "known" and f.get("score") is not None
-    ]
-    sub_max = sum(float(f["max_score"]) for f in evaluated_factors)
-    sub_earned = sum(float(f["score"]) for f in evaluated_factors)
-    evaluated_only_pct = (
-        round((sub_earned / sub_max) * 100, 1) if sub_max > 0 else None
-    )
-    evaluated_only_tier = None
-    if evaluated_only_pct is not None:
-        if evaluated_only_pct >= 75:
-            evaluated_only_tier = "strong"
-        elif evaluated_only_pct >= 50:
-            evaluated_only_tier = "moderate"
-        else:
-            evaluated_only_tier = "speculative"
-
     tier = agg.get("strength_tier")
     if is_complete:
         score_label = tier or "unknown"
@@ -148,10 +129,8 @@ def _diligence_screening_ux(
         names = [f.get("label") or f.get("key") or "" for f in pending]
         listed = ", ".join(names)
         ux_banner = (
-            f"{len(pending)} row(s) still have no screening data in Zorora ({listed}). "
-            "The big percentage is earned ÷ the full rubric (every row’s max added), with missing "
-            "rows at 0 pts — useful for ranking candidates on the same template, not a finished "
-            "desk grade. The line under it shows points on the rows we actually scored."
+            f"{len(pending)} rubric row(s) have no input ({listed}) — each counts as 0 / row max. "
+            f"Total score is {agg.get('rubric_earned')} / {agg.get('rubric_possible')} on the full rubric."
         )
 
     return {
@@ -172,10 +151,6 @@ def _diligence_screening_ux(
                 "grid/transmission context, siting / co-location, and permitting before "
                 "full feasibility (industry siting guides; NREL/DOE screening tools)."
             ),
-            "evaluated_only_pct": evaluated_only_pct,
-            "evaluated_only_tier": evaluated_only_tier,
-            "evaluated_rubric_earned": round(sub_earned, 2),
-            "evaluated_rubric_possible": round(sub_max, 2),
             "ux_banner": ux_banner,
             "strength_tier": tier,
         },

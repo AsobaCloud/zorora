@@ -5099,7 +5099,7 @@
                         <span>${escapeHtml(factor.label || factor.key || '')}</span>
                         <span style="text-align:right;color:${factor.status === 'unknown' ? '#9CA3AF' : '#111827'};">
                             ${factor.status === 'unknown'
-                                ? 'Not evaluated'
+                                ? `0/${factor.max_score ?? '—'}`
                                 : `${factor.score}/${factor.max_score}${factor.value !== null && factor.value !== undefined ? ` · ${factor.value}${factor.unit ? ` ${factor.unit}` : ''}` : ''}`}
                         </span>
                     </div>
@@ -5198,7 +5198,7 @@
                         ${(item.factors || []).slice(0, 4).map(factor => `
                             <div class="scout-factor-row">
                                 <span>${escapeHtml(factor.label || factor.key || '')}</span>
-                                <span>${factor.status === 'unknown' ? 'Not evaluated' : `${factor.score}/${factor.max_score}`}</span>
+                                <span>${factor.status === 'unknown' ? `0/${factor.max_score ?? '—'}` : `${factor.score}/${factor.max_score}`}</span>
                             </div>
                         `).join('')}
                     </div>
@@ -5283,21 +5283,11 @@
                 html += `<div role="status" style="font-size:0.84rem;line-height:1.45;color:#92400e;background:#fffbeb;border:1px solid #fbbf24;border-radius:6px;padding:10px 12px;margin-bottom:12px;">${escapeHtml(ds.ux_banner)}</div>`;
             }
             if (ds.dimensions_total != null && ds.dimensions_evaluated != null) {
-                html += `<div style="font-size:0.82rem;color:var(--text-light);margin-bottom:8px;">Rows Zorora could score this run: <strong>${ds.dimensions_evaluated} / ${ds.dimensions_total}</strong></div>`;
-            }
-            const ee = ds.evaluated_rubric_earned;
-            const ep = ds.evaluated_rubric_possible;
-            if (labelRaw === 'incomplete_desk' && ee != null && ep != null && Number(ep) > 0) {
-                const evPct = ds.evaluated_only_pct != null ? ` (${Number(ds.evaluated_only_pct)}% of those points)` : '';
-                html += `<div style="font-size:0.82rem;color:#374151;margin-bottom:10px;line-height:1.45;">`
-                    + `On those rows only: <strong>${Number(ee)} / ${Number(ep)}</strong> rubric pts${evPct}.`
-                    + `</div>`;
+                html += `<div style="font-size:0.82rem;color:var(--text-light);margin-bottom:8px;">Rubric rows with data: <strong>${ds.dimensions_evaluated} / ${ds.dimensions_total}</strong> (missing rows = 0 pts)</div>`;
             }
             let ptsLine;
-            if (labelRaw === 'incomplete_desk' && e != null && p != null && Number(p) > 0) {
-                ptsLine = `Full template (missing rows at 0): <strong>${pct}%</strong> — ${Number(e)} / ${Number(p)} pts — ${labelDisplay}`;
-            } else if (e != null && p != null && Number(p) > 0) {
-                ptsLine = `<strong>${pct}%</strong> — ${Number(e)} / ${Number(p)} rubric pts — ${labelDisplay}`;
+            if (e != null && p != null && Number(p) > 0) {
+                ptsLine = `<strong>${Number(e)} / ${Number(p)}</strong> — ${pct}% — ${labelDisplay}`;
             } else {
                 ptsLine = `${pct}% — ${labelDisplay}`;
             }
@@ -5311,7 +5301,8 @@
                 return '<div style="font-size:0.85rem;color:var(--text-light);">No factor breakdown.</div>';
             }
             return list.map(factor => {
-                const right = factor.status === 'unknown' ? 'Not evaluated' : `${factor.score ?? '—'}/${factor.max_score ?? '—'}`;
+                const mx = factor.max_score != null ? factor.max_score : '—';
+                const right = factor.status === 'unknown' ? `0/${mx}` : `${factor.score ?? '—'}/${mx}`;
                 const detail = factor.detail ? `<div style="font-size:0.78rem;color:var(--text-light);margin-top:2px;">${escapeHtml(factor.detail)}</div>` : '';
                 const val = (factor.value != null && factor.unit) ? ` · ${escapeHtml(String(factor.value))} ${escapeHtml(factor.unit)}` : '';
                 return `<div class="scout-factor-row" style="margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid #eee;">
