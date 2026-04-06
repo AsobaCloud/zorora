@@ -67,6 +67,109 @@ def _tokenize(text: str) -> set:
     return set(re.findall(r"[a-z0-9]{3,}", (text or "").lower()))
 
 
+def extract_pdf_plain_text(path: Path, max_pages: Optional[int] = None) -> str:
+    """Extract plain text from a PDF. ``max_pages=None`` reads all pages.
+
+    Used by the SME corpus loader (bounded pages) and by ``sme_pdf_to_markdown`` (often all pages).
+    """
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        logger.warning(
+            "pypdf is not installed; install with `pip install pypdf` to use SME PDFs. Skipping %s",
+            path.name,
+        )
+        return ""
+
+    try:
+        reader = PdfReader(str(path))
+        total = len(reader.pages)
+        if total == 0:
+            return ""
+        if max_pages is None:
+            n = total
+        else:
+            n = min(total, max(1, max_pages))
+        parts: List[str] = []
+        for i in range(n):
+            page = reader.pages[i]
+            text = page.extract_text() or ""
+            if text.strip():
+                parts.append(text)
+        return "\n".join(parts)
+    except Exception as exc:
+        logger.warning("PDF text extraction failed for %s: %s", path, exc)
+        return ""
+
+
+def display_title_from_path(path: Path) -> str:
+    """Human-readable title from file path stem."""
+    return path.stem.replace("_", " ").replace("-", " ").strip()
+
+
+def inferred_meta_for_pdf(path: Path) -> Dict[str, object]:
+    """Default frontmatter-style fields for ranking and display (PDFs or converted MD)."""
+    stem_l = path.stem.lower()
+    tags: List[str] = ["pdf", "sme reference"]
+    technologies: List[str] = []
+    domains: List[str] = []
+
+    if any(k in stem_l for k in ("pv", "solar", "photovolt", "photovoltaic")):
+        technologies.append("solar")
+        tags.extend(["pv", "solar"])
+    if any(
+        k in stem_l
+        for k in (
+            "maintenance",
+            "maintanance",
+            "operations",
+            "o-m",
+            "o&m",
+            "manual",
+            "guideline",
+        )
+    ):
+        domains.append("performance")
+        tags.extend(["operations", "maintenance"])
+    if "south-africa" in stem_l or "south_africa" in stem_l or "south africa" in stem_l:
+        tags.append("south africa")
+    if any(
+        k in stem_l
+        for k in (
+            "tax",
+            "credit",
+            "equity",
+            "incentive",
+            "subsidy",
+            "itc",
+            "ptc",
+            "treasury",
+            "warehouse facility",
+            "warehouse",
+        )
+    ):
+        domains.append("commercial")
+        tags.extend(["tax", "finance", "incentives"])
+    if "finance" in stem_l or ("project" in stem_l and "finance" in stem_l):
+        domains.append("commercial")
+        tags.append("project finance")
+    if any(k in stem_l for k in ("regulator", "license", "grid code", "crs ", "congress")):
+        domains.append("licensing")
+        tags.append("policy")
+
+    meta: Dict[str, object] = {
+        "title": display_title_from_path(path),
+        "orthodoxy": "SME reference (PDF)",
+        "weight": 1.0,
+    }
+    if domains:
+        meta["domains"] = list(dict.fromkeys(domains))
+    if technologies:
+        meta["technologies"] = list(dict.fromkeys(technologies))
+    meta["tags"] = list(dict.fromkeys(tags))
+    return meta
+
+
 def _score_doc(
     query: str,
     metadata: Dict[str, object],
@@ -99,13 +202,29 @@ def _score_doc(
     return score
 
 
+def _collect_corpus_files(corpus_dir: Path) -> List[Path]:
+    """Markdown (excluding template stub) and PDF files.
+
+    If ``example.pdf`` and ``example.md`` both exist, only ``example.md`` is used so
+    converted/edited Markdown is the single source of truth.
+    """
+    md_files = [
+        p
+        for p in sorted(corpus_dir.rglob("*.md"))
+        if not p.name.upper().startswith("TEMPLATE_")
+    ]
+    md_stems = {p.stem for p in md_files}
+    pdf_files = [p for p in sorted(corpus_dir.rglob("*.pdf")) if p.stem not in md_stems]
+    return md_files + pdf_files
+
+
 def load_local_sme_sources(
     query: str,
     intent_domain: Optional[str] = None,
     asset_metadata: Optional[dict] = None,
     max_results: int = 5,
 ) -> List[Source]:
-    """Load diligence SME texts from local markdown files."""
+    """Load diligence SME texts from local markdown and PDF files under the corpus directory."""
     settings = getattr(config, "LOCAL_SME_CORPUS", {})
     if not settings.get("enabled", False):
         return []
@@ -116,24 +235,38 @@ def load_local_sme_sources(
     if not corpus_dir.exists():
         return []
 
-    files = sorted(corpus_dir.rglob("*.md"))
+    files = _collect_corpus_files(corpus_dir)
     if not files:
         return []
 
     scored: List[Tuple[float, Source]] = []
     per_doc_snippet_chars = int(settings.get("snippet_chars", 320))
     per_doc_body_chars = int(settings.get("body_chars", 4000))
+    pdf_max_pages = int(settings.get("pdf_max_pages", 35))
 
     for path in files:
-        try:
-            text = path.read_text(encoding="utf-8")
-        except Exception as exc:
-            logger.warning("Unable to read SME corpus file %s: %s", path, exc)
+        suffix = path.suffix.lower()
+        if suffix == ".md":
+            try:
+                text = path.read_text(encoding="utf-8")
+            except Exception as exc:
+                logger.warning("Unable to read SME corpus file %s: %s", path, exc)
+                continue
+            meta, body = _parse_frontmatter(text)
+            title = str(meta.get("title") or display_title_from_path(path))
+            orthodoxy = str(meta.get("orthodoxy") or "Unspecified orthodoxy")
+        elif suffix == ".pdf":
+            raw_pdf = extract_pdf_plain_text(path, max_pages=pdf_max_pages)
+            if not raw_pdf.strip():
+                continue
+            meta = inferred_meta_for_pdf(path)
+            filename_hint = display_title_from_path(path)
+            body = f"{filename_hint}\n\n{raw_pdf}"
+            title = str(meta.get("title"))
+            orthodoxy = str(meta.get("orthodoxy"))
+        else:
             continue
 
-        meta, body = _parse_frontmatter(text)
-        title = str(meta.get("title") or path.stem.replace("_", " ").title())
-        orthodoxy = str(meta.get("orthodoxy") or "Unspecified orthodoxy")
         domains = _normalize_terms(meta.get("domains"))
         domain_label = ", ".join(domains) if domains else "unspecified"
 
@@ -143,7 +276,8 @@ def load_local_sme_sources(
 
         rel_path = path.relative_to(corpus_dir)
         url = f"sme://{rel_path.as_posix()}"
-        snippet = f"Orthodoxy: {orthodoxy} | Domains: {domain_label} | {body.strip()[:per_doc_snippet_chars]}"
+        body_trim = body.strip()
+        snippet = f"Orthodoxy: {orthodoxy} | Domains: {domain_label} | {body_trim[:per_doc_snippet_chars]}"
 
         source = Source(
             source_id=Source.generate_id(url),
@@ -151,7 +285,7 @@ def load_local_sme_sources(
             title=f"[Internal SME] {title}",
             source_type="internal_sme",
             content_snippet=snippet,
-            content_full=body.strip()[:per_doc_body_chars],
+            content_full=body_trim[:per_doc_body_chars],
         )
         scored.append((score, source))
 

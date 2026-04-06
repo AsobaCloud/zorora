@@ -67,3 +67,6 @@ INTERNAL_*.md
 
 # Generated analysis artifacts
 plots/
+
+# SME corpus: version Markdown only; keep PDFs local (large binaries)
+data/sme_orthodoxies/*.pdf

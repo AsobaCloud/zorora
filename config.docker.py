@@ -521,6 +521,7 @@ LOCAL_SME_CORPUS = {
     "max_results_per_query": 6,
     "snippet_chars": 320,
     "body_chars": 4000,
+    "pdf_max_pages": 35,
 }
 
 # Model Endpoint Mapping (which endpoint each role uses)

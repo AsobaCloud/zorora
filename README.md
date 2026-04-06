@@ -51,7 +51,7 @@ Zorora ingests 80 market series across 6 providers, refreshed automatically via 
 - World Bank Documents — policy and development reports
 - Congress.gov / Federal Register — US policy and regulatory filings
 - SEC EDGAR — corporate filings and financial statements
-- Local SME corpus — optional markdown knowledge base for diligence-mode Deep Research (`data/sme_orthodoxies/`)
+- Local SME corpus — optional Markdown or PDF knowledge base for diligence-mode Deep Research (`data/sme_orthodoxies/`, PDF text via `pypdf`)
 
 ## Additional Capabilities
 
@@ -126,6 +126,7 @@ Research depth profiles, model budgets, and synthesis settings are configured in
 Deep Research diligence runs can include local "subject matter expert" texts that represent different economic, financial, and operational orthodoxies for energy asset management.
 
 - Default folder: `data/sme_orthodoxies/`
+- Supported formats: `.md` (with optional frontmatter) and `.pdf` (first N pages extracted; see `pdf_max_pages` in config)
 - Template file: `data/sme_orthodoxies/TEMPLATE_sme_orthodoxy.md`
 - Config keys: `LOCAL_SME_CORPUS` in `config.py` / `config.docker.py`
 - Env overrides:
@@ -133,6 +134,16 @@ Deep Research diligence runs can include local "subject matter expert" texts tha
   - `ZORORA_LOCAL_SME_CORPUS_PATH=/absolute/or/relative/path`
 
 These entries are injected as internal evidence during diligence research and can be cited in synthesis like other ranked sources.
+
+**Git-friendly workflow (PDFs are large binaries):** you can keep working PDFs locally, then materialize text as Markdown for the repo — extracted UTF-8 text compresses much better than PDFs in git, and you can edit frontmatter and body like any other SME note.
+
+```bash
+python scripts/sme_pdf_to_markdown.py
+# Optional: limit pages during extraction
+python scripts/sme_pdf_to_markdown.py --max-pages 80
+```
+
+If both `Document.pdf` and `Document.md` exist under the corpus folder, the loader uses **only** the `.md` file (single source of truth). After verifying the Markdown, you can delete the PDFs or add `*.pdf` under `data/sme_orthodoxies/` to your `.gitignore`.
 
 ### Product Surface Flags
 

@@ -69,6 +69,7 @@ setup(
         "matplotlib>=3.7.0",
         "scipy>=1.10.0",
         "odse>=0.1.0",
+        "pypdf>=5.0.0",
     ],
     extras_require={
         "policy": [
