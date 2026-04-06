@@ -5271,7 +5271,6 @@
             const pct = site.overall_score;
             const e = site.rubric_earned;
             const p = site.rubric_possible;
-            const tierRaw = site.strength_tier || '';
             const labelRaw = site.score_label || '';
             const labelDisplay = labelRaw === 'incomplete_desk'
                 ? 'Incomplete desk screen'
@@ -5284,15 +5283,25 @@
                 html += `<div role="status" style="font-size:0.84rem;line-height:1.45;color:#92400e;background:#fffbeb;border:1px solid #fbbf24;border-radius:6px;padding:10px 12px;margin-bottom:12px;">${escapeHtml(ds.ux_banner)}</div>`;
             }
             if (ds.dimensions_total != null && ds.dimensions_evaluated != null) {
-                html += `<div style="font-size:0.82rem;color:var(--text-light);margin-bottom:8px;">Screening dimensions with data in Zorora: <strong>${ds.dimensions_evaluated} / ${ds.dimensions_total}</strong></div>`;
+                html += `<div style="font-size:0.82rem;color:var(--text-light);margin-bottom:8px;">Rows Zorora could score this run: <strong>${ds.dimensions_evaluated} / ${ds.dimensions_total}</strong></div>`;
             }
-            const ptsLine = (e != null && p != null && Number(p) > 0)
-                ? `${pct}% — ${Number(e)} / ${Number(p)} rubric pts`
-                : `${pct}%`;
-            html += `<div style="font-weight:600;margin-bottom:12px;">${ptsLine} — ${labelDisplay}</div>`;
-            if (labelRaw === 'incomplete_desk' && tierRaw) {
-                html += `<div style="font-size:0.82rem;color:var(--text-light);margin-bottom:8px;">Numeric tier on the full rubric (sorting / rough signal only): <strong>${escapeHtml(tierRaw)}</strong></div>`;
+            const ee = ds.evaluated_rubric_earned;
+            const ep = ds.evaluated_rubric_possible;
+            if (labelRaw === 'incomplete_desk' && ee != null && ep != null && Number(ep) > 0) {
+                const evPct = ds.evaluated_only_pct != null ? ` (${Number(ds.evaluated_only_pct)}% of those points)` : '';
+                html += `<div style="font-size:0.82rem;color:#374151;margin-bottom:10px;line-height:1.45;">`
+                    + `On those rows only: <strong>${Number(ee)} / ${Number(ep)}</strong> rubric pts${evPct}.`
+                    + `</div>`;
             }
+            let ptsLine;
+            if (labelRaw === 'incomplete_desk' && e != null && p != null && Number(p) > 0) {
+                ptsLine = `Full template (missing rows at 0): <strong>${pct}%</strong> — ${Number(e)} / ${Number(p)} pts — ${labelDisplay}`;
+            } else if (e != null && p != null && Number(p) > 0) {
+                ptsLine = `<strong>${pct}%</strong> — ${Number(e)} / ${Number(p)} rubric pts — ${labelDisplay}`;
+            } else {
+                ptsLine = `${pct}% — ${labelDisplay}`;
+            }
+            html += `<div style="font-weight:600;margin-bottom:12px;">${ptsLine}</div>`;
             return html;
         }
 

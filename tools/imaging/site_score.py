@@ -146,13 +146,12 @@ def _diligence_screening_ux(
     else:
         score_label = "incomplete_desk"
         names = [f.get("label") or f.get("key") or "" for f in pending]
+        listed = ", ".join(names)
         ux_banner = (
-            f"{len(pending)} of {total} screening dimension(s) are not evaluated in this release "
-            f"({', '.join(names)}). "
-            f"The percentage is points on the full rubric with unevaluated rows at 0 — "
-            f"not a completed diligence grade. "
-            f"If those rows were excluded, the evaluated-only signal would be "
-            f"{evaluated_only_pct}% ({evaluated_only_tier})."
+            f"{len(pending)} row(s) still have no screening data in Zorora ({listed}). "
+            "The big percentage is earned ÷ the full rubric (every row’s max added), with missing "
+            "rows at 0 pts — useful for ranking candidates on the same template, not a finished "
+            "desk grade. The line under it shows points on the rows we actually scored."
         )
 
     return {
@@ -175,6 +174,8 @@ def _diligence_screening_ux(
             ),
             "evaluated_only_pct": evaluated_only_pct,
             "evaluated_only_tier": evaluated_only_tier,
+            "evaluated_rubric_earned": round(sub_earned, 2),
+            "evaluated_rubric_possible": round(sub_max, 2),
             "ux_banner": ux_banner,
             "strength_tier": tier,
         },
