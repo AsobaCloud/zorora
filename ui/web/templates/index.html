@@ -5651,14 +5651,25 @@
                 const scoreSec = document.getElementById('scoutingDetailScoringSection');
                 const scoreBody = document.getElementById('scoutingDetailScoringBody');
                 if (scoreSec && scoreBody) {
+                    scoreSec.classList.remove('hidden');
                     const fac = it.factors;
+                    const idAttr = escapeAttr(JSON.stringify(it.id));
                     if (fac && fac.length) {
-                        scoreSec.classList.remove('hidden');
                         const hdr = formatScoutingOverallSummary(it);
                         scoreBody.innerHTML = hdr + formatScoutingFactorRowsHtml(fac);
                     } else {
-                        scoreSec.classList.add('hidden');
-                        scoreBody.innerHTML = '';
+                        const stage = it.scouting_stage || '';
+                        const stageNote = stage === 'scored'
+                            ? 'This card is in <strong>Scored</strong>, but there is no desk-screen snapshot. Moving a card here by drag only updates the stage — it does not run the rubric.'
+                            : 'Use <strong>Score</strong> on the card, review the breakdown, then <strong>Move to Scored</strong> to save factors here.';
+                        scoreBody.innerHTML = `
+                            <div style="font-size:0.88rem;color:var(--text-light);line-height:1.55;margin-bottom:14px;" role="status">
+                                ${stageNote}
+                            </div>
+                            <button type="button" class="search-button" style="padding:8px 18px;font-size:0.88rem;"
+                                onclick="closeScoutingDetailPanel();setTimeout(function(){openScoutingScoreFlow(${idAttr}, '${type}');},50);">
+                                Run desk screen
+                            </button>`;
                     }
                 }
                 document.getElementById('scoutingDetailNotes').value = it.notes || '';
@@ -6125,7 +6136,7 @@
             <div class="modal-body">
                 <div id="scoutingDetailMeta" style="font-size:0.9rem;color:var(--text-light);line-height:1.6;margin-bottom:18px;"></div>
                 <div id="scoutingDetailScoringSection" class="hidden" style="margin-bottom:18px;">
-                    <div style="font-size:0.82rem;font-weight:600;margin-bottom:8px;color:var(--text-dark);">Scoring</div>
+                    <div style="font-size:0.82rem;font-weight:600;margin-bottom:8px;color:var(--text-dark);">Desk screening</div>
                     <div id="scoutingDetailScoringBody" style="max-height:240px;overflow-y:auto;padding-right:4px;"></div>
                 </div>
                 <label for="scoutingDetailNotes" style="display:block;font-size:0.82rem;font-weight:600;margin-bottom:8px;color:var(--text-dark);">Team notes</label>
