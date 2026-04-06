@@ -449,24 +449,32 @@ def _analyze_trading(item_data: dict, **kwargs) -> dict:
             _evidence_row("SAPP DAM prices", "— (unavailable or no observations)")
         )
 
-    # Load Eskom TOU tariffs
+    # Load Eskom TOU tariffs (Eskom Standard Price sheets — one workbook, many tariff names)
     eskom_entries: Optional[int] = None
     try:
-        from tools.regulatory.eskom_tariff_client import get_tariff_rates
-        rates = get_tariff_rates()
-        if rates:
-            eskom_entries = len(rates)
-            context_parts.append(f"Eskom TOU tariff schedules available: {len(rates)} entries")
+        from tools.regulatory.eskom_tariff_client import get_tariff_rates, list_tariff_names
+
+        tnames = list_tariff_names()
+        if tnames:
+            eskom_entries = sum(len(get_tariff_rates(n)) for n in tnames)
+            if eskom_entries:
+                context_parts.append(
+                    f"Eskom TOU tariff schedules available: {eskom_entries} rows "
+                    f"across {len(tnames)} tariff types"
+                )
     except Exception as exc:
         logger.warning("Eskom tariff data unavailable: %s", exc)
 
     if eskom_entries is not None:
         evidence_rows.append(
-            _evidence_row("Eskom TOU tariff schedules", f"{eskom_entries} entries")
+            _evidence_row("Eskom TOU tariff schedules", f"{eskom_entries} schedule rows")
         )
     else:
         evidence_rows.append(
-            _evidence_row("Eskom TOU tariff schedules", "— (unavailable or empty)")
+            _evidence_row(
+                "Eskom TOU tariff schedules",
+                "— (workbook missing, parse failed, or openpyxl unavailable)",
+            )
         )
 
     # Generate 24h price chart
