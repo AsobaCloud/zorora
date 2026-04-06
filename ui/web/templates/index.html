@@ -5495,6 +5495,12 @@
         }
 
         async function moveToStage(itemId, type, stage) {
+            if (stage === 'scored') {
+                // Dragging (or any transition) to Scored must run the desk screen + apply-score
+                // or there is no rubric snapshot — only an empty stage change.
+                openScoutingScoreFlow(itemId, type);
+                return;
+            }
             try {
                 const response = await fetch(`/api/scouting/items/${encodeURIComponent(itemId)}/stage`, {
                     method: 'PUT',
@@ -6154,7 +6160,7 @@
         <div class="modal-backdrop" onclick="closeScoutingScoreModal()"></div>
         <div class="modal-content modal-large" role="dialog" aria-modal="true" aria-labelledby="scoutingScoreModalTitle">
             <div class="modal-header">
-                <h2 class="modal-title" id="scoutingScoreModalTitle">Score site</h2>
+                <h2 class="modal-title" id="scoutingScoreModalTitle">Desk screening</h2>
                 <button type="button" class="modal-close" onclick="closeScoutingScoreModal()" aria-label="Close">×</button>
             </div>
             <div class="modal-body">
@@ -6168,7 +6174,7 @@
                 <div style="display:flex;flex-wrap:wrap;gap:10px;">
                     <button type="button" class="imaging-mini-btn" onclick="scoutingScoreRunOrRerun()">Re-run score</button>
                     <button type="button" class="btn-secondary" onclick="closeScoutingScoreModal()">Cancel</button>
-                    <button type="button" class="search-button" style="padding:8px 18px;font-size:0.88rem;" onclick="scoutingScoreConfirmMove()">Move to Scored</button>
+                    <button type="button" class="search-button" style="padding:8px 18px;font-size:0.88rem;" onclick="scoutingScoreConfirmMove()">Save screening & move to Scored</button>
                 </div>
             </div>
         </div>
