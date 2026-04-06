@@ -21,7 +21,7 @@ from tools.imaging.viability import score_all_deposits
 from tools.imaging.mrds_client import fetch_deposits
 from tools.imaging.generation_client import load_generation_assets
 from tools.imaging.resource_client import fetch_resource_summary
-from tools.imaging.site_score import score_site
+from tools.imaging.site_score import score_bess_site, score_site
 from tools.regulatory.store import RegulatoryDataStore
 from tools.alerts.store import AlertStore
 from workflows.regulatory_workflow import RegulatoryWorkflow
@@ -1267,6 +1267,159 @@ def update_scouting_item_stage(item_id):
         return jsonify({"error": str(e)}), 500
 
 
+def _compute_greenfield_score(
+    store: ImagingDataStore,
+    lat: float,
+    lon: float,
+    technology: str,
+    name: str | None = None,
+    country: str | None = None,
+) -> dict:
+    """Run greenfield rubric using DB-backed generation and pipeline lists."""
+    resource_summary = fetch_resource_summary(lat=lat, lon=lon)
+    generation_assets = store.get_generation_assets().get("features", [])
+    pipeline_assets = store.list_pipeline_assets()
+    return score_site(
+        lat=lat,
+        lon=lon,
+        technology=technology,
+        resource_summary=resource_summary,
+        generation_assets=generation_assets,
+        pipeline_assets=pipeline_assets,
+        name=name,
+        country=country,
+    )
+
+
+def _scoring_snapshot_from_site(site: dict) -> dict:
+    out = {}
+    for key in (
+        "overall_score",
+        "score_label",
+        "factors",
+        "resource_summary",
+        "known_factor_count",
+        "unknown_factor_count",
+    ):
+        if key in site:
+            out[key] = site[key]
+    return out
+
+
+@app.route("/api/scouting/items/<item_id>/score-preview", methods=["POST"])
+def score_preview_scouting_item(item_id):
+    """Compute scoring payload for a kanban item without persisting."""
+    try:
+        data = request.get_json(silent=True) or {}
+        item_type = (data.get("type") or "").strip()
+        if item_type not in VALID_SCOUTING_TYPES:
+            return (
+                jsonify(
+                    {"error": f"type must be one of {sorted(VALID_SCOUTING_TYPES)}"}
+                ),
+                400,
+            )
+        technology_override = (data.get("technology") or "").strip().lower()
+        store = ImagingDataStore()
+        try:
+            if item_type == "greenfield":
+                row = store.get_watchlist_site(item_id)
+                if not row:
+                    return jsonify({"error": "not found"}), 404
+                tech = technology_override or (row.get("technology") or "").strip().lower()
+                if not tech:
+                    return jsonify({"error": "technology is required"}), 400
+                site = _compute_greenfield_score(
+                    store,
+                    float(row["lat"]),
+                    float(row["lon"]),
+                    tech,
+                    row.get("name"),
+                    row.get("country"),
+                )
+                site["id"] = row["id"]
+                site["notes"] = row.get("notes") or ""
+                return jsonify({"site": site})
+
+            row = store.get_pipeline_asset(item_id)
+            if not row:
+                return jsonify({"error": "not found"}), 404
+
+            if item_type == "bess":
+                if row.get("source_type") != "bess":
+                    return jsonify({"error": "item is not a BESS pipeline row"}), 400
+                lat, lon = float(row["lat"]), float(row["lon"])
+                site = score_bess_site(
+                    lat,
+                    lon,
+                    row.get("asset_name"),
+                    row.get("country"),
+                )
+            elif item_type == "brownfield":
+                if row.get("source_type") == "bess":
+                    return jsonify({"error": "use type bess for this item"}), 400
+                tech = technology_override or (row.get("technology") or "").strip().lower()
+                if not tech:
+                    return jsonify({"error": "technology is required"}), 400
+                site = _compute_greenfield_score(
+                    store,
+                    float(row["lat"]),
+                    float(row["lon"]),
+                    tech,
+                    row.get("asset_name"),
+                    row.get("country"),
+                )
+            else:
+                return jsonify({"error": "unsupported type"}), 400
+
+            site["id"] = row["id"]
+            site["notes"] = row.get("notes") or ""
+            return jsonify({"site": site})
+        finally:
+            store.close()
+    except Exception as e:
+        logger.error(f"Scouting score-preview error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/scouting/items/<item_id>/apply-score", methods=["POST"])
+def apply_scouting_score(item_id):
+    """Persist score-preview output and set scouting_stage to scored."""
+    try:
+        data = request.get_json(silent=True) or {}
+        item_type = (data.get("type") or "").strip()
+        site = data.get("site")
+        if not item_type or item_type not in VALID_SCOUTING_TYPES:
+            return (
+                jsonify(
+                    {"error": f"type must be one of {sorted(VALID_SCOUTING_TYPES)}"}
+                ),
+                400,
+            )
+        if not isinstance(site, dict):
+            return jsonify({"error": "site object is required"}), 400
+        if site.get("id") != item_id:
+            return jsonify({"error": "site.id must match URL item id"}), 400
+
+        store = ImagingDataStore()
+        try:
+            if item_type == "greenfield":
+                to_save = dict(site)
+                to_save["scouting_stage"] = "scored"
+                saved = store.upsert_watchlist_site(to_save)
+            else:
+                snapshot = _scoring_snapshot_from_site(site)
+                store.save_pipeline_scouting_score(item_id, snapshot)
+                store.update_scouting_stage(item_type, item_id, "scored")
+                saved = store.get_pipeline_asset(item_id)
+        finally:
+            store.close()
+        return jsonify({"status": "ok", "item": saved})
+    except Exception as e:
+        logger.error(f"Scouting apply-score error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/api/scouting/items', methods=['POST'])
 def create_scouting_item():
     """Create a scouting item via the unified endpoint."""
@@ -1793,20 +1946,17 @@ def score_greenfield_site():
         lat = float(data["lat"])
         lon = float(data["lon"])
         store = ImagingDataStore()
-        generation_assets = store.get_generation_assets().get("features", [])
-        pipeline_assets = store.list_pipeline_assets()
-        resource_summary = fetch_resource_summary(lat=lat, lon=lon)
-        site = score_site(
-            lat=lat,
-            lon=lon,
-            technology=technology,
-            resource_summary=resource_summary,
-            generation_assets=generation_assets,
-            pipeline_assets=pipeline_assets,
-            name=(data.get("name") or "").strip() or None,
-            country=(data.get("country") or "").strip() or None,
-        )
-        store.close()
+        try:
+            site = _compute_greenfield_score(
+                store,
+                lat,
+                lon,
+                technology,
+                name=(data.get("name") or "").strip() or None,
+                country=(data.get("country") or "").strip() or None,
+            )
+        finally:
+            store.close()
         return jsonify({"site": site})
     except Exception as e:
         logger.error(f"Scouting score error: {e}", exc_info=True)

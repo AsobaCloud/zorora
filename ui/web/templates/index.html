@@ -5265,18 +5265,152 @@
             `).join('');
         }
 
+        function formatScoutingFactorRowsHtml(factors) {
+            const list = factors || [];
+            if (!list.length) {
+                return '<div style="font-size:0.85rem;color:var(--text-light);">No factor breakdown.</div>';
+            }
+            return list.map(factor => {
+                const right = factor.status === 'unknown' ? 'unknown' : `${factor.score ?? '—'}/${factor.max_score ?? '—'}`;
+                const detail = factor.detail ? `<div style="font-size:0.78rem;color:var(--text-light);margin-top:2px;">${escapeHtml(factor.detail)}</div>` : '';
+                const val = (factor.value != null && factor.unit) ? ` · ${escapeHtml(String(factor.value))} ${escapeHtml(factor.unit)}` : '';
+                return `<div class="scout-factor-row" style="margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid #eee;">
+                    <div style="display:flex;justify-content:space-between;gap:8px;font-size:0.88rem;">
+                        <span>${escapeHtml(factor.label || factor.key || '')}${val}</span>
+                        <span style="white-space:nowrap;">${escapeHtml(right)}</span>
+                    </div>${detail}
+                </div>`;
+            }).join('');
+        }
+
+        let scoutingScoreItemId = null;
+        let scoutingScoreItemType = null;
+        let scoutingScorePreviewSite = null;
+
+        function closeScoutingScoreModal() {
+            const m = document.getElementById('scoutingScoreModal');
+            if (m) m.style.display = 'none';
+            scoutingScoreItemId = null;
+            scoutingScoreItemType = null;
+            scoutingScorePreviewSite = null;
+        }
+
+        async function runScoutingScorePreview() {
+            if (!scoutingScoreItemId || !scoutingScoreItemType) return;
+            const body = { type: scoutingScoreItemType };
+            const techRow = document.getElementById('scoutingScoreTechRow');
+            const techSel = document.getElementById('scoutingScoreTechSelect');
+            if (techRow && !techRow.classList.contains('hidden') && techSel && techSel.value) {
+                body.technology = techSel.value;
+            }
+            const titleEl = document.getElementById('scoutingScoreModalTitle');
+            const subEl = document.getElementById('scoutingScoreModalSub');
+            const tableEl = document.getElementById('scoutingScoreFactorTable');
+            if (tableEl) tableEl.innerHTML = '<div class="kanban-empty">Scoring…</div>';
+            try {
+                const resp = await fetch(`/api/scouting/items/${encodeURIComponent(scoutingScoreItemId)}/score-preview`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.error || 'Score preview failed');
+                scoutingScorePreviewSite = data.site;
+                if (titleEl) titleEl.textContent = data.site.name || 'Site score';
+                const tech = data.site.technology || '';
+                const lat = data.site.lat;
+                const lon = data.site.lon;
+                if (subEl) {
+                    subEl.textContent = `${tech} · ${lat != null && lon != null ? `${Number(lat).toFixed(4)}, ${Number(lon).toFixed(4)}` : '—'}`;
+                }
+                if (tableEl) {
+                    const overall = data.site.overall_score != null
+                        ? `<div style="font-weight:600;margin-bottom:12px;">Overall: ${data.site.overall_score} / 100 — ${escapeHtml(data.site.score_label || '')}</div>`
+                        : '';
+                    tableEl.innerHTML = overall + formatScoutingFactorRowsHtml(data.site.factors);
+                }
+            } catch (e) {
+                if (tableEl) tableEl.innerHTML = `<div style="color:#b91c1c;font-size:0.9rem;">${escapeHtml(e.message)}</div>`;
+                scoutingScorePreviewSite = null;
+            }
+        }
+
+        async function openScoutingScoreFlow(itemId, type) {
+            scoutingScoreItemId = itemId;
+            scoutingScoreItemType = type;
+            scoutingScorePreviewSite = null;
+            const modal = document.getElementById('scoutingScoreModal');
+            const techRow = document.getElementById('scoutingScoreTechRow');
+            const techSel = document.getElementById('scoutingScoreTechSelect');
+            if (!modal) return;
+            modal.style.display = 'flex';
+            if (techRow) techRow.classList.add('hidden');
+            const tableEl = document.getElementById('scoutingScoreFactorTable');
+            if (tableEl) tableEl.innerHTML = '<div class="kanban-empty">Loading…</div>';
+            if (type === 'brownfield') {
+                try {
+                    const gr = await fetch(`/api/scouting/items/${encodeURIComponent(itemId)}?type=${encodeURIComponent(type)}`);
+                    const gd = await gr.json();
+                    if (!gr.ok) throw new Error(gd.error || 'Failed to load item');
+                    const it = gd.item;
+                    const hasTech = (it.technology || '').trim();
+                    if (!hasTech && techRow && techSel) {
+                        techRow.classList.remove('hidden');
+                        techSel.innerHTML = '<option value="solar">Solar</option><option value="wind">Wind</option>';
+                        techSel.value = 'solar';
+                        if (tableEl) {
+                            tableEl.innerHTML = '<div style="font-size:0.88rem;color:var(--text-light);">Choose technology, then click Run score.</div>';
+                        }
+                        return;
+                    }
+                } catch (e) {
+                    if (tableEl) tableEl.innerHTML = `<div style="color:#b91c1c;">${escapeHtml(e.message)}</div>`;
+                    return;
+                }
+            }
+            await runScoutingScorePreview();
+        }
+
+        function scoutingScoreRunOrRerun() {
+            runScoutingScorePreview();
+        }
+
+        async function scoutingScoreConfirmMove() {
+            if (!scoutingScoreItemId || !scoutingScoreItemType || !scoutingScorePreviewSite) {
+                alert('Run a score first.');
+                return;
+            }
+            const site = { ...scoutingScorePreviewSite, id: scoutingScoreItemId };
+            try {
+                const resp = await fetch(`/api/scouting/items/${encodeURIComponent(scoutingScoreItemId)}/apply-score`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ type: scoutingScoreItemType, site }),
+                });
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.error || 'Apply score failed');
+                closeScoutingScoreModal();
+                await loadScoutingView({ force: true });
+            } catch (e) {
+                alert('Apply score error: ' + e.message);
+            }
+        }
+
         function renderScoutingCard(item, type, stage) {
             const name = escapeHtml(item.asset_name || item.name || 'Unnamed');
             const country = escapeHtml(item.country || '');
-            const metric = type === 'greenfield'
+            let metric = type === 'greenfield'
                 ? `Score: ${item.overall_score ?? 'N/A'} (${escapeHtml(item.score_label || '')})`
                 : `${item.capacity_mw ? `${Number(item.capacity_mw).toLocaleString()} MW` : 'capacity unknown'}`;
+            if (type !== 'greenfield' && item.overall_score != null && item.overall_score !== '') {
+                metric = `Score: ${item.overall_score} (${escapeHtml(item.score_label || '')}) · ${item.capacity_mw ? `${Number(item.capacity_mw).toLocaleString()} MW` : 'capacity unknown'}`;
+            }
             const id = item.id;
             const idAttr = escapeAttr(JSON.stringify(id));
             const dBtn = `<button type="button" onclick="event.stopPropagation();openScoutingDetail(${idAttr}, '${type}')">Details</button> `;
             let actions = '';
             if (stage === 'identified') {
-                actions = dBtn + `<button type="button" onclick="moveToStage(${idAttr}, '${type}', 'scored')">Score</button>
+                actions = dBtn + `<button type="button" onclick="openScoutingScoreFlow(${idAttr}, '${type}')">Score</button>
                            <button type="button" class="danger" onclick="removeScoutingItem(${idAttr}, '${type}')">Remove</button>`;
             } else if (stage === 'scored') {
                 actions = dBtn + `<button type="button" onclick="moveToStage(${idAttr}, '${type}', 'feasibility')">Feasibility</button>
@@ -5472,9 +5606,27 @@
                     lines.push(`Country: ${it.country || '—'}`);
                     lines.push(`Location: ${it.lat}, ${it.lon}`);
                     if (it.source_type) lines.push(`Record type: ${it.source_type}`);
+                    if (it.overall_score != null && it.overall_score !== '') {
+                        lines.push(`Scout score: ${it.overall_score} (${it.score_label || '—'})`);
+                    }
                 }
                 lines.push(`Pipeline stage: ${it.scouting_stage || '—'}`);
                 document.getElementById('scoutingDetailMeta').innerHTML = lines.map(l => `<div>${escapeHtml(l)}</div>`).join('');
+                const scoreSec = document.getElementById('scoutingDetailScoringSection');
+                const scoreBody = document.getElementById('scoutingDetailScoringBody');
+                if (scoreSec && scoreBody) {
+                    const fac = it.factors;
+                    if (fac && fac.length) {
+                        scoreSec.classList.remove('hidden');
+                        const hdr = it.overall_score != null
+                            ? `<div style="font-weight:600;margin-bottom:8px;">Overall: ${it.overall_score} / 100 — ${escapeHtml(it.score_label || '')}</div>`
+                            : '';
+                        scoreBody.innerHTML = hdr + formatScoutingFactorRowsHtml(fac);
+                    } else {
+                        scoreSec.classList.add('hidden');
+                        scoreBody.innerHTML = '';
+                    }
+                }
                 document.getElementById('scoutingDetailNotes').value = it.notes || '';
             } catch (e) {
                 document.getElementById('scoutingDetailMeta').innerHTML = '<div style="color:#b91c1c;">' + escapeHtml(e.message) + '</div>';
@@ -5487,6 +5639,10 @@
             activeScoutingDetailId = null;
             activeScoutingDetailType = null;
             window.__scoutingDetailItem = null;
+            const scoreSec = document.getElementById('scoutingDetailScoringSection');
+            const scoreBody = document.getElementById('scoutingDetailScoringBody');
+            if (scoreSec) scoreSec.classList.add('hidden');
+            if (scoreBody) scoreBody.innerHTML = '';
         }
 
         async function saveScoutingDetailNotes() {
@@ -5934,11 +6090,40 @@
             </div>
             <div class="modal-body">
                 <div id="scoutingDetailMeta" style="font-size:0.9rem;color:var(--text-light);line-height:1.6;margin-bottom:18px;"></div>
+                <div id="scoutingDetailScoringSection" class="hidden" style="margin-bottom:18px;">
+                    <div style="font-size:0.82rem;font-weight:600;margin-bottom:8px;color:var(--text-dark);">Scoring</div>
+                    <div id="scoutingDetailScoringBody" style="max-height:240px;overflow-y:auto;padding-right:4px;"></div>
+                </div>
                 <label for="scoutingDetailNotes" style="display:block;font-size:0.82rem;font-weight:600;margin-bottom:8px;color:var(--text-dark);">Team notes</label>
                 <textarea id="scoutingDetailNotes" class="search-input" style="width:100%;min-height:220px;resize:vertical;font-family:inherit;" placeholder="Contacts, site status, follow-ups…"></textarea>
                 <div style="margin-top:16px;display:flex;flex-wrap:wrap;gap:10px;">
                     <button type="button" class="search-button" style="padding:8px 18px;font-size:0.88rem;" onclick="saveScoutingDetailNotes()">Save notes</button>
                     <button type="button" class="imaging-mini-btn" onclick="focusImagingLocationFromScoutingDetail()">Show on Discovery map</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scouting: score preview before moving to Scored -->
+    <div id="scoutingScoreModal" class="modal" style="display: none;">
+        <div class="modal-backdrop" onclick="closeScoutingScoreModal()"></div>
+        <div class="modal-content modal-large" role="dialog" aria-modal="true" aria-labelledby="scoutingScoreModalTitle">
+            <div class="modal-header">
+                <h2 class="modal-title" id="scoutingScoreModalTitle">Score site</h2>
+                <button type="button" class="modal-close" onclick="closeScoutingScoreModal()" aria-label="Close">×</button>
+            </div>
+            <div class="modal-body">
+                <div id="scoutingScoreModalSub" style="font-size:0.88rem;color:var(--text-light);margin-bottom:12px;"></div>
+                <div id="scoutingScoreTechRow" class="hidden" style="margin-bottom:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                    <label for="scoutingScoreTechSelect" style="font-size:0.82rem;font-weight:600;">Technology</label>
+                    <select id="scoutingScoreTechSelect" class="search-input" style="width:auto;min-width:140px;"></select>
+                    <button type="button" class="imaging-mini-btn" onclick="scoutingScoreRunOrRerun()">Run score</button>
+                </div>
+                <div id="scoutingScoreFactorTable" style="margin-bottom:16px;"></div>
+                <div style="display:flex;flex-wrap:wrap;gap:10px;">
+                    <button type="button" class="imaging-mini-btn" onclick="scoutingScoreRunOrRerun()">Re-run score</button>
+                    <button type="button" class="btn-secondary" onclick="closeScoutingScoreModal()">Cancel</button>
+                    <button type="button" class="search-button" style="padding:8px 18px;font-size:0.88rem;" onclick="scoutingScoreConfirmMove()">Move to Scored</button>
                 </div>
             </div>
         </div>
@@ -6765,12 +6950,15 @@
         document.addEventListener('keydown', function(e) {
             // ESC to close modals
             if (e.key === 'Escape') {
+                const scoutingScoreModal = document.getElementById('scoutingScoreModal');
                 const scoutingDetailModal = document.getElementById('scoutingDetailModal');
                 const feasibilityModal = document.getElementById('feasibilityModal');
                 const settingsModal = document.getElementById('settingsModal');
                 const endpointModal = document.getElementById('endpointModal');
 
-                if (scoutingDetailModal && scoutingDetailModal.style.display === 'flex') {
+                if (scoutingScoreModal && scoutingScoreModal.style.display === 'flex') {
+                    closeScoutingScoreModal();
+                } else if (scoutingDetailModal && scoutingDetailModal.style.display === 'flex') {
                     closeScoutingDetailPanel();
                 } else if (feasibilityModal && feasibilityModal.style.display === 'flex') {
                     closeFeasibilityPanel();

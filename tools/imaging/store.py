@@ -384,6 +384,31 @@ class ImagingDataStore:
         self.conn.commit()
         return self.get_pipeline_asset(asset_id)
 
+    def save_pipeline_scouting_score(self, asset_id: str, snapshot: dict) -> dict:
+        """Merge scoring snapshot into pipeline_assets.metadata_json under scouting_score."""
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT metadata_json FROM pipeline_assets WHERE id = ?",
+            (asset_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise ValueError(f"pipeline asset not found: {asset_id}")
+        meta = json.loads(row["metadata_json"] or "{}")
+        if not isinstance(meta, dict):
+            meta = {}
+        meta["scouting_score"] = dict(snapshot)
+        now_utc = datetime.now(timezone.utc).isoformat()
+        cur.execute(
+            "UPDATE pipeline_assets SET metadata_json = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(meta), now_utc, asset_id),
+        )
+        self.conn.commit()
+        out = self.get_pipeline_asset(asset_id)
+        if out is None:
+            raise ValueError(f"pipeline asset not found after update: {asset_id}")
+        return out
+
     def upsert_watchlist_site(self, site: dict) -> dict:
         """Insert or update a greenfield scouting watchlist site."""
         lat = float(site.get("lat"))
@@ -394,17 +419,21 @@ class ImagingDataStore:
 
         cur = self.conn.cursor()
         cur.execute(
-            "SELECT created_at FROM scouting_watchlist WHERE id = ?",
+            "SELECT created_at, scouting_stage FROM scouting_watchlist WHERE id = ?",
             (site_id,),
         )
         existing = cur.fetchone()
         created_at = existing["created_at"] if existing else now_utc
+        prev_stage = existing["scouting_stage"] if existing else None
+        stage_val = site.get("scouting_stage")
+        if stage_val is None:
+            stage_val = prev_stage if prev_stage is not None else "scored"
 
         cur.execute(
             """INSERT OR REPLACE INTO scouting_watchlist
                (id, name, technology, country, lat, lon, overall_score, score_label, notes,
-                factors_json, resource_json, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                factors_json, resource_json, scouting_stage, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 site_id,
                 site.get("name", ""),
@@ -417,6 +446,7 @@ class ImagingDataStore:
                 site.get("notes", ""),
                 json.dumps(site.get("factors") or []),
                 json.dumps(site.get("resource_summary") or {}),
+                stage_val,
                 created_at,
                 now_utc,
             ),
@@ -1005,7 +1035,12 @@ class ImagingDataStore:
         notes = ""
         if "notes" in row.keys() and row["notes"] is not None:
             notes = str(row["notes"])
-        return {
+        scouting = (
+            metadata.get("scouting_score")
+            if isinstance(metadata, dict)
+            else None
+        )
+        out = {
             "id": row["id"],
             "source_type": row["source_type"],
             "source_asset_id": row["source_asset_id"],
@@ -1025,6 +1060,12 @@ class ImagingDataStore:
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
+        if isinstance(scouting, dict) and scouting:
+            out["overall_score"] = scouting.get("overall_score")
+            out["score_label"] = scouting.get("score_label")
+            out["factors"] = scouting.get("factors") or []
+            out["resource_summary"] = scouting.get("resource_summary") or {}
+        return out
 
     @staticmethod
     def _row_to_watchlist_site(row: sqlite3.Row) -> dict:
