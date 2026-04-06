@@ -5091,7 +5091,7 @@
                     </div>
                     <div style="text-align:right;">
                         <div style="font-size:1.1rem;font-weight:700;color:#111827;">${site.overall_score ?? 'N/A'}</div>
-                        <div style="font-size:0.76rem;color:var(--text-light);text-transform:uppercase;">${escapeHtml(site.score_label || 'unknown')}</div>
+                        <div style="font-size:0.76rem;color:var(--text-light);text-transform:uppercase;">${escapeHtml(site.score_label === 'incomplete_desk' ? 'Incomplete desk' : (site.score_label || 'unknown'))}</div>
                     </div>
                 </div>
                 ${factors.map(factor => `
@@ -5099,7 +5099,7 @@
                         <span>${escapeHtml(factor.label || factor.key || '')}</span>
                         <span style="text-align:right;color:${factor.status === 'unknown' ? '#9CA3AF' : '#111827'};">
                             ${factor.status === 'unknown'
-                                ? 'unknown'
+                                ? 'Not evaluated'
                                 : `${factor.score}/${factor.max_score}${factor.value !== null && factor.value !== undefined ? ` · ${factor.value}${factor.unit ? ` ${factor.unit}` : ''}` : ''}`}
                         </span>
                     </div>
@@ -5198,7 +5198,7 @@
                         ${(item.factors || []).slice(0, 4).map(factor => `
                             <div class="scout-factor-row">
                                 <span>${escapeHtml(factor.label || factor.key || '')}</span>
-                                <span>${factor.status === 'unknown' ? 'unknown' : `${factor.score}/${factor.max_score}`}</span>
+                                <span>${factor.status === 'unknown' ? 'Not evaluated' : `${factor.score}/${factor.max_score}`}</span>
                             </div>
                         `).join('')}
                     </div>
@@ -5265,13 +5265,44 @@
             `).join('');
         }
 
+        function formatScoutingOverallSummary(site) {
+            if (!site || site.overall_score == null) return '';
+            const ds = site.diligence_screening || {};
+            const pct = site.overall_score;
+            const e = site.rubric_earned;
+            const p = site.rubric_possible;
+            const tierRaw = site.strength_tier || '';
+            const labelRaw = site.score_label || '';
+            const labelDisplay = labelRaw === 'incomplete_desk'
+                ? 'Incomplete desk screen'
+                : escapeHtml(labelRaw);
+            let html = '';
+            if (ds.framework_title) {
+                html += `<div style="font-size:0.78rem;font-weight:600;color:#374151;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.04em;">${escapeHtml(ds.framework_title)}</div>`;
+            }
+            if (ds.ux_banner) {
+                html += `<div role="status" style="font-size:0.84rem;line-height:1.45;color:#92400e;background:#fffbeb;border:1px solid #fbbf24;border-radius:6px;padding:10px 12px;margin-bottom:12px;">${escapeHtml(ds.ux_banner)}</div>`;
+            }
+            if (ds.dimensions_total != null && ds.dimensions_evaluated != null) {
+                html += `<div style="font-size:0.82rem;color:var(--text-light);margin-bottom:8px;">Screening dimensions with data in Zorora: <strong>${ds.dimensions_evaluated} / ${ds.dimensions_total}</strong></div>`;
+            }
+            const ptsLine = (e != null && p != null && Number(p) > 0)
+                ? `${pct}% — ${Number(e)} / ${Number(p)} rubric pts`
+                : `${pct}%`;
+            html += `<div style="font-weight:600;margin-bottom:12px;">${ptsLine} — ${labelDisplay}</div>`;
+            if (labelRaw === 'incomplete_desk' && tierRaw) {
+                html += `<div style="font-size:0.82rem;color:var(--text-light);margin-bottom:8px;">Numeric tier on the full rubric (sorting / rough signal only): <strong>${escapeHtml(tierRaw)}</strong></div>`;
+            }
+            return html;
+        }
+
         function formatScoutingFactorRowsHtml(factors) {
             const list = factors || [];
             if (!list.length) {
                 return '<div style="font-size:0.85rem;color:var(--text-light);">No factor breakdown.</div>';
             }
             return list.map(factor => {
-                const right = factor.status === 'unknown' ? 'unknown' : `${factor.score ?? '—'}/${factor.max_score ?? '—'}`;
+                const right = factor.status === 'unknown' ? 'Not evaluated' : `${factor.score ?? '—'}/${factor.max_score ?? '—'}`;
                 const detail = factor.detail ? `<div style="font-size:0.78rem;color:var(--text-light);margin-top:2px;">${escapeHtml(factor.detail)}</div>` : '';
                 const val = (factor.value != null && factor.unit) ? ` · ${escapeHtml(String(factor.value))} ${escapeHtml(factor.unit)}` : '';
                 return `<div class="scout-factor-row" style="margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid #eee;">
@@ -5324,9 +5355,7 @@
                     subEl.textContent = `${tech} · ${lat != null && lon != null ? `${Number(lat).toFixed(4)}, ${Number(lon).toFixed(4)}` : '—'}`;
                 }
                 if (tableEl) {
-                    const overall = data.site.overall_score != null
-                        ? `<div style="font-weight:600;margin-bottom:12px;">Overall: ${data.site.overall_score} / 100 — ${escapeHtml(data.site.score_label || '')}</div>`
-                        : '';
+                    const overall = formatScoutingOverallSummary(data.site);
                     tableEl.innerHTML = overall + formatScoutingFactorRowsHtml(data.site.factors);
                 }
             } catch (e) {
@@ -5396,14 +5425,21 @@
             }
         }
 
+        function humanizeScoutScoreLabel(raw) {
+            if (!raw) return '';
+            if (raw === 'incomplete_desk') return 'Incomplete desk';
+            return raw;
+        }
+
         function renderScoutingCard(item, type, stage) {
             const name = escapeHtml(item.asset_name || item.name || 'Unnamed');
             const country = escapeHtml(item.country || '');
+            const lbl = escapeHtml(humanizeScoutScoreLabel(item.score_label));
             let metric = type === 'greenfield'
-                ? `Score: ${item.overall_score ?? 'N/A'} (${escapeHtml(item.score_label || '')})`
+                ? `Score: ${item.overall_score ?? 'N/A'} (${lbl})`
                 : `${item.capacity_mw ? `${Number(item.capacity_mw).toLocaleString()} MW` : 'capacity unknown'}`;
             if (type !== 'greenfield' && item.overall_score != null && item.overall_score !== '') {
-                metric = `Score: ${item.overall_score} (${escapeHtml(item.score_label || '')}) · ${item.capacity_mw ? `${Number(item.capacity_mw).toLocaleString()} MW` : 'capacity unknown'}`;
+                metric = `Score: ${item.overall_score} (${lbl}) · ${item.capacity_mw ? `${Number(item.capacity_mw).toLocaleString()} MW` : 'capacity unknown'}`;
             }
             const id = item.id;
             const idAttr = escapeAttr(JSON.stringify(id));
@@ -5597,7 +5633,7 @@
                     lines.push(`Technology: ${it.technology || '—'}`);
                     lines.push(`Country: ${it.country || '—'}`);
                     lines.push(`Location: ${it.lat}, ${it.lon}`);
-                    lines.push(`Scout score: ${it.overall_score ?? '—'} (${it.score_label || '—'})`);
+                    lines.push(`Scout score: ${it.overall_score ?? '—'} (${humanizeScoutScoreLabel(it.score_label) || '—'})`);
                 } else {
                     lines.push(`Technology: ${it.technology || '—'}`);
                     lines.push(`Capacity: ${it.capacity_mw != null ? it.capacity_mw + ' MW' : '—'}`);
@@ -5607,7 +5643,7 @@
                     lines.push(`Location: ${it.lat}, ${it.lon}`);
                     if (it.source_type) lines.push(`Record type: ${it.source_type}`);
                     if (it.overall_score != null && it.overall_score !== '') {
-                        lines.push(`Scout score: ${it.overall_score} (${it.score_label || '—'})`);
+                        lines.push(`Scout score: ${it.overall_score} (${humanizeScoutScoreLabel(it.score_label) || '—'})`);
                     }
                 }
                 lines.push(`Pipeline stage: ${it.scouting_stage || '—'}`);
@@ -5618,9 +5654,7 @@
                     const fac = it.factors;
                     if (fac && fac.length) {
                         scoreSec.classList.remove('hidden');
-                        const hdr = it.overall_score != null
-                            ? `<div style="font-weight:600;margin-bottom:8px;">Overall: ${it.overall_score} / 100 — ${escapeHtml(it.score_label || '')}</div>`
-                            : '';
+                        const hdr = formatScoutingOverallSummary(it);
                         scoreBody.innerHTML = hdr + formatScoutingFactorRowsHtml(fac);
                     } else {
                         scoreSec.classList.add('hidden');

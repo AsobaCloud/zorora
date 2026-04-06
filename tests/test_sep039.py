@@ -34,6 +34,47 @@ class TestGreenfieldScoring:
         assert factors["resource_quality"]["status"] == "known"
         assert factors["policy_signal"]["status"] == "unknown"
         assert factors["brownfield_synergy"]["status"] == "unknown"
+        assert evaluation["score_label"] == "incomplete_desk"
+        assert evaluation["strength_tier"] is not None
+
+    def test_overall_uses_full_rubric_unknown_counts_as_zero(self):
+        """Overall % = earned / sum(max_score) for all factors; unknown => 0 earned."""
+        from tools.imaging.site_score import score_site
+
+        evaluation = score_site(
+            lat=-25.7,
+            lon=28.2,
+            technology="solar",
+            resource_summary={
+                "solar": {
+                    "annual": 6.5,
+                    "unit": "kWh/m2/day",
+                    "source": "NASA POWER",
+                },
+            },
+            generation_assets=[
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [28.2, -25.7]},
+                    "properties": {"site_id": "x"},
+                }
+            ],
+            pipeline_assets=[
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [28.2, -25.7]},
+                    "properties": {},
+                }
+            ],
+        )
+        by_key = {f["key"]: f for f in evaluation["factors"]}
+        assert by_key["policy_signal"]["status"] == "unknown"
+        assert evaluation["rubric_possible"] == 100.0
+        assert evaluation["rubric_earned"] == 90.0
+        assert evaluation["overall_score"] == 90.0
+        assert evaluation["score_label"] == "incomplete_desk"
+        assert evaluation["strength_tier"] == "strong"
+        assert evaluation["diligence_screening"]["is_complete"] is False
 
 
 class TestGreenfieldWatchlistStore:

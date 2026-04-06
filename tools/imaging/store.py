@@ -161,6 +161,17 @@ class ImagingDataStore:
             cur.execute("ALTER TABLE pipeline_assets ADD COLUMN notes TEXT DEFAULT ''")
         except sqlite3.OperationalError:
             pass
+        for col in ("rubric_earned", "rubric_possible"):
+            try:
+                cur.execute(f"ALTER TABLE scouting_watchlist ADD COLUMN {col} REAL")
+            except sqlite3.OperationalError:
+                pass
+        try:
+            cur.execute(
+                "ALTER TABLE scouting_watchlist ADD COLUMN screening_meta_json TEXT"
+            )
+        except sqlite3.OperationalError:
+            pass
         # SEP-045: feasibility results table
         cur.execute("""
             CREATE TABLE IF NOT EXISTS feasibility_results (
@@ -419,7 +430,9 @@ class ImagingDataStore:
 
         cur = self.conn.cursor()
         cur.execute(
-            "SELECT created_at, scouting_stage FROM scouting_watchlist WHERE id = ?",
+            "SELECT created_at, scouting_stage, rubric_earned, rubric_possible, "
+            "screening_meta_json "
+            "FROM scouting_watchlist WHERE id = ?",
             (site_id,),
         )
         existing = cur.fetchone()
@@ -428,12 +441,34 @@ class ImagingDataStore:
         stage_val = site.get("scouting_stage")
         if stage_val is None:
             stage_val = prev_stage if prev_stage is not None else "scored"
+        earned_val = site.get("rubric_earned")
+        poss_val = site.get("rubric_possible")
+        if earned_val is None and existing is not None:
+            earned_val = existing["rubric_earned"]
+        if poss_val is None and existing is not None:
+            poss_val = existing["rubric_possible"]
+
+        screening_meta = None
+        if site.get("diligence_screening") is not None or site.get("strength_tier"):
+            screening_meta = json.dumps(
+                {
+                    "diligence_screening": site.get("diligence_screening"),
+                    "strength_tier": site.get("strength_tier"),
+                },
+                default=str,
+            )
+        if screening_meta is None and existing is not None:
+            try:
+                screening_meta = existing["screening_meta_json"]
+            except (KeyError, IndexError):
+                screening_meta = None
 
         cur.execute(
             """INSERT OR REPLACE INTO scouting_watchlist
                (id, name, technology, country, lat, lon, overall_score, score_label, notes,
-                factors_json, resource_json, scouting_stage, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                factors_json, resource_json, scouting_stage, rubric_earned, rubric_possible,
+                screening_meta_json, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 site_id,
                 site.get("name", ""),
@@ -447,6 +482,9 @@ class ImagingDataStore:
                 json.dumps(site.get("factors") or []),
                 json.dumps(site.get("resource_summary") or {}),
                 stage_val,
+                earned_val,
+                poss_val,
+                screening_meta,
                 created_at,
                 now_utc,
             ),
@@ -1065,6 +1103,14 @@ class ImagingDataStore:
             out["score_label"] = scouting.get("score_label")
             out["factors"] = scouting.get("factors") or []
             out["resource_summary"] = scouting.get("resource_summary") or {}
+            if "rubric_earned" in scouting:
+                out["rubric_earned"] = scouting.get("rubric_earned")
+            if "rubric_possible" in scouting:
+                out["rubric_possible"] = scouting.get("rubric_possible")
+            if scouting.get("strength_tier") is not None:
+                out["strength_tier"] = scouting.get("strength_tier")
+            if scouting.get("diligence_screening") is not None:
+                out["diligence_screening"] = scouting.get("diligence_screening")
         return out
 
     @staticmethod
@@ -1072,7 +1118,7 @@ class ImagingDataStore:
         notes = ""
         if "notes" in row.keys() and row["notes"] is not None:
             notes = str(row["notes"])
-        return {
+        out = {
             "id": row["id"],
             "name": row["name"],
             "technology": row["technology"],
@@ -1088,3 +1134,18 @@ class ImagingDataStore:
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
+        if "rubric_earned" in row.keys() and row["rubric_earned"] is not None:
+            out["rubric_earned"] = row["rubric_earned"]
+        if "rubric_possible" in row.keys() and row["rubric_possible"] is not None:
+            out["rubric_possible"] = row["rubric_possible"]
+        if "screening_meta_json" in row.keys() and row["screening_meta_json"]:
+            try:
+                meta = json.loads(row["screening_meta_json"])
+                if isinstance(meta, dict):
+                    if meta.get("diligence_screening") is not None:
+                        out["diligence_screening"] = meta["diligence_screening"]
+                    if meta.get("strength_tier") is not None:
+                        out["strength_tier"] = meta["strength_tier"]
+            except json.JSONDecodeError:
+                pass
+        return out

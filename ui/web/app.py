@@ -1296,10 +1296,14 @@ def _scoring_snapshot_from_site(site: dict) -> dict:
     for key in (
         "overall_score",
         "score_label",
+        "strength_tier",
         "factors",
         "resource_summary",
         "known_factor_count",
         "unknown_factor_count",
+        "rubric_earned",
+        "rubric_possible",
+        "diligence_screening",
     ):
         if key in site:
             out[key] = site[key]

@@ -1,4 +1,21 @@
-"""Greenfield site scoring utilities."""
+"""Greenfield and BESS site desk-screening scores.
+
+This module implements a *prospecting / desk-screening* layer — not feasibility,
+not IC-grade diligence, not a single investment label.
+
+Public references for the dimension structure (resource, grid, siting, permitting
+context) follow how major RE siting guides frame **early-stage** work: desk
+review of resource potential, transmission / interconnect proximity, land and
+site constraints, and regulatory / permitting context before full feasibility
+(e.g. NREL renewable siting & procurement analysis programmes, DOE large-scale
+solar siting resources, RE Data Explorer–style static geospatial screening).
+
+UX rule encoded here: **do not emit a final “strong/moderate/speculative”
+product label as *the* score when any rubric dimension is still unevaluated**
+— that reads like a completed grade. Instead ``score_label`` becomes
+``incomplete_desk`` and ``strength_tier`` holds the numeric tier; the UI can
+show completeness, caveats, and (optionally) a *subset* read for transparency.
+"""
 
 from __future__ import annotations
 
@@ -42,6 +59,128 @@ def _factor(
     }
 
 
+def _aggregate_rubric_from_factors(factors: list[dict]) -> dict:
+    """Full rubric: earned / sum(max). Unknown dimensions = 0 earned, full max counts."""
+    if not factors:
+        return {
+            "overall_score": None,
+            "strength_tier": None,
+            "known_factor_count": 0,
+            "unknown_factor_count": 0,
+            "rubric_earned": 0.0,
+            "rubric_possible": 0.0,
+        }
+    max_total = sum(float(f.get("max_score") or 0) for f in factors)
+    earned = sum(
+        float(f["score"])
+        for f in factors
+        if f.get("status") == "known" and f.get("score") is not None
+    )
+    known_factor_count = sum(
+        1
+        for f in factors
+        if f.get("status") == "known" and f.get("score") is not None
+    )
+    unknown_factor_count = sum(1 for f in factors if f.get("status") == "unknown")
+
+    overall_score = None
+    strength_tier = None
+    if max_total > 0:
+        overall_score = round((earned / max_total) * 100, 1)
+        if overall_score >= 75:
+            strength_tier = "strong"
+        elif overall_score >= 50:
+            strength_tier = "moderate"
+        else:
+            strength_tier = "speculative"
+
+    return {
+        "overall_score": overall_score,
+        "strength_tier": strength_tier,
+        "known_factor_count": known_factor_count,
+        "unknown_factor_count": unknown_factor_count,
+        "rubric_earned": round(earned, 2),
+        "rubric_possible": max_total,
+    }
+
+
+def _diligence_screening_ux(
+    factors: list[dict],
+    agg: dict,
+    *,
+    framework_key: str,
+    framework_title: str,
+) -> dict:
+    """Build screening metadata + API ``score_label`` (incomplete vs final tier)."""
+    pending = [f for f in factors if f.get("status") == "unknown"]
+    total = len(factors)
+    evaluated_n = total - len(pending)
+    is_complete = not pending
+
+    evaluated_factors = [
+        f
+        for f in factors
+        if f.get("status") == "known" and f.get("score") is not None
+    ]
+    sub_max = sum(float(f["max_score"]) for f in evaluated_factors)
+    sub_earned = sum(float(f["score"]) for f in evaluated_factors)
+    evaluated_only_pct = (
+        round((sub_earned / sub_max) * 100, 1) if sub_max > 0 else None
+    )
+    evaluated_only_tier = None
+    if evaluated_only_pct is not None:
+        if evaluated_only_pct >= 75:
+            evaluated_only_tier = "strong"
+        elif evaluated_only_pct >= 50:
+            evaluated_only_tier = "moderate"
+        else:
+            evaluated_only_tier = "speculative"
+
+    tier = agg.get("strength_tier")
+    if is_complete:
+        score_label = tier or "unknown"
+        ux_banner = (
+            "All dimensions in this desk rubric are evaluated. "
+            "Signal tier still reflects GIS/market caches only — not feasibility."
+        )
+    else:
+        score_label = "incomplete_desk"
+        names = [f.get("label") or f.get("key") or "" for f in pending]
+        ux_banner = (
+            f"{len(pending)} of {total} screening dimension(s) are not evaluated in this release "
+            f"({', '.join(names)}). "
+            f"The percentage is points on the full rubric with unevaluated rows at 0 — "
+            f"not a completed diligence grade. "
+            f"If those rows were excluded, the evaluated-only signal would be "
+            f"{evaluated_only_pct}% ({evaluated_only_tier})."
+        )
+
+    return {
+        "score_label": score_label,
+        "diligence_screening": {
+            "framework_key": framework_key,
+            "framework_title": framework_title,
+            "stage": "prospecting_desk",
+            "dimensions_evaluated": evaluated_n,
+            "dimensions_total": total,
+            "is_complete": is_complete,
+            "pending": [
+                {"key": f["key"], "label": f.get("label"), "detail": f.get("detail", "")}
+                for f in pending
+            ],
+            "caveat": (
+                "Aligns with early-stage renewable development: desk review of resource, "
+                "grid/transmission context, siting / co-location, and permitting before "
+                "full feasibility (industry siting guides; NREL/DOE screening tools)."
+            ),
+            "evaluated_only_pct": evaluated_only_pct,
+            "evaluated_only_tier": evaluated_only_tier,
+            "ux_banner": ux_banner,
+            "strength_tier": tier,
+        },
+    }
+
+
 def _nearest_distance_km(lat: float, lon: float, candidates: list[dict]) -> float | None:
     distances = []
     for candidate in candidates:
@@ -74,13 +213,13 @@ def _score_resource(technology: str, resource_summary: dict) -> dict:
                 score = 14
             return _factor(
                 "resource_quality",
-                "Resource quality",
+                "Solar resource (desk screen)",
                 40,
                 status="known",
                 score=score,
                 value=annual,
                 unit=solar.get("unit"),
-                detail="Annual solar resource from climatology",
+                detail="Long-avg irradiance / climatology — not on-site resource campaign",
                 source=solar.get("source", ""),
             )
     if technology == "wind":
@@ -97,21 +236,21 @@ def _score_resource(technology: str, resource_summary: dict) -> dict:
                 score = 10
             return _factor(
                 "resource_quality",
-                "Resource quality",
+                "Wind resource (desk screen)",
                 40,
                 status="known",
                 score=score,
                 value=annual,
                 unit=wind.get("unit"),
-                detail="Annual wind resource from climatology",
+                detail="Long-avg wind resource — not met mast campaign",
                 source=wind.get("source", ""),
             )
     return _factor(
         "resource_quality",
-        "Resource quality",
+        "Renewable resource (desk screen)",
         40,
         status="unknown",
-        detail="Resource data unavailable for the selected technology",
+        detail="No resource series for this technology in the screening payload",
     )
 
 
@@ -125,7 +264,7 @@ def score_site(
     name: str | None = None,
     country: str | None = None,
 ) -> dict:
-    """Score a greenfield site using available resource and nearby infrastructure signals."""
+    """Desk-screen a greenfield site; see module docstring for diligence framing."""
     technology = str(technology or "").strip().lower()
     factors = [_score_resource(technology, resource_summary or {})]
 
@@ -134,10 +273,10 @@ def score_site(
         factors.append(
             _factor(
                 "grid_access",
-                "Grid access",
+                "Grid & interconnect proximity (desk)",
                 30,
                 status="unknown",
-                detail="No generation asset distance baseline available",
+                detail="No generation layer to infer transmission / pooling proximity",
             )
         )
     else:
@@ -152,13 +291,13 @@ def score_site(
         factors.append(
             _factor(
                 "grid_access",
-                "Grid access",
+                "Grid & interconnect proximity (desk)",
                 30,
                 status="known",
                 score=score,
                 value=round(nearest_generation, 1),
                 unit="km",
-                detail="Nearest known generation asset distance",
+                detail="Distance to nearest known operating asset (proxy for grid context)",
                 source="Imaging generation asset cache",
             )
         )
@@ -168,10 +307,10 @@ def score_site(
         factors.append(
             _factor(
                 "brownfield_synergy",
-                "Brownfield synergy",
+                "Siting & brownfield / co-location (desk)",
                 20,
                 status="unknown",
-                detail="No brownfield pipeline assets tracked nearby yet",
+                detail="No pipeline / candidate layer in this build to score co-location",
             )
         )
     else:
@@ -184,13 +323,13 @@ def score_site(
         factors.append(
             _factor(
                 "brownfield_synergy",
-                "Brownfield synergy",
+                "Siting & brownfield / co-location (desk)",
                 20,
                 status="known",
                 score=score,
                 value=round(nearest_pipeline, 1),
                 unit="km",
-                detail="Nearest brownfield candidate distance",
+                detail="Distance to nearest brownfield / pipeline candidate",
                 source="Brownfield pipeline",
             )
         )
@@ -198,27 +337,20 @@ def score_site(
     factors.append(
         _factor(
             "policy_signal",
-            "Policy signal",
+            "Permitting & regulatory context (desk)",
             10,
             status="unknown",
-            detail="No country policy model is configured for this scouting surface yet",
+            detail='Not evaluated in Zorora yet — not a score of "good" or "bad" policy',
         )
     )
 
-    known_factors = [factor for factor in factors if factor["status"] == "known" and factor["score"] is not None]
-    overall_score = None
-    score_label = "unknown"
-    if known_factors:
-        max_known = sum(float(factor["max_score"]) for factor in known_factors)
-        total_known = sum(float(factor["score"]) for factor in known_factors)
-        overall_score = round((total_known / max_known) * 100, 1) if max_known else None
-        if overall_score is not None:
-            if overall_score >= 75:
-                score_label = "strong"
-            elif overall_score >= 50:
-                score_label = "moderate"
-            else:
-                score_label = "speculative"
+    agg = _aggregate_rubric_from_factors(factors)
+    ux = _diligence_screening_ux(
+        factors,
+        agg,
+        framework_key="greenfield_pv_wind",
+        framework_title="Solar / wind prospecting desk screen",
+    )
 
     site_name = name or f"{technology.title() or 'Candidate'} site @ {lat:.3f}, {lon:.3f}"
     return {
@@ -227,12 +359,16 @@ def score_site(
         "lat": lat,
         "lon": lon,
         "country": country or "",
-        "overall_score": overall_score,
-        "score_label": score_label,
+        "overall_score": agg["overall_score"],
+        "score_label": ux["score_label"],
+        "strength_tier": agg["strength_tier"],
         "factors": factors,
         "resource_summary": resource_summary or {},
-        "known_factor_count": len(known_factors),
-        "unknown_factor_count": len([factor for factor in factors if factor["status"] == "unknown"]),
+        "known_factor_count": agg["known_factor_count"],
+        "unknown_factor_count": agg["unknown_factor_count"],
+        "rubric_earned": agg["rubric_earned"],
+        "rubric_possible": agg["rubric_possible"],
+        "diligence_screening": ux["diligence_screening"],
     }
 
 
@@ -284,10 +420,9 @@ def score_bess_site(
     name: str | None = None,
     country: str | None = None,
 ) -> dict:
-    """Score a site for BESS viability using SAPP DAM prices, Eskom tariffs,
-    and GCCA grid infrastructure data.
+    """BESS prospecting desk screen using SAPP DAM, Eskom tariffs, GCCA zones.
 
-    Returns the same structure as ``score_site()``."""
+    Same API shape as ``score_site()`` (factors, full rubric, ``diligence_screening``)."""
     import logging
 
     logger = logging.getLogger(__name__)
@@ -329,14 +464,14 @@ def score_bess_site(
         else:
             arb_score = 4
         factors.append(_factor(
-            "arbitrage_spread", "DAM arbitrage spread", 25, "known",
+            "arbitrage_spread", "Revenue spread — day-ahead market (desk)", 25, "known",
             score=arb_score, value=round(spread, 1), unit="USD/MWh",
             detail=f"SAPP DAM peak-offpeak spread for {dam_node.upper()}",
             source="SAPP Day-Ahead Market data",
         ))
     else:
         factors.append(_factor(
-            "arbitrage_spread", "DAM arbitrage spread", 25, "unknown",
+            "arbitrage_spread", "Revenue spread — day-ahead market (desk)", 25, "unknown",
             detail="No SAPP DAM price data available",
         ))
 
@@ -356,27 +491,27 @@ def score_bess_site(
             else:
                 tou_score = 4
             factors.append(_factor(
-                "tou_spread", "Eskom TOU spread", 25, "known",
+                "tou_spread", "Retail tariff shape / TOU (desk)", 25, "known",
                 score=tou_score, value=round(tou_val, 1), unit="c/kWh",
                 detail=f"Megaflex HD peak ({hd_peak:.0f}) minus off-peak ({hd_offpeak:.0f})",
                 source="Eskom tariff schedule 2025/26",
             ))
         else:
             factors.append(_factor(
-                "tou_spread", "Eskom TOU spread", 25, "unknown",
+                "tou_spread", "Retail tariff shape / TOU (desk)", 25, "unknown",
                 detail="Could not retrieve Eskom Megaflex tariff rates",
             ))
     except Exception as exc:
         logger.warning("TOU spread scoring failed: %s", exc)
         factors.append(_factor(
-            "tou_spread", "Eskom TOU spread", 25, "unknown",
+            "tou_spread", "Retail tariff shape / TOU (desk)", 25, "unknown",
             detail=f"Eskom tariff data unavailable: {exc}",
         ))
 
     # --- Factor 3: Grid Proximity (max 20) ---
     if inside_zone:
         factors.append(_factor(
-            "grid_proximity", "Grid proximity", 20, "known",
+            "grid_proximity", "Transmission / MTS zone (desk)", 20, "known",
             score=20, value=0.0, unit="km",
             detail=f"Inside {sub_name} MTS zone",
             source="GCCA 2025 GeoPackage",
@@ -389,14 +524,14 @@ def score_bess_site(
         else:
             gp_score = 3
         factors.append(_factor(
-            "grid_proximity", "Grid proximity", 20, "known",
+            "grid_proximity", "Transmission / MTS zone (desk)", 20, "known",
             score=gp_score, value=round(zone_dist, 1), unit="km",
             detail=f"Nearest MTS zone: {sub_name} ({zone_dist:.0f} km)",
             source="GCCA 2025 GeoPackage",
         ))
     else:
         factors.append(_factor(
-            "grid_proximity", "Grid proximity", 20, "unknown",
+            "grid_proximity", "Transmission / MTS zone (desk)", 20, "unknown",
             detail="No GCCA MTS zone data available",
         ))
 
@@ -415,14 +550,14 @@ def score_bess_site(
         else:
             re_score = 2
         factors.append(_factor(
-            "re_penetration", "RE penetration", 15, "known",
+            "re_penetration", "Zone renewable penetration (desk)", 15, "known",
             score=re_score, value=re_mw, unit="MW",
             detail=f"RE capacity in {sub_name or 'nearest'} zone",
             source="GEM Africa Energy Tracker + GCCA",
         ))
     except Exception:
         factors.append(_factor(
-            "re_penetration", "RE penetration", 15, "known",
+            "re_penetration", "Zone renewable penetration (desk)", 15, "known",
             score=2, value=0, unit="MW",
             detail="No RE asset data available for zone",
             source="GEM Africa Energy Tracker",
@@ -431,14 +566,14 @@ def score_bess_site(
     # --- Factor 5: Demand Level (max 10) ---
     if dam_node == "rsan":
         factors.append(_factor(
-            "demand_level", "Demand level", 10, "known",
+            "demand_level", "Demand & load context (desk)", 10, "known",
             score=10, value=None, unit=None,
             detail="RSAN (northern grid) — high industrial demand (Gauteng, Mpumalanga)",
             source="Eskom supply area mapping",
         ))
     else:
         factors.append(_factor(
-            "demand_level", "Demand level", 10, "known",
+            "demand_level", "Demand & load context (desk)", 10, "known",
             score=6, value=None, unit=None,
             detail="RSAS (southern grid) — lower demand density",
             source="Eskom supply area mapping",
@@ -456,37 +591,29 @@ def score_bess_site(
             ocgt_pct = (ocgt_hours / total_hours * 100) if total_hours else 0
             pk_score = 5 if ocgt_pct < 10 else 3 if ocgt_pct < 30 else 2
             factors.append(_factor(
-                "peaker_competition", "Peaker competition", 5, "known",
+                "peaker_competition", "Flexibility & peaker context (desk)", 5, "known",
                 score=pk_score, value=round(ocgt_pct, 1), unit="%",
                 detail=f"OCGT dispatched {ocgt_hours}/{total_hours} hours ({ocgt_pct:.0f}%)",
                 source="Eskom Station Build Up data",
             ))
         else:
             factors.append(_factor(
-                "peaker_competition", "Peaker competition", 5, "unknown",
+                "peaker_competition", "Flexibility & peaker context (desk)", 5, "unknown",
                 detail="No OCGT dispatch data available",
             ))
     except Exception:
         factors.append(_factor(
-            "peaker_competition", "Peaker competition", 5, "unknown",
+            "peaker_competition", "Flexibility & peaker context (desk)", 5, "unknown",
             detail="Eskom station build-up data unavailable",
         ))
 
-    # --- Compute overall score ---
-    known_factors = [f for f in factors if f["status"] == "known" and f["score"] is not None]
-    overall_score = None
-    score_label = "unknown"
-    if known_factors:
-        max_known = sum(float(f["max_score"]) for f in known_factors)
-        total_known = sum(float(f["score"]) for f in known_factors)
-        overall_score = round((total_known / max_known) * 100, 1) if max_known else None
-        if overall_score is not None:
-            if overall_score >= 75:
-                score_label = "strong"
-            elif overall_score >= 50:
-                score_label = "moderate"
-            else:
-                score_label = "speculative"
+    agg = _aggregate_rubric_from_factors(factors)
+    ux = _diligence_screening_ux(
+        factors,
+        agg,
+        framework_key="bess_southern_africa_desk",
+        framework_title="BESS prospecting desk screen (Southern Africa)",
+    )
 
     site_name = name or f"BESS site @ {lat:.3f}, {lon:.3f}"
     return {
@@ -495,9 +622,13 @@ def score_bess_site(
         "lat": lat,
         "lon": lon,
         "country": country or "",
-        "overall_score": overall_score,
-        "score_label": score_label,
+        "overall_score": agg["overall_score"],
+        "score_label": ux["score_label"],
+        "strength_tier": agg["strength_tier"],
         "factors": factors,
-        "known_factor_count": len(known_factors),
-        "unknown_factor_count": len([f for f in factors if f["status"] == "unknown"]),
+        "known_factor_count": agg["known_factor_count"],
+        "unknown_factor_count": agg["unknown_factor_count"],
+        "rubric_earned": agg["rubric_earned"],
+        "rubric_possible": agg["rubric_possible"],
+        "diligence_screening": ux["diligence_screening"],
     }
