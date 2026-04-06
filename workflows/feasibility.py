@@ -16,6 +16,12 @@ logger = logging.getLogger(__name__)
 
 FEASIBILITY_TABS = {"production", "trading", "grid", "regulatory", "financial"}
 
+
+def _evidence_row(label: str, value: str) -> dict:
+    """Single row for the UI \"Inputs this run\" table (deterministic facts only)."""
+    return {"label": label, "value": value}
+
+
 # ---------------------------------------------------------------------------
 # Public dispatcher
 # ---------------------------------------------------------------------------
@@ -31,7 +37,7 @@ def run_feasibility_tab(
     """Dispatch to per-tab analysis function.
 
     Returns dict with: conclusion, confidence, key_finding, risks, gaps, sources,
-    and optionally chart_b64.
+    evidence_rows (deterministic inputs for the UI), and optionally chart_b64.
 
     ``prior_results`` is used only for the ``financial`` tab (conclusions from other
     tabs). Entries with tab ``financial`` are ignored to avoid stale self-reference.
@@ -249,6 +255,38 @@ def _analyze_production(item_data: dict, **kwargs) -> dict:
         logger.warning("Resource data unavailable: %s", exc)
         context_parts.append("Note: NASA POWER resource data unavailable.")
 
+    evidence_rows = [
+        _evidence_row(
+            "Site",
+            f"{item_data.get('asset_name', 'Unknown')} · {technology} · {capacity_mw} MW · {country or '—'}",
+        ),
+        _evidence_row("Coordinates", f"{float(lat):.4f}, {float(lon):.4f}"),
+    ]
+    sol = resource.get("solar") or {}
+    wnd = resource.get("wind") or {}
+    if sol.get("annual") is not None:
+        evidence_rows.append(
+            _evidence_row(
+                "Solar resource (annual)",
+                f"{float(sol['annual']):.2f} {sol.get('unit', 'kWh/m2/day')}",
+            )
+        )
+    else:
+        evidence_rows.append(_evidence_row("Solar resource (annual)", "— (no series)"))
+    if wnd.get("annual") is not None:
+        evidence_rows.append(
+            _evidence_row(
+                "Wind @ 50 m (annual)",
+                f"{float(wnd['annual']):.2f} {wnd.get('unit', 'm/s')}",
+            )
+        )
+    else:
+        evidence_rows.append(_evidence_row("Wind @ 50 m (annual)", "— (no series)"))
+    if resource.get("elevation_m") is not None:
+        evidence_rows.append(
+            _evidence_row("Elevation", f"{resource['elevation_m']} m (NASA POWER)")
+        )
+
     # Gather comparable generation assets from store
     try:
         from tools.imaging.store import ImagingDataStore
@@ -269,8 +307,29 @@ def _analyze_production(item_data: dict, **kwargs) -> dict:
                     f"Comparable {technology} assets in {country}: "
                     f"{len(assets)} found, avg capacity {avg_cap:.0f} MW"
                 )
+                evidence_rows.append(
+                    _evidence_row(
+                        "Comparable plants (GEM)",
+                        f"{len(assets)} in {country or '—'}; avg capacity {avg_cap:.0f} MW",
+                    )
+                )
+            else:
+                evidence_rows.append(
+                    _evidence_row(
+                        "Comparable plants (GEM)",
+                        f"{len(assets)} rows; no capacity values",
+                    )
+                )
+        else:
+            evidence_rows.append(
+                _evidence_row(
+                    "Comparable plants (GEM)",
+                    "None for this technology + country in local store",
+                )
+            )
     except Exception as exc:
         logger.warning("Comparable assets unavailable: %s", exc)
+        evidence_rows.append(_evidence_row("Comparable plants (GEM)", "— (store error)"))
 
     system_prompt = (
         "You are an energy project analyst specialising in renewable resource assessment. "
@@ -293,6 +352,7 @@ def _analyze_production(item_data: dict, **kwargs) -> dict:
         "gaps": parsed["gaps"],
         "sources": sources,
         "chart_b64": None,
+        "evidence_rows": evidence_rows,
     }
 
 
@@ -311,6 +371,9 @@ def _analyze_trading(item_data: dict, **kwargs) -> dict:
     ]
     sources = ["SAPP DAM Prices", "Eskom TOU Tariffs"]
     chart_b64 = None
+    dam_n_obs = 0
+    overall_avg_profile: Optional[float] = None
+    peak_hour_profile: Optional[int] = None
 
     # Determine DAM node from country/lat
     dam_node = "rsan"
@@ -333,6 +396,7 @@ def _analyze_trading(item_data: dict, **kwargs) -> dict:
             dam_node = first_node
 
         if usd_prices:
+            dam_n_obs = len(usd_prices)
             # Compute 24-hour average price profile
             hour_buckets: Dict[int, List[float]] = {h: [] for h in range(24)}
             for dt_str, price in usd_prices:
@@ -348,6 +412,8 @@ def _analyze_trading(item_data: dict, **kwargs) -> dict:
             ]
             overall_avg = sum(hourly_avg) / len(hourly_avg) if hourly_avg else 0
             peak_hour = hourly_avg.index(max(hourly_avg)) if hourly_avg else 0
+            overall_avg_profile = overall_avg
+            peak_hour_profile = peak_hour
             context_parts.append(
                 f"SAPP DAM node: {dam_node.upper()}, "
                 f"{len(usd_prices)} hourly observations, "
@@ -358,14 +424,50 @@ def _analyze_trading(item_data: dict, **kwargs) -> dict:
         logger.warning("SAPP DAM data unavailable: %s", exc)
         context_parts.append("Note: SAPP DAM price data unavailable.")
 
+    evidence_rows = [
+        _evidence_row(
+            "Site",
+            f"{item_data.get('asset_name', 'Unknown')} · {technology} · {capacity_mw} MW",
+        ),
+        _evidence_row("Country / coords", f"{country or '—'} · {lat:.4f}, {lon:.4f}"),
+    ]
+    if dam_n_obs and overall_avg_profile is not None and peak_hour_profile is not None:
+        evidence_rows.extend(
+            [
+                _evidence_row("DAM node (SAPP)", dam_node.upper()),
+                _evidence_row("DAM hourly price points", str(dam_n_obs)),
+                _evidence_row(
+                    "DAM avg price (24h profile)", f"${overall_avg_profile:.2f}/MWh"
+                ),
+                _evidence_row(
+                    "DAM peak hour (avg profile)", f"{peak_hour_profile:02d}:00"
+                ),
+            ]
+        )
+    else:
+        evidence_rows.append(
+            _evidence_row("SAPP DAM prices", "— (unavailable or no observations)")
+        )
+
     # Load Eskom TOU tariffs
+    eskom_entries: Optional[int] = None
     try:
         from tools.regulatory.eskom_tariff_client import get_tariff_rates
         rates = get_tariff_rates()
         if rates:
+            eskom_entries = len(rates)
             context_parts.append(f"Eskom TOU tariff schedules available: {len(rates)} entries")
     except Exception as exc:
         logger.warning("Eskom tariff data unavailable: %s", exc)
+
+    if eskom_entries is not None:
+        evidence_rows.append(
+            _evidence_row("Eskom TOU tariff schedules", f"{eskom_entries} entries")
+        )
+    else:
+        evidence_rows.append(
+            _evidence_row("Eskom TOU tariff schedules", "— (unavailable or empty)")
+        )
 
     # Generate 24h price chart
     if hourly_avg:
@@ -413,6 +515,7 @@ def _analyze_trading(item_data: dict, **kwargs) -> dict:
         "gaps": parsed["gaps"],
         "sources": sources,
         "chart_b64": chart_b64,
+        "evidence_rows": evidence_rows,
     }
 
 
@@ -434,11 +537,13 @@ def _analyze_grid(item_data: dict, **kwargs) -> dict:
     # Load GCCA MTS zone data and find nearest substation
     nearest_substation = None
     nearest_distance_km = None
+    mts_zone_count: Optional[int] = None
 
     try:
         from tools.imaging.gcca_client import load_mts_zones
         mts = load_mts_zones()
         features = mts.get("features", [])
+        mts_zone_count = len(features)
 
         best_dist = float("inf")
         best_sub = None
@@ -470,6 +575,32 @@ def _analyze_grid(item_data: dict, **kwargs) -> dict:
         logger.warning("GCCA data unavailable: %s", exc)
         context_parts.append("Note: GCCA MTS zone data unavailable.")
 
+    evidence_rows = [
+        _evidence_row(
+            "Site",
+            f"{item_data.get('asset_name', 'Unknown')} · {technology} · {capacity_mw} MW",
+        ),
+        _evidence_row("Country / coords", f"{country or '—'} · {lat:.4f}, {lon:.4f}"),
+    ]
+    if nearest_substation is not None and nearest_distance_km is not None:
+        evidence_rows.extend(
+            [
+                _evidence_row(
+                    "GCCA MTS zone polygons",
+                    str(mts_zone_count) if mts_zone_count is not None else "—",
+                ),
+                _evidence_row("Nearest MTS substation (zone centroid)", nearest_substation),
+                _evidence_row("Distance (site to zone centroid)", f"{nearest_distance_km:.1f} km"),
+            ]
+        )
+    else:
+        evidence_rows.append(
+            _evidence_row(
+                "GCCA MTS / nearest substation",
+                "— (unavailable or no polygon centroids)",
+            )
+        )
+
     system_prompt = (
         "You are a power systems engineer specialising in grid connection assessments. "
         "Evaluate the grid connection feasibility for this energy asset based on the substation data. "
@@ -497,6 +628,7 @@ def _analyze_grid(item_data: dict, **kwargs) -> dict:
         "gaps": parsed["gaps"],
         "sources": sources,
         "chart_b64": None,
+        "evidence_rows": evidence_rows,
     }
 
 
@@ -512,6 +644,8 @@ def _analyze_regulatory(item_data: dict, **kwargs) -> dict:
         f"Country: {country}",
     ]
     sources = ["Regulatory research"]
+    reg_store_ok = True
+    events: list = []
 
     try:
         from tools.regulatory.store import RegulatoryDataStore
@@ -534,8 +668,36 @@ def _analyze_regulatory(item_data: dict, **kwargs) -> dict:
         else:
             context_parts.append(f"No regulatory events found for {country} in local store.")
     except Exception as exc:
+        reg_store_ok = False
         logger.warning("Regulatory data unavailable: %s", exc)
         context_parts.append("Note: Regulatory data store unavailable.")
+
+    evidence_rows = [
+        _evidence_row("Jurisdiction filter (SQL LIKE)", country or "—"),
+        _evidence_row("Asset", f"{technology} · {capacity_mw} MW · {item_data.get('asset_name', 'Unknown')}"),
+    ]
+    if not reg_store_ok:
+        evidence_rows.append(
+            _evidence_row("Regulatory events (local store)", "— (store error)")
+        )
+    elif events:
+        evidence_rows.append(
+            _evidence_row("Regulatory events matched (max 10)", str(len(events)))
+        )
+        for ev in events[:5]:
+            title = ev["title"] or ""
+            if len(title) > 140:
+                title = title[:137] + "..."
+            evidence_rows.append(
+                _evidence_row(
+                    f"{ev['published_date']} · {ev['event_type']}",
+                    title,
+                )
+            )
+    else:
+        evidence_rows.append(
+            _evidence_row("Regulatory events (local store)", "No rows for this jurisdiction")
+        )
 
     system_prompt = (
         "You are a regulatory affairs expert specialising in African energy markets. "
@@ -558,6 +720,7 @@ def _analyze_regulatory(item_data: dict, **kwargs) -> dict:
         "gaps": parsed["gaps"],
         "sources": sources,
         "chart_b64": None,
+        "evidence_rows": evidence_rows,
     }
 
 
@@ -587,6 +750,24 @@ def _analyze_financial(item_data: dict, prior_results: List[dict] = None, **kwar
             f"  [{tab.upper()}] Conclusion: {conclusion} — {key_finding}"
         )
 
+    evidence_rows = [
+        _evidence_row(
+            "Asset",
+            f"{item_data.get('asset_name', 'Unknown')} · {technology} · {capacity_mw} MW",
+        ),
+        _evidence_row("Country", country or "—"),
+        _evidence_row("Prior tabs available for synthesis", f"{len(prior_results)} / 4"),
+    ]
+    for r in prior_results:
+        tab = r.get("tab", "?")
+        conclusion = r.get("conclusion", "?")
+        evidence_rows.append(
+            _evidence_row(
+                f"Prior tab: {str(tab).upper()}",
+                f"Conclusion: {conclusion}",
+            )
+        )
+
     # Try FRED/market store for FX rates
     try:
         from tools.market.store import MarketDataStore
@@ -598,8 +779,19 @@ def _analyze_financial(item_data: dict, prior_results: List[dict] = None, **kwar
             latest_date, latest_val = obs[-1]
             context_parts.append(f"ZAR/USD FX rate (latest {latest_date}): {latest_val:.4f}")
             sources.append("FRED FX Rates")
+            evidence_rows.append(
+                _evidence_row(
+                    f"ZAR/USD (FRED DEXSFUS, {latest_date})",
+                    f"{float(latest_val):.4f}",
+                )
+            )
     except Exception:
         pass
+
+    if not any(er["label"].startswith("ZAR/USD") for er in evidence_rows):
+        evidence_rows.append(
+            _evidence_row("ZAR/USD (FRED DEXSFUS)", "— (unavailable)")
+        )
 
     if not sources:
         sources = ["Prior tab results", "World Bank"]
@@ -638,4 +830,5 @@ def _analyze_financial(item_data: dict, prior_results: List[dict] = None, **kwar
         "gaps": parsed["gaps"],
         "sources": sources,
         "chart_b64": None,
+        "evidence_rows": evidence_rows,
     }

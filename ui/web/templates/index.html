@@ -5842,8 +5842,22 @@
             const sources = result.sources || result.findings?.sources || [];
             const chart = result.chart_b64 || result.findings?.chart_b64 || null;
             const tab = result.tab;
+            const evidenceRows = result.evidence_rows || result.findings?.evidence_rows || [];
 
-            let html = `
+            let html = '';
+            if (evidenceRows.length > 0) {
+                html += `<div class="feasibility-list-section" style="margin-bottom:14px;"><h5>Inputs this run</h5>`;
+                html += `<table class="feasibility-evidence-table" style="width:100%;font-size:0.82rem;border-collapse:collapse;">`;
+                evidenceRows.forEach(row => {
+                    const lab = escapeHtml(row.label != null ? String(row.label) : '');
+                    const val = escapeHtml(row.value != null ? String(row.value) : '');
+                    html += `<tr><td style="vertical-align:top;color:var(--text-light);padding:4px 8px 4px 0;width:38%;">${lab}</td><td style="padding:4px 0;">${val}</td></tr>`;
+                });
+                html += `</table>`;
+                html += `<p style="margin:8px 0 0;font-size:0.75rem;opacity:0.85;color:var(--text-light);">Facts above are from this tab’s data pass; conclusion and narrative below are model interpretation.</p>`;
+                html += `</div>`;
+            }
+            html += `
                 <div style="margin-bottom:12px;">
                     <span class="conclusion-badge ${conclusion}">${conclusion}</span>
                     <span class="confidence-label">Confidence: ${confidence}</span>

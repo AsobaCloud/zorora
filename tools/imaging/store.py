@@ -911,6 +911,10 @@ class ImagingDataStore:
                 parts.append(str(risk))
             for gap in (findings.get("gaps") or []):
                 parts.append(str(gap))
+            for er in findings.get("evidence_rows") or []:
+                if isinstance(er, dict):
+                    parts.append(str(er.get("label") or ""))
+                    parts.append(str(er.get("value") or ""))
         return " ".join(p for p in parts if p)
 
     def rebuild_fts_index(self):

@@ -1614,6 +1614,7 @@ def run_feasibility_tab_endpoint(item_id, tab):
             "gaps": workflow_result.get("gaps", []),
             "sources": workflow_result.get("sources", []),
             "chart_b64": workflow_result.get("chart_b64"),
+            "evidence_rows": workflow_result.get("evidence_rows") or [],
         }
         store.upsert_feasibility_result(
             item_id=item_id,
