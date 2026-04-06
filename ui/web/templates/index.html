@@ -2142,7 +2142,7 @@
             <div class="global-view-panel">
                 <div class="sidebar-header" style="margin-bottom:16px;">
                     <h3>Recurring Alerts</h3>
-                    <button class="sidebar-new-btn" onclick="loadAlertsView()" title="Refresh Alerts">↻</button>
+                    <button class="sidebar-new-btn" onclick="loadAlertsView({force:true})" title="Refresh Alerts">↻</button>
                 </div>
                 <div id="alertsSummary" style="font-size:0.88rem;color:var(--text-light);margin-bottom:12px;">No alerts loaded yet.</div>
                 <div id="alertsListContainer" style="display:flex;flex-direction:column;gap:12px;"></div>
@@ -2175,7 +2175,7 @@
                         <input type="number" id="regYear" placeholder="e.g., 2025" min="2000" max="2050">
                     </div>
                     <div style="display:flex;align-items:flex-end;gap:8px;">
-                        <button type="button" class="search-button" style="padding:8px 16px;font-size:0.88rem;" onclick="loadRegulatoryView()">Apply</button>
+                        <button type="button" class="search-button" style="padding:8px 16px;font-size:0.88rem;" onclick="loadRegulatoryView({force:true})">Apply</button>
                         <button type="button" class="search-button" style="padding:8px 16px;font-size:0.88rem;background:#fff;color:#111827;border:1px solid #d1d5db;" onclick="refreshRegulatoryView()">Refresh</button>
                     </div>
                 </div>
@@ -2239,7 +2239,7 @@
                         <input type="text" id="gvSearch" placeholder="Keyword...">
                     </div>
                     <div style="display:flex;align-items:flex-end;">
-                        <button type="button" class="search-button" style="padding:8px 16px;font-size:0.88rem;" onclick="loadGlobalView()">Apply</button>
+                        <button type="button" class="search-button" style="padding:8px 16px;font-size:0.88rem;" onclick="loadGlobalView({force:true})">Apply</button>
                     </div>
                 </div>
 
@@ -3637,14 +3637,18 @@
                     throw new Error(error.error || 'Failed to save alert');
                 }
                 closeAlertModal();
-                await loadAlertsView();
+                await loadAlertsView({ force: true });
                 switchMode('alerts');
             } catch (err) {
                 alert('Failed to save alert: ' + err.message);
             }
         }
 
-        async function loadAlertsView() {
+        async function loadAlertsView(opts) {
+            const force = opts && opts.force === true;
+            if (!force && _tabDataCache.alertsLoaded) {
+                return;
+            }
             try {
                 const response = await fetch('/api/alerts');
                 if (!response.ok) {
@@ -3677,6 +3681,7 @@
                         </div>
                     </div>
                 `).join('');
+                _tabDataCache.alertsLoaded = true;
             } catch (err) {
                 console.error('Alerts load error:', err);
             }
@@ -3714,7 +3719,7 @@
         async function markAlertRead(alertId) {
             try {
                 await fetch(`/api/alerts/${encodeURIComponent(alertId)}/read`, { method: 'POST' });
-                await loadAlertsView();
+                await loadAlertsView({ force: true });
                 await viewAlertResults(alertId, '');
             } catch (err) {
                 console.error('Mark alert read error:', err);
@@ -3725,7 +3730,7 @@
             try {
                 await fetch(`/api/alerts/${encodeURIComponent(alertId)}`, { method: 'DELETE' });
                 document.getElementById('alertResultsContainer').innerHTML = '';
-                await loadAlertsView();
+                await loadAlertsView({ force: true });
             } catch (err) {
                 console.error('Delete alert error:', err);
             }
@@ -3962,9 +3967,9 @@
             }
         }
 
-        async function loadGlobalView() {
+        async function loadGlobalView(opts) {
+            const force = opts && opts.force === true;
             initGlobalViewMap();
-            loadFacets();
 
             const topicVal = document.getElementById('gvTopic')?.value || '';
             const params = {
@@ -3972,6 +3977,12 @@
                 date_from: document.getElementById('gvDateFrom')?.value || null,
                 date_to: document.getElementById('gvDateTo')?.value || null,
             };
+            const globalCacheKey = JSON.stringify(params);
+            if (!force && _tabDataCache.globalKey === globalCacheKey) {
+                return;
+            }
+
+            loadFacets();
 
             try {
                 const [statsRes, articlesRes, datasetsRes] = await Promise.all([
@@ -4038,6 +4049,7 @@
                     const datasets = await datasetsRes.json();
                     renderDatasetCards(Array.isArray(datasets) ? datasets : []);
                 }
+                _tabDataCache.globalKey = globalCacheKey;
             } catch (err) {
                 console.error('Global view load error:', err);
             }
@@ -4222,7 +4234,7 @@
                 const data = await resp.json();
                 if (btn) btn.textContent = `↻ Updated ${data.updated || 0} series`;
                 setTimeout(() => { if (btn) { btn.textContent = '↻ Refresh All Data'; btn.disabled = false; } }, 3000);
-                loadGlobalView();
+                loadGlobalView({ force: true });
             } catch (e) {
                 if (btn) { btn.textContent = '↻ Refresh failed'; btn.disabled = false; }
             }
@@ -4324,11 +4336,16 @@
             return blocks.join('');
         }
 
-        async function loadRegulatoryView() {
+        async function loadRegulatoryView(opts) {
+            const force = opts && opts.force === true;
             const jurisdiction = (document.getElementById('regJurisdiction')?.value || 'ALL').trim().toUpperCase();
             const state = (document.getElementById('regState')?.value || '').trim().toUpperCase();
             const fuelType = (document.getElementById('regFuel')?.value || '').trim().toUpperCase();
             const year = (document.getElementById('regYear')?.value || '').trim();
+            const regCacheKey = JSON.stringify({ jurisdiction, state, fuelType, year });
+            if (!force && _tabDataCache.regulatoryKey === regCacheKey) {
+                return;
+            }
             const eventParams = new URLSearchParams();
             const provenanceParams = new URLSearchParams();
             const rpsParams = new URLSearchParams();
@@ -4455,6 +4472,7 @@
                     </tr>
                 `;
             }
+            _tabDataCache.regulatoryKey = regCacheKey;
         }
 
         async function refreshRegulatoryView() {
@@ -4466,7 +4484,7 @@
                     const error = await response.json();
                     throw new Error(error.error || 'Regulatory refresh failed');
                 }
-                await loadRegulatoryView();
+                await loadRegulatoryView({ force: true });
             } catch (err) {
                 alert('Failed to refresh regulatory data: ' + err.message);
             } finally {
@@ -4520,6 +4538,14 @@
         let pipelineAssetIds = new Set(), currentScoutSite = null, selectedScoutCompareIds = new Set();
         let imagingMtsZones = null, imagingSupplyAreas = null, imagingDamZones = null, imagingSubstations = null;
         let mtsZoneData = null, supplyAreaData = null, substationData = null, zoneMetricsCache = {};
+        /** Skip redundant API fetches when re-entering a sidebar tab with unchanged params. */
+        const _tabDataCache = {
+            alertsLoaded: false,
+            globalKey: null,
+            regulatoryKey: null,
+            imagingKey: null,
+            scoutingKey: null,
+        };
 
         function initImagingMap() {
             if (imagingMap) {
@@ -4864,7 +4890,10 @@
                 },
             };
             fetch('/api/scouting/items', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(item) })
-                .then(r => r.json()).then(() => { alert('Added to BESS Scouting pipeline'); })
+                .then(r => r.json()).then(() => {
+                    _tabDataCache.scoutingKey = null;
+                    alert('Added to BESS Scouting pipeline');
+                })
                 .catch(e => console.error('Failed to add to scouting', e));
         }
 
@@ -4975,7 +5004,7 @@
                 if (!response.ok) {
                     throw new Error(data.error || 'Failed to save pipeline asset');
                 }
-                await loadImagingView();
+                await loadImagingView({ force: true });
             } catch (error) {
                 alert('Pipeline error: ' + error.message);
             }
@@ -4984,7 +5013,7 @@
         async function removePipelineAsset(assetId) {
             try {
                 await fetch(`/api/pipeline/assets/${encodeURIComponent(assetId)}`, { method: 'DELETE' });
-                await loadImagingView();
+                await loadImagingView({ force: true });
             } catch (error) {
                 alert('Pipeline delete error: ' + error.message);
             }
@@ -5095,7 +5124,7 @@
                     throw new Error(data.error || 'Failed to save scouted site');
                 }
                 currentScoutSite = data.site;
-                await loadImagingView();
+                await loadImagingView({ force: true });
             } catch (error) {
                 alert('Scouting save error: ' + error.message);
             }
@@ -5114,7 +5143,7 @@
             try {
                 await fetch(`/api/scouting/watchlist/${encodeURIComponent(siteId)}`, { method: 'DELETE' });
                 selectedScoutCompareIds.delete(siteId);
-                await loadImagingView();
+                await loadImagingView({ force: true });
             } catch (error) {
                 alert('Scouting delete error: ' + error.message);
             }
@@ -5191,15 +5220,21 @@
             loadScoutingView();
         }
 
-        async function loadScoutingView() {
+        async function loadScoutingView(opts) {
+            const force = opts && opts.force === true;
             const board = document.getElementById('kanbanBoard');
             if (!board) return;
+            const scoutingCacheKey = activeScoutingTab;
+            if (!force && _tabDataCache.scoutingKey === scoutingCacheKey) {
+                return;
+            }
             board.innerHTML = '<div class="kanban-empty">Loading...</div>';
             try {
                 const response = await fetch(`/api/scouting/items?type=${encodeURIComponent(activeScoutingTab)}`);
                 const data = await response.json();
                 if (!response.ok) throw new Error(data.error || 'Failed to load scouting items');
                 renderKanbanBoard(data.items || [], activeScoutingTab);
+                _tabDataCache.scoutingKey = scoutingCacheKey;
             } catch (error) {
                 board.innerHTML = `<div class="kanban-empty">Error: ${escapeHtml(error.message)}</div>`;
             }
@@ -5300,7 +5335,7 @@
                     const data = await response.json();
                     throw new Error(data.error || 'Stage update failed');
                 }
-                await loadScoutingView();
+                await loadScoutingView({ force: true });
             } catch (error) {
                 alert('Stage update error: ' + error.message);
             }
@@ -5309,7 +5344,7 @@
         async function removeScoutingItem(itemId, type) {
             try {
                 await fetch(`/api/scouting/items/${encodeURIComponent(itemId)}?type=${encodeURIComponent(type)}`, { method: 'DELETE' });
-                await loadScoutingView();
+                await loadScoutingView({ force: true });
             } catch (error) {
                 alert('Scouting delete error: ' + error.message);
             }
@@ -5466,7 +5501,7 @@
                 const data = await resp.json();
                 if (!resp.ok) throw new Error(data.error || 'Save failed');
                 if (data.item) window.__scoutingDetailItem = data.item;
-                await loadScoutingView();
+                await loadScoutingView({ force: true });
             } catch (e) {
                 alert('Save notes error: ' + e.message);
             }
@@ -5616,7 +5651,7 @@
                 (progressData.results || []).forEach(r => { feasibilityResultsCache[r.tab] = r; });
                 renderFeasibilityTab();
                 // Refresh kanban to update progress badge on card
-                await loadScoutingView();
+                await loadScoutingView({ force: true });
                 // Re-show the panel (loadScoutingView may not affect it since it's separate)
                 const fm = document.getElementById('feasibilityModal');
                 if (fm) fm.style.display = 'flex';
@@ -5657,12 +5692,14 @@
                     fillColor: '#f59e0b',
                     fillOpacity: 0.9,
                 }).addTo(imagingMap);
+                _tabDataCache.scoutingKey = null;
             } catch (error) {
                 alert('Scouting error: ' + error.message);
             }
         }
 
-        async function loadImagingView() {
+        async function loadImagingView(opts) {
+            const force = opts && opts.force === true;
             initImagingMap();
             const depositParams = new URLSearchParams();
             const generationParams = new URLSearchParams();
@@ -5679,6 +5716,16 @@
             if (generationTech) generationParams.set('technology', generationTech);
             if (generationStatus) generationParams.set('status', generationStatus);
             if (generationMinCapacity) generationParams.set('min_capacity_mw', generationMinCapacity);
+
+            const imagingCacheKey = JSON.stringify({
+                dep: depositParams.toString(),
+                gen: generationParams.toString(),
+                status: document.getElementById('imgStatus')?.value || '',
+            });
+            if (!force && _tabDataCache.imagingKey === imagingCacheKey) {
+                await loadScoutingCompare();
+                return;
+            }
 
             try {
                 const [depositsRes, concessionsRes, generationRes, configRes, pipelineRes, watchlistRes] = await Promise.all([
@@ -5809,13 +5856,14 @@
                     });
                     document.getElementById('imgGenerationCount').textContent = `${features.length} generation assets`;
                 }
+                _tabDataCache.imagingKey = imagingCacheKey;
             } catch (err) {
                 console.error('Imaging view load error:', err);
             }
         }
 
         function applyImagingFilters() {
-            loadImagingView();
+            loadImagingView({ force: true });
         }
 
         // Update news intel form to include staged items
