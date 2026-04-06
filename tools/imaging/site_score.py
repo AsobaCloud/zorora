@@ -120,18 +120,8 @@ def _diligence_screening_ux(
     tier = agg.get("strength_tier")
     if is_complete:
         score_label = tier or "unknown"
-        ux_banner = (
-            "All dimensions in this desk rubric are evaluated. "
-            "Signal tier still reflects GIS/market caches only — not feasibility."
-        )
     else:
         score_label = "incomplete_desk"
-        names = [f.get("label") or f.get("key") or "" for f in pending]
-        listed = ", ".join(names)
-        ux_banner = (
-            f"{len(pending)} rubric row(s) have no input ({listed}) — each counts as 0 / row max. "
-            f"Total score is {agg.get('rubric_earned')} / {agg.get('rubric_possible')} on the full rubric."
-        )
 
     return {
         "score_label": score_label,
@@ -151,7 +141,6 @@ def _diligence_screening_ux(
                 "grid/transmission context, siting / co-location, and permitting before "
                 "full feasibility (industry siting guides; NREL/DOE screening tools)."
             ),
-            "ux_banner": ux_banner,
             "strength_tier": tier,
         },
     }

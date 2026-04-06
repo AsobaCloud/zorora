@@ -5096,7 +5096,7 @@
                 </div>
                 ${factors.map(factor => `
                     <div class="scout-factor-row">
-                        <span>${escapeHtml(factor.label || factor.key || '')}</span>
+                        <span>${escapeHtml(factor.label || factor.key || '')}${factor.status === 'unknown' ? ` ${scoutRubricNoDataAvailableHtml()}` : ''}</span>
                         <span style="text-align:right;color:${factor.status === 'unknown' ? '#9CA3AF' : '#111827'};">
                             ${factor.status === 'unknown'
                                 ? `0/${factor.max_score ?? '—'}`
@@ -5197,7 +5197,7 @@
                         <div style="margin-top:4px;font-size:0.82rem;color:var(--text-light);">${escapeHtml(item.technology || '')} · ${item.overall_score ?? 'N/A'} · ${escapeHtml(item.score_label || 'unknown')}</div>
                         ${(item.factors || []).slice(0, 4).map(factor => `
                             <div class="scout-factor-row">
-                                <span>${escapeHtml(factor.label || factor.key || '')}</span>
+                                <span>${escapeHtml(factor.label || factor.key || '')}${factor.status === 'unknown' ? ` ${scoutRubricNoDataAvailableHtml()}` : ''}</span>
                                 <span>${factor.status === 'unknown' ? `0/${factor.max_score ?? '—'}` : `${factor.score}/${factor.max_score}`}</span>
                             </div>
                         `).join('')}
@@ -5279,9 +5279,6 @@
             if (ds.framework_title) {
                 html += `<div style="font-size:0.78rem;font-weight:600;color:#374151;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.04em;">${escapeHtml(ds.framework_title)}</div>`;
             }
-            if (ds.ux_banner) {
-                html += `<div role="status" style="font-size:0.84rem;line-height:1.45;color:#92400e;background:#fffbeb;border:1px solid #fbbf24;border-radius:6px;padding:10px 12px;margin-bottom:12px;">${escapeHtml(ds.ux_banner)}</div>`;
-            }
             if (ds.dimensions_total != null && ds.dimensions_evaluated != null) {
                 html += `<div style="font-size:0.82rem;color:var(--text-light);margin-bottom:8px;">Rubric rows with data: <strong>${ds.dimensions_evaluated} / ${ds.dimensions_total}</strong> (missing rows = 0 pts)</div>`;
             }
@@ -5295,6 +5292,11 @@
             return html;
         }
 
+        function scoutRubricNoDataAvailableHtml() {
+            return '<span style="color:#6b7280;font-size:0.78rem;white-space:nowrap;" title="Counts as 0 on this rubric row">'
+                + '<span aria-hidden="true">ⓘ</span> (no data available)</span>';
+        }
+
         function formatScoutingFactorRowsHtml(factors) {
             const list = factors || [];
             if (!list.length) {
@@ -5305,9 +5307,10 @@
                 const right = factor.status === 'unknown' ? `0/${mx}` : `${factor.score ?? '—'}/${mx}`;
                 const detail = factor.detail ? `<div style="font-size:0.78rem;color:var(--text-light);margin-top:2px;">${escapeHtml(factor.detail)}</div>` : '';
                 const val = (factor.value != null && factor.unit) ? ` · ${escapeHtml(String(factor.value))} ${escapeHtml(factor.unit)}` : '';
+                const noData = factor.status === 'unknown' ? ` ${scoutRubricNoDataAvailableHtml()}` : '';
                 return `<div class="scout-factor-row" style="margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid #eee;">
-                    <div style="display:flex;justify-content:space-between;gap:8px;font-size:0.88rem;">
-                        <span>${escapeHtml(factor.label || factor.key || '')}${val}</span>
+                    <div style="display:flex;justify-content:space-between;gap:8px;font-size:0.88rem;align-items:flex-start;">
+                        <span>${escapeHtml(factor.label || factor.key || '')}${val}${noData}</span>
                         <span style="white-space:nowrap;">${escapeHtml(right)}</span>
                     </div>${detail}
                 </div>`;
