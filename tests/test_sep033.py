@@ -110,30 +110,6 @@ class TestNewsIntelStatsEndpoint:
         assert data["warning"] == "Using cached data \u2014 newsroom API unavailable"
 
 
-class TestNewsIntelFacetsEndpoint:
-    """GET /api/news-intel/facets uses precomputed facets when available."""
-
-    @patch("tools.utils.newsroom_cache.get_cache")
-    @patch("ui.web.app.fetch_newsroom_api")
-    def test_facets_uses_precomputed_without_scanning_articles(
-        self, mock_fetch_api, mock_get_cache,
-    ):
-        cache = MagicMock()
-        cache.get_facets.return_value = {
-            "topics": [{"name": "energy", "count": 3}],
-            "sources": [{"name": "Reuters", "count": 1}],
-            "date_range": {"min": "2026-01-01", "max": "2026-03-01"},
-        }
-        mock_get_cache.return_value = cache
-        mod = _import_app_module()
-        client = mod.app.test_client()
-        resp = client.get("/api/news-intel/facets")
-        assert resp.status_code == 200
-        data = resp.get_json()
-        assert data["topics"][0]["name"] == "energy"
-        mock_fetch_api.assert_not_called()
-
-
 class TestMarketLatestEndpoint:
     """Test the /api/market/latest endpoint."""
 

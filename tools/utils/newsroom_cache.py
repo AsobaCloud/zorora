@@ -3,7 +3,6 @@
 import json
 import time
 import logging
-from collections import Counter
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
@@ -13,32 +12,8 @@ logger = logging.getLogger(__name__)
 # Cache location
 CACHE_DIR = Path(__file__).parent.parent.parent / ".cache" / "newsroom"
 CACHE_FILE = CACHE_DIR / "articles.json"
-FACETS_FILE = CACHE_DIR / "facets.json"
 CACHE_TTL_SECONDS = 86400  # 24 hours
 ROLLING_WINDOW_DAYS = 90
-
-
-def compute_facets_payload(articles: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Build topics/sources/date_range for /api/news-intel/facets (O(n) once per cache write)."""
-    topic_counts: Counter[str] = Counter()
-    source_counts: Counter[str] = Counter()
-    dates: List[str] = []
-    for article in articles:
-        for tag in article.get("topic_tags") or []:
-            topic_counts[tag] += 1
-        src = article.get("source")
-        if src:
-            source_counts[src] += 1
-        d = (article.get("date") or "")[:10]
-        if d:
-            dates.append(d)
-    topics = [{"name": name, "count": count} for name, count in topic_counts.most_common()]
-    sources = [{"name": name, "count": count} for name, count in source_counts.most_common()]
-    date_range = {
-        "min": min(dates) if dates else None,
-        "max": max(dates) if dates else None,
-    }
-    return {"topics": topics, "sources": sources, "date_range": date_range}
 
 
 class NewsroomCache:
@@ -54,7 +29,6 @@ class NewsroomCache:
     def __init__(self, cache_dir: Path = CACHE_DIR, ttl_seconds: int = CACHE_TTL_SECONDS):
         self.cache_dir = cache_dir
         self.cache_file = cache_dir / "articles.json"
-        self.facets_file = cache_dir / "facets.json"
         self.ttl_seconds = ttl_seconds
         self._ensure_cache_dir()
 
@@ -145,51 +119,7 @@ class NewsroomCache:
             "articles": pruned
         }
         self._save_cache(cache)
-        self._save_facets_file(pruned)
         logger.info(f"Newsroom cache updated: {len(pruned)} articles (merged from {len(existing)} existing + {len(articles)} new)")
-
-    def _save_facets_file(
-        self,
-        articles: List[Dict[str, Any]],
-        payload: Optional[Dict[str, Any]] = None,
-    ):
-        """Write precomputed facets for fast GET /api/news-intel/facets."""
-        pl = payload if payload is not None else compute_facets_payload(articles)
-        tmp = self.facets_file.with_suffix(".json.tmp")
-        try:
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(pl, f, indent=2)
-            tmp.replace(self.facets_file)
-        except OSError as e:
-            logger.error(f"Failed to write newsroom facets file: {e}")
-
-    def get_facets(self) -> Optional[Dict[str, Any]]:
-        """
-        Return precomputed facets if present and readable.
-        Shape matches /api/news-intel/facets JSON (topics, sources, date_range).
-        If articles exist on disk but facets are missing (upgrade), compute once and persist.
-        """
-        if self.facets_file.exists():
-            try:
-                with open(self.facets_file, encoding="utf-8") as f:
-                    data = json.load(f)
-            except (json.JSONDecodeError, OSError) as e:
-                logger.warning(f"Failed to load newsroom facets file: {e}")
-                data = None
-            if isinstance(data, dict) and "topics" in data and "sources" in data and "date_range" in data:
-                return {
-                    "topics": data["topics"],
-                    "sources": data["sources"],
-                    "date_range": data["date_range"],
-                }
-        if self.cache_file.exists():
-            raw = self._load_cache()
-            articles = self._prune_old_articles(raw.get("articles", []))
-            if articles:
-                pl = compute_facets_payload(articles)
-                self._save_facets_file(articles, pl)
-                return pl
-        return None
 
     def get_age_seconds(self) -> float:
         """Get cache age in seconds."""
@@ -199,14 +129,8 @@ class NewsroomCache:
 
     def clear(self):
         """Clear the cache."""
-        cleared = False
         if self.cache_file.exists():
             self.cache_file.unlink()
-            cleared = True
-        if self.facets_file.exists():
-            self.facets_file.unlink()
-            cleared = True
-        if cleared:
             logger.info("Newsroom cache cleared")
 
     def stats(self) -> Dict[str, Any]:

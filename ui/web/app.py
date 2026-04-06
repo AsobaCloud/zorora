@@ -17,6 +17,7 @@ from tools.specialist.client import create_specialist_client
 from tools.market.store import MarketDataStore
 from tools.market.series import SERIES_CATALOG
 from tools.imaging.store import ImagingDataStore
+from tools.imaging.viability import score_all_deposits
 from tools.imaging.mrds_client import fetch_deposits
 from tools.imaging.generation_client import load_generation_assets
 from tools.imaging.resource_client import fetch_resource_summary
@@ -61,7 +62,7 @@ research_progress = {}  # {research_id: {"status": str, "message": str, "phase":
 chat_threads = {}  # lightweight in-memory thread store keyed by context id
 newsroom_api_warning = None
 _market_latest_cache = None  # (timestamp, response_list)
-_MARKET_CACHE_TTL = 300  # seconds (5m; series reads are heavy on EFS)
+_MARKET_CACHE_TTL = 60  # seconds
 
 
 def _parse_date(date_str: str):
@@ -595,11 +596,6 @@ def get_news_intel_facets():
     """Return available topics, sources, and date range from cached articles."""
     try:
         from collections import Counter
-        from tools.utils.newsroom_cache import get_cache
-
-        pre = get_cache().get_facets()
-        if pre is not None:
-            return jsonify(pre)
 
         articles = fetch_newsroom_api(max_results=5000)
 
@@ -951,11 +947,18 @@ def mark_alert_read(alert_id):
         return jsonify({"error": str(e)}), 500
 
 
-def _build_market_latest_rows():
-    """Read all catalog series from MarketDataStore; caller owns cache timestamp."""
-    store = MarketDataStore()
-    results = []
+@app.route('/api/market/latest', methods=['GET'])
+def get_market_latest():
+    """Return latest observation per series from MarketDataStore."""
+    import time as _time
+    global _market_latest_cache
+    if _market_latest_cache is not None:
+        cached_at, cached_data = _market_latest_cache
+        if _time.time() - cached_at < _MARKET_CACHE_TTL:
+            return jsonify(cached_data)
     try:
+        store = MarketDataStore()
+        results = []
         for sid, series in SERIES_CATALOG.items():
             try:
                 df = store.get_series_df(sid, provider=series.provider)
@@ -967,13 +970,13 @@ def _build_market_latest_rows():
                 pct_change = None
                 if prev_val and prev_val != 0:
                     pct_change = round(((latest_val - prev_val) / abs(prev_val)) * 100, 2)
+                # Compute freshness from fetch_metadata
                 staleness_hours = store.get_staleness(sid, provider=series.provider)
                 last_fetched = None
+                # Only compute last_fetched when staleness_hours is numeric
                 if isinstance(staleness_hours, (int, float)):
                     from datetime import datetime, timedelta
-                    last_fetched = (
-                        datetime.utcnow() - timedelta(hours=staleness_hours)
-                    ).isoformat() + "Z"
+                    last_fetched = (datetime.utcnow() - timedelta(hours=staleness_hours)).isoformat() + "Z"
 
                 results.append({
                     "series_id": sid,
@@ -989,39 +992,7 @@ def _build_market_latest_rows():
                 })
             except Exception as e:
                 logger.debug(f"Skipping series {sid}: {e}")
-    finally:
         store.close()
-    return results
-
-
-def warm_market_latest_cache() -> None:
-    """Prime in-process market JSON cache (Gunicorn post_worker_init)."""
-    import time as _time
-
-    global _market_latest_cache
-    if _market_latest_cache is not None:
-        cached_at, _ = _market_latest_cache
-        if _time.time() - cached_at < _MARKET_CACHE_TTL:
-            return
-    try:
-        rows = _build_market_latest_rows()
-        _market_latest_cache = (_time.time(), rows)
-        logger.info("Market latest cache warmed (%d series)", len(rows))
-    except Exception as e:
-        logger.warning("Market latest warm failed: %s", e)
-
-
-@app.route('/api/market/latest', methods=['GET'])
-def get_market_latest():
-    """Return latest observation per series from MarketDataStore."""
-    import time as _time
-    global _market_latest_cache
-    if _market_latest_cache is not None:
-        cached_at, cached_data = _market_latest_cache
-        if _time.time() - cached_at < _MARKET_CACHE_TTL:
-            return jsonify(cached_data)
-    try:
-        results = _build_market_latest_rows()
         _market_latest_cache = (_time.time(), results)
         return jsonify(results)
     except Exception as e:
@@ -1524,8 +1495,9 @@ def get_imaging_deposits():
             deposits = fetch_deposits()
             store.upsert_deposits(deposits.get("features", []))
         geojson = store.get_deposits(commodity=commodity, country=country)
+        scored_features = score_all_deposits(geojson.get("features", []))
         store.close()
-        return jsonify(geojson)
+        return jsonify({"type": "FeatureCollection", "features": scored_features})
     except Exception as e:
         logger.error(f"Imaging deposits error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
@@ -1700,7 +1672,6 @@ def refresh_imaging_data():
 _discovery_mts_cache = None
 _discovery_supply_cache = None
 _discovery_metrics_cache = None
-_discovery_metrics_gen_fp = None
 _discovery_substations_cache = None
 
 
@@ -1762,17 +1733,9 @@ def get_discovery_substations():
 
 
 def _ensure_zone_metrics():
-    """Compute and cache zone metrics; invalidate when generation layer changes."""
-    global _discovery_metrics_cache, _discovery_metrics_gen_fp
-    store = ImagingDataStore()
-    try:
-        gen_fp = store.get_generation_layer_fingerprint()
-    finally:
-        store.close()
-    if (
-        _discovery_metrics_cache is not None
-        and _discovery_metrics_gen_fp == gen_fp
-    ):
+    """Compute and cache zone metrics on first call."""
+    global _discovery_metrics_cache
+    if _discovery_metrics_cache is not None:
         return _discovery_metrics_cache
     from tools.imaging.gcca_client import load_mts_zones
     from tools.imaging.grid_metrics import compute_zone_metrics
@@ -1780,13 +1743,10 @@ def _ensure_zone_metrics():
     mts = load_mts_zones()
     dam = parse_all_dam_files()
     store = ImagingDataStore()
-    try:
-        gen_fc = store.get_generation_assets()
-    finally:
-        store.close()
+    gen_fc = store.get_generation_assets()
+    store.close()
     gen_features = gen_fc.get("features", []) if gen_fc else []
     _discovery_metrics_cache = compute_zone_metrics(mts, dam, gen_features)
-    _discovery_metrics_gen_fp = gen_fp
     return _discovery_metrics_cache
 
 
@@ -1822,7 +1782,6 @@ def get_discovery_zone_metrics(substation):
 @app.route('/api/scouting/score', methods=['POST'])
 def score_greenfield_site():
     """Score a clicked greenfield candidate site."""
-    store = None
     try:
         data = request.get_json() or {}
         if "lat" not in data or "lon" not in data:
@@ -1847,13 +1806,11 @@ def score_greenfield_site():
             name=(data.get("name") or "").strip() or None,
             country=(data.get("country") or "").strip() or None,
         )
+        store.close()
         return jsonify({"site": site})
     except Exception as e:
         logger.error(f"Scouting score error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
-    finally:
-        if store is not None:
-            store.close()
 
 
 @app.route('/api/scouting/watchlist', methods=['GET'])

@@ -5662,73 +5662,6 @@
             }
         }
 
-        function imagingYieldToMain() {
-            return new Promise(function(resolve) { requestAnimationFrame(function() { resolve(); }); });
-        }
-
-        async function imagingRenderDepositsBatched(features, statusFilter) {
-            imagingDeposits.clearLayers();
-            let high = 0, med = 0, low = 0;
-            const chunk = 100;
-            let i = 0;
-            while (i < features.length) {
-                await imagingYieldToMain();
-                const end = Math.min(i + chunk, features.length);
-                for (; i < end; i++) {
-                    const f = features[i];
-                    const p = f.properties || {};
-                    const v = p.viability || {};
-                    if (statusFilter && p.dev_stat !== statusFilter) continue;
-                    const score = v.score || 0;
-                    const color = viabilityColor(score);
-                    const radius = 4 + (score / 100) * 8;
-                    const coords = f.geometry?.coordinates;
-                    if (!coords) continue;
-                    const marker = L.circleMarker([coords[1], coords[0]], {
-                        radius, fillColor: color, color: color,
-                        weight: 1, fillOpacity: 0.7,
-                    });
-                    marker.bindPopup(renderDepositPopup(p));
-                    imagingDeposits.addLayer(marker);
-                    if (v.tier === 'high') high++;
-                    else if (v.tier === 'medium') med++;
-                    else low++;
-                }
-            }
-            const shown = high + med + low;
-            document.getElementById('imgDepositCount').textContent = `${shown} deposits`;
-            document.getElementById('imgHighCount').textContent = high;
-            document.getElementById('imgMedCount').textContent = med;
-            document.getElementById('imgLowCount').textContent = low;
-        }
-
-        async function imagingRenderGenerationBatched(features) {
-            imagingGeneration.clearLayers();
-            const chunk = 80;
-            let i = 0;
-            while (i < features.length) {
-                await imagingYieldToMain();
-                const end = Math.min(i + chunk, features.length);
-                for (; i < end; i++) {
-                    const f = features[i];
-                    const p = f.properties || {};
-                    const coords = f.geometry?.coordinates;
-                    if (!coords) continue;
-                    const technology = String(p.technology || '').toLowerCase();
-                    const popupProps = { ...p, __coords: coords };
-                    const marker = L.marker([coords[1], coords[0]], {
-                        icon: createGenerationIcon(technology, p.capacity_mw, pipelineAssetIds.has(p.site_id || '')),
-                    });
-                    marker.bindPopup(renderGenerationPopup(popupProps));
-                    if (pipelineAssetIds.has(p.site_id || '')) {
-                        marker.setZIndexOffset(200);
-                    }
-                    imagingGeneration.addLayer(marker);
-                }
-            }
-            document.getElementById('imgGenerationCount').textContent = `${features.length} generation assets`;
-        }
-
         async function loadImagingView() {
             initImagingMap();
             const depositParams = new URLSearchParams();
@@ -5748,7 +5681,10 @@
             if (generationMinCapacity) generationParams.set('min_capacity_mw', generationMinCapacity);
 
             try {
-                const [configRes, pipelineRes, watchlistRes] = await Promise.all([
+                const [depositsRes, concessionsRes, generationRes, configRes, pipelineRes, watchlistRes] = await Promise.all([
+                    fetch(`/api/imaging/deposits?${depositParams}`),
+                    fetch(`/api/imaging/concessions?${depositParams}`),
+                    fetch(`/api/imaging/generation?${generationParams}`),
                     fetch('/api/imaging/config'),
                     fetch('/api/pipeline/assets'),
                     fetch('/api/scouting/watchlist'),
@@ -5796,52 +5732,82 @@
                 renderScoutWatchlist(watchlistData.items || []);
                 await loadScoutingCompare();
 
-                const [depositsRes, concessionsRes, generationRes] = await Promise.all([
-                    fetch(`/api/imaging/deposits?${depositParams}`),
-                    fetch(`/api/imaging/concessions?${depositParams}`),
-                    fetch(`/api/imaging/generation?${generationParams}`),
-                ]);
-
                 if (depositsRes.ok) {
                     const data = await depositsRes.json();
                     const features = data.features || [];
                     const statusFilter = document.getElementById('imgStatus')?.value;
-                    await imagingRenderDepositsBatched(features, statusFilter);
+                    imagingDeposits.clearLayers();
+                    let high = 0, med = 0, low = 0;
+
+                    features.forEach(f => {
+                        const p = f.properties || {};
+                        const v = p.viability || {};
+                        if (statusFilter && p.dev_stat !== statusFilter) return;
+                        const score = v.score || 0;
+                        const color = viabilityColor(score);
+                        const radius = 4 + (score / 100) * 8;
+                        const coords = f.geometry?.coordinates;
+                        if (!coords) return;
+                        const marker = L.circleMarker([coords[1], coords[0]], {
+                            radius, fillColor: color, color: color,
+                            weight: 1, fillOpacity: 0.7,
+                        });
+                        marker.bindPopup(renderDepositPopup(p));
+                        imagingDeposits.addLayer(marker);
+                        if (v.tier === 'high') high++;
+                        else if (v.tier === 'medium') med++;
+                        else low++;
+                    });
+
+                    const shown = high + med + low;
+                    document.getElementById('imgDepositCount').textContent = `${shown} deposits`;
+                    document.getElementById('imgHighCount').textContent = high;
+                    document.getElementById('imgMedCount').textContent = med;
+                    document.getElementById('imgLowCount').textContent = low;
                 }
 
                 if (concessionsRes.ok) {
                     const data = await concessionsRes.json();
                     const features = data.features || [];
                     imagingConcessions.clearLayers();
-                    const concChunk = 150;
-                    let ci = 0;
-                    while (ci < features.length) {
-                        await imagingYieldToMain();
-                        const cend = Math.min(ci + concChunk, features.length);
-                        for (; ci < cend; ci++) {
-                            const f = features[ci];
-                            const p = f.properties || {};
-                            const coords = f.geometry?.coordinates;
-                            if (!coords) continue;
-                            const marker = L.marker([coords[1], coords[0]], {
-                                icon: createConcessionIcon(),
-                            });
-                            let popup = `<div style="min-width:200px;font-size:0.85rem;">`;
-                            popup += `<strong>${escapeHtml(p.name || 'Unknown')}</strong>`;
-                            popup += `<div>Operator: ${escapeHtml(p.operator || 'Unknown')}</div>`;
-                            popup += `<div>Mineral: ${escapeHtml(p.mineral_type || '')} &nbsp; Status: ${escapeHtml(p.status || '')}</div>`;
-                            popup += `<div style="color:#6B7280;">${escapeHtml(p.country || '')}</div></div>`;
-                            marker.bindPopup(popup);
-                            imagingConcessions.addLayer(marker);
-                        }
-                    }
+                    features.forEach(f => {
+                        const p = f.properties || {};
+                        const coords = f.geometry?.coordinates;
+                        if (!coords) return;
+                        const marker = L.marker([coords[1], coords[0]], {
+                            icon: createConcessionIcon(),
+                        });
+                        let popup = `<div style="min-width:200px;font-size:0.85rem;">`;
+                        popup += `<strong>${escapeHtml(p.name || 'Unknown')}</strong>`;
+                        popup += `<div>Operator: ${escapeHtml(p.operator || 'Unknown')}</div>`;
+                        popup += `<div>Mineral: ${escapeHtml(p.mineral_type || '')} &nbsp; Status: ${escapeHtml(p.status || '')}</div>`;
+                        popup += `<div style="color:#6B7280;">${escapeHtml(p.country || '')}</div></div>`;
+                        marker.bindPopup(popup);
+                        imagingConcessions.addLayer(marker);
+                    });
                     document.getElementById('imgConcessionCount').textContent = `${features.length} concessions`;
                 }
 
                 if (generationRes.ok) {
                     const data = await generationRes.json();
                     const features = data.features || [];
-                    await imagingRenderGenerationBatched(features);
+                    imagingGeneration.clearLayers();
+                    features.forEach(f => {
+                        const p = f.properties || {};
+                        const coords = f.geometry?.coordinates;
+                        if (!coords) return;
+                        const technology = String(p.technology || '').toLowerCase();
+                        const popupProps = { ...p, __coords: coords };
+                        const marker = L.marker([coords[1], coords[0]], {
+                            icon: createGenerationIcon(technology, p.capacity_mw, pipelineAssetIds.has(p.site_id || '')),
+                        });
+                        marker.bindPopup(renderGenerationPopup(popupProps));
+                        if (pipelineAssetIds.has(p.site_id || '')) {
+                            marker.setZIndexOffset(200);
+                        }
+                        imagingGeneration.addLayer(marker);
+                    });
+                    document.getElementById('imgGenerationCount').textContent = `${features.length} generation assets`;
                 }
             } catch (err) {
                 console.error('Imaging view load error:', err);

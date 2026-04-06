@@ -1,9 +1,8 @@
 """Newsroom search tool - fetches articles from Asoba newsroom API."""
 
 import logging
-import threading
 import requests
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 
@@ -59,31 +58,6 @@ def _get_auth_headers() -> Dict[str, str]:
     return {}
 
 
-_newsroom_refresh_lock = threading.Lock()
-_memo_mtime_ns: Optional[int] = None
-_memo_articles: Optional[List[Dict[str, Any]]] = None
-
-
-def _invalidate_newsroom_article_memo() -> None:
-    global _memo_mtime_ns, _memo_articles
-    _memo_mtime_ns = None
-    _memo_articles = None
-
-
-def _cache_article_mtime_ns(cache) -> Optional[int]:
-    from pathlib import Path
-
-    cf = getattr(cache, "cache_file", None)
-    if not isinstance(cf, Path):
-        return None
-    try:
-        if cf.exists():
-            return cf.stat().st_mtime_ns
-    except OSError:
-        pass
-    return None
-
-
 def fetch_newsroom_cached(max_results: int = 100):
     """
     Fetch newsroom articles with caching (90-day rolling window).
@@ -103,67 +77,27 @@ def fetch_newsroom_cached(max_results: int = 100):
     from tools.utils.newsroom_cache import get_cache
 
     cache = get_cache()
-    mtime = _cache_article_mtime_ns(cache)
-
-    def _load_into_memo() -> List[Dict[str, Any]]:
-        global _memo_mtime_ns, _memo_articles
-        articles = cache.get_articles()
-        m = _cache_article_mtime_ns(cache)
-        if m is not None:
-            _memo_mtime_ns = m
-            _memo_articles = articles
-        else:
-            _invalidate_newsroom_article_memo()
-        return articles
 
     if cache.is_fresh():
-        if (
-            mtime is not None
-            and _memo_mtime_ns == mtime
-            and _memo_articles is not None
-        ):
-            return (_memo_articles[:max_results], None)
-        articles = _load_into_memo()
-        logger.info(
-            f"Newsroom cache hit: {len(articles)} articles (age: {int(cache.get_age_seconds())}s)"
-        )
+        articles = cache.get_articles()
+        logger.info(f"Newsroom cache hit: {len(articles)} articles (age: {int(cache.get_age_seconds())}s)")
         return (articles[:max_results], None)
 
-    with _newsroom_refresh_lock:
-        if cache.is_fresh():
-            mtime = _cache_article_mtime_ns(cache)
-            if (
-                mtime is not None
-                and _memo_mtime_ns == mtime
-                and _memo_articles is not None
-            ):
-                return (_memo_articles[:max_results], None)
-            articles = _load_into_memo()
-            logger.info(
-                "Newsroom cache hit after refresh lock (another thread refreshed): "
-                f"{len(articles)} articles"
-            )
-            return (articles[:max_results], None)
+    # Cache is stale - fetch fresh data
+    logger.info("Newsroom cache stale, fetching fresh data...")
+    articles = _fetch_newsroom_api_raw(days_back=90, max_results=3000)
 
-        logger.info("Newsroom cache stale, fetching fresh data...")
-        articles = _fetch_newsroom_api_raw(days_back=90, max_results=3000)
+    if articles:
+        cache.update(articles)
+        return (articles[:max_results], None)
 
-        if articles:
-            _invalidate_newsroom_article_memo()
-            cache.update(articles)
-            return (articles[:max_results], None)
+    # API failed - try to use stale cache as fallback
+    stale_articles = cache.get_articles()
+    if stale_articles:
+        logger.warning(f"API failed, using stale cache: {len(stale_articles)} articles")
+        return (stale_articles[:max_results], "Using cached data \u2014 newsroom API unavailable")
 
-        stale_articles = cache.get_articles()
-        if stale_articles:
-            logger.warning(
-                f"API failed, using stale cache: {len(stale_articles)} articles"
-            )
-            return (
-                stale_articles[:max_results],
-                "Using cached data \u2014 newsroom API unavailable",
-            )
-
-        return ([], "Newsroom API unavailable and no cached data")
+    return ([], "Newsroom API unavailable and no cached data")
 
 
 def _fetch_newsroom_api_raw(days_back: int = 7, max_results: int = 500) -> List[Dict[str, Any]]:
