@@ -7076,5 +7076,239 @@
             }
         });
     </script>
+
+    <!-- Login / Subscription Modal -->
+    <div id="authModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:10000; align-items:center; justify-content:center;">
+        <div style="background:#fff; border-radius:16px; box-shadow:0 20px 40px rgba(0,0,0,0.2); padding:36px; width:100%; max-width:440px; position:relative; animation:slideUp 0.3s ease-out;">
+            <div style="position:absolute; top:0; left:0; right:0; height:4px; background:linear-gradient(90deg, #6366f1, #4f46e5); border-radius:16px 16px 0 0;"></div>
+            <button onclick="closeAuthModal()" style="position:absolute; top:12px; right:16px; background:none; border:none; font-size:1.5rem; cursor:pointer; color:#6B7280;">&times;</button>
+
+            <!-- Login Form -->
+            <div id="authLoginView">
+                <div style="text-align:center; margin-bottom:24px;">
+                    <h2 style="font-size:1.4rem; font-weight:700; color:#1A1A1A; margin:0 0 6px;">Sign in to Zorora</h2>
+                    <p style="color:#6B7280; font-size:0.9rem; margin:0;">Research, scouting, and alerts require an account.</p>
+                </div>
+                <div id="authError" style="display:none; background:rgba(239,68,68,0.1); color:#EF4444; padding:10px 14px; border-radius:8px; font-size:0.85rem; margin-bottom:16px; border:1px solid rgba(239,68,68,0.2);"></div>
+                <div style="margin-bottom:16px;">
+                    <label style="display:block; font-weight:600; color:#2D2D2D; margin-bottom:6px; font-size:0.85rem;">Username</label>
+                    <input type="text" id="authUsername" placeholder="Enter your username" style="width:100%; padding:12px 14px; border:2px solid #E5E7EB; border-radius:8px; font-size:0.95rem; font-family:inherit; transition:border 0.2s;" onfocus="this.style.borderColor='#6366f1'" onblur="this.style.borderColor='#E5E7EB'">
+                </div>
+                <div style="margin-bottom:20px;">
+                    <label style="display:block; font-weight:600; color:#2D2D2D; margin-bottom:6px; font-size:0.85rem;">Password</label>
+                    <input type="password" id="authPassword" placeholder="Enter your password" style="width:100%; padding:12px 14px; border:2px solid #E5E7EB; border-radius:8px; font-size:0.95rem; font-family:inherit; transition:border 0.2s;" onfocus="this.style.borderColor='#6366f1'" onblur="this.style.borderColor='#E5E7EB'">
+                </div>
+                <button onclick="doLogin()" id="authLoginBtn" style="width:100%; background:#6366f1; color:#fff; padding:13px; border:none; border-radius:8px; font-weight:600; font-size:0.95rem; cursor:pointer; font-family:inherit; transition:background 0.2s;">Sign In</button>
+                <div style="text-align:center; margin-top:18px;">
+                    <p style="color:#6B7280; font-size:0.85rem; margin:0;">Don't have an account? <a href="#" onclick="showTierView(); return false;" style="color:#6366f1; font-weight:600; text-decoration:none;">Choose a plan</a></p>
+                </div>
+            </div>
+
+            <!-- Tier Selection -->
+            <div id="authTierView" style="display:none;">
+                <div style="text-align:center; margin-bottom:20px;">
+                    <h2 style="font-size:1.4rem; font-weight:700; color:#1A1A1A; margin:0 0 6px;">Choose Your Plan</h2>
+                    <p style="color:#6B7280; font-size:0.9rem; margin:0;">Select a plan to get started with Zorora.</p>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:12px;">
+                    <a href="https://buy.stripe.com/bJe6oH9Uh6ppbDb3xm2Nq03" target="_blank" style="display:block; padding:16px; border:2px solid #E5E7EB; border-radius:10px; text-decoration:none; transition:border 0.2s, box-shadow 0.2s;" onmouseover="this.style.borderColor='#6366f1'; this.style.boxShadow='0 2px 8px rgba(99,102,241,0.15)'" onmouseout="this.style.borderColor='#E5E7EB'; this.style.boxShadow='none'">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <div>
+                                <div style="font-weight:700; color:#1A1A1A; font-size:1rem;">Explorer</div>
+                                <div style="color:#6B7280; font-size:0.8rem; margin-top:2px;">10 research queries/month &middot; Full market data</div>
+                            </div>
+                            <div style="font-weight:700; color:#6366f1; font-size:1.1rem;">$20<span style="font-size:0.75rem; font-weight:400; color:#6B7280;">/mo</span></div>
+                        </div>
+                    </a>
+                    <a href="https://buy.stripe.com/8x26oH5E1aFF22Bgk82Nq04" target="_blank" style="display:block; padding:16px; border:2px solid #6366f1; border-radius:10px; text-decoration:none; background:rgba(99,102,241,0.03); position:relative;" onmouseover="this.style.boxShadow='0 2px 8px rgba(99,102,241,0.2)'" onmouseout="this.style.boxShadow='none'">
+                        <div style="position:absolute; top:-8px; right:12px; background:#6366f1; color:#fff; font-size:0.65rem; font-weight:700; padding:2px 8px; border-radius:4px; text-transform:uppercase;">Most Popular</div>
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <div>
+                                <div style="font-weight:700; color:#1A1A1A; font-size:1rem;">Professional</div>
+                                <div style="color:#6B7280; font-size:0.8rem; margin-top:2px;">Unlimited research &middot; Discovery &middot; Alerts</div>
+                            </div>
+                            <div style="font-weight:700; color:#6366f1; font-size:1.1rem;">$99<span style="font-size:0.75rem; font-weight:400; color:#6B7280;">/mo</span></div>
+                        </div>
+                    </a>
+                    <a href="https://buy.stripe.com/bJeeVdaYl299cHfd7W2Nq05" target="_blank" style="display:block; padding:16px; border:2px solid #E5E7EB; border-radius:10px; text-decoration:none; transition:border 0.2s, box-shadow 0.2s;" onmouseover="this.style.borderColor='#6366f1'; this.style.boxShadow='0 2px 8px rgba(99,102,241,0.15)'" onmouseout="this.style.borderColor='#E5E7EB'; this.style.boxShadow='none'">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <div>
+                                <div style="font-weight:700; color:#1A1A1A; font-size:1rem;">Enterprise</div>
+                                <div style="color:#6B7280; font-size:0.8rem; margin-top:2px;">Scouting pipeline &middot; API &middot; Team features</div>
+                            </div>
+                            <div style="font-weight:700; color:#6366f1; font-size:1.1rem;">$299<span style="font-size:0.75rem; font-weight:400; color:#6B7280;">/mo</span></div>
+                        </div>
+                    </a>
+                </div>
+                <div style="text-align:center; margin-top:18px;">
+                    <p style="color:#6B7280; font-size:0.85rem; margin:0;">Already have an account? <a href="#" onclick="showLoginView(); return false;" style="color:#6366f1; font-weight:600; text-decoration:none;">Sign in</a></p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    // ─── Zorora Auth Layer ───────────────────────────────────────────────────────
+    (function() {
+        var AUTH_TOKEN_KEY = 'zorora_auth_token';
+        var AUTH_USER_KEY = 'zorora_user_data';
+
+        window.zororaAuth = {
+            getToken: function() { return localStorage.getItem(AUTH_TOKEN_KEY); },
+            getUser: function() {
+                var d = localStorage.getItem(AUTH_USER_KEY);
+                return d ? JSON.parse(d) : null;
+            },
+            setSession: function(token, user) {
+                localStorage.setItem(AUTH_TOKEN_KEY, token);
+                localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
+            },
+            clearSession: function() {
+                localStorage.removeItem(AUTH_TOKEN_KEY);
+                localStorage.removeItem(AUTH_USER_KEY);
+            },
+            isAuthenticated: function() {
+                var token = this.getToken();
+                if (!token) return false;
+                try {
+                    var payload = JSON.parse(atob(token.split('.')[1]));
+                    return payload.exp * 1000 > Date.now();
+                } catch(e) { return false; }
+            },
+            getAuthHeaders: function() {
+                var token = this.getToken();
+                return token ? { 'Authorization': 'Bearer ' + token } : {};
+            }
+        };
+
+        // Monkey-patch fetch to inject auth header and intercept 401s
+        var _originalFetch = window.fetch;
+        window.fetch = function(url, options) {
+            options = options || {};
+            // Only patch API calls to our own backend
+            if (typeof url === 'string' && url.startsWith('/api/')) {
+                options.headers = options.headers || {};
+                if (typeof options.headers.set === 'function') {
+                    // Headers object
+                    var token = window.zororaAuth.getToken();
+                    if (token) options.headers.set('Authorization', 'Bearer ' + token);
+                } else {
+                    // Plain object
+                    var authHeaders = window.zororaAuth.getAuthHeaders();
+                    for (var k in authHeaders) {
+                        options.headers[k] = authHeaders[k];
+                    }
+                }
+            }
+            return _originalFetch.call(this, url, options).then(function(response) {
+                if (response.status === 401 || response.status === 403) {
+                    // Clone to check body without consuming
+                    return response.clone().json().then(function(body) {
+                        if (body.auth_required || body.subscription_required) {
+                            if (body.subscription_required) {
+                                showAuthModal('tier');
+                            } else {
+                                showAuthModal('login');
+                            }
+                        }
+                        return response;
+                    }).catch(function() { return response; });
+                }
+                if (response.status === 429) {
+                    return response.clone().json().then(function(body) {
+                        if (body.quota_exceeded) {
+                            alert('Monthly research query limit reached (' + body.used + '/' + body.limit + '). Upgrade to Professional for unlimited queries.');
+                        }
+                        return response;
+                    }).catch(function() { return response; });
+                }
+                return response;
+            });
+        };
+    })();
+
+    function showAuthModal(view) {
+        var modal = document.getElementById('authModal');
+        modal.style.display = 'flex';
+        if (view === 'tier') {
+            showTierView();
+        } else {
+            showLoginView();
+        }
+    }
+
+    function closeAuthModal() {
+        document.getElementById('authModal').style.display = 'none';
+        document.getElementById('authError').style.display = 'none';
+    }
+
+    function showLoginView() {
+        document.getElementById('authLoginView').style.display = 'block';
+        document.getElementById('authTierView').style.display = 'none';
+        document.getElementById('authUsername').focus();
+    }
+
+    function showTierView() {
+        document.getElementById('authLoginView').style.display = 'none';
+        document.getElementById('authTierView').style.display = 'block';
+    }
+
+    async function doLogin() {
+        var btn = document.getElementById('authLoginBtn');
+        var errEl = document.getElementById('authError');
+        var username = document.getElementById('authUsername').value.trim();
+        var password = document.getElementById('authPassword').value.trim();
+
+        if (!username || !password) {
+            errEl.textContent = 'Please enter both username and password';
+            errEl.style.display = 'block';
+            return;
+        }
+
+        btn.disabled = true;
+        btn.textContent = 'Signing in...';
+        errEl.style.display = 'none';
+
+        try {
+            var resp = await fetch('/api/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: username, password: password })
+            });
+            var data = await resp.json();
+
+            if (!resp.ok) {
+                throw new Error(data.error || 'Login failed');
+            }
+
+            if (data.mfa_required) {
+                errEl.textContent = 'MFA is not yet supported in Zorora. Contact support.';
+                errEl.style.display = 'block';
+                btn.disabled = false;
+                btn.textContent = 'Sign In';
+                return;
+            }
+
+            // Success
+            window.zororaAuth.setSession(data.token, data.user);
+            closeAuthModal();
+            document.getElementById('authPassword').value = '';
+        } catch(e) {
+            errEl.textContent = e.message || 'Login failed';
+            errEl.style.display = 'block';
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Sign In';
+        }
+    }
+
+    // Enter key in login fields
+    document.getElementById('authPassword').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') doLogin();
+    });
+    document.getElementById('authUsername').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') document.getElementById('authPassword').focus();
+    });
+    </script>
 </body>
 </html>

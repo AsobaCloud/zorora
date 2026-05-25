@@ -34,8 +34,10 @@ class LocalStorage:
         if not hasattr(self._local, 'conn'):
             self._local.conn = sqlite3.connect(
                 str(self.db_path),
-                check_same_thread=False  # Allow cross-thread usage
+                check_same_thread=False,  # Allow cross-thread usage
+                timeout=30
             )
+            self._local.conn.execute("PRAGMA journal_mode=WAL")
             self._local.conn.row_factory = sqlite3.Row
         return self._local.conn
 

@@ -38,8 +38,9 @@ class MarketDataStore:
     def _get_connection(self) -> sqlite3.Connection:
         if not hasattr(self._local, "conn"):
             self._local.conn = sqlite3.connect(
-                str(self.db_path), check_same_thread=False
+                str(self.db_path), check_same_thread=False, timeout=30
             )
+            self._local.conn.execute("PRAGMA journal_mode=WAL")
             self._local.conn.row_factory = sqlite3.Row
         return self._local.conn
 

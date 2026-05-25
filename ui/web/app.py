@@ -1,6 +1,7 @@
 """Flask web application for Zorora deep research UI."""
 
 import logging
+import os
 import threading
 import uuid
 import json
@@ -32,6 +33,7 @@ from workflows.digest_synthesis import (
 )
 import config
 from config import LOGGING_LEVEL, LOGGING_FORMAT, LOG_FILE
+from ui.web.auth import require_auth, require_research_quota, get_current_user
 
 # Configure logging for web UI (mirrors main.py setup)
 if not logging.root.handlers:
@@ -239,6 +241,44 @@ def index():
     return render_template('index.html')
 
 
+@app.route('/api/auth/me', methods=['GET'])
+def auth_me():
+    """Return current user info and subscription status."""
+    from ui.web.auth import _get_user_subscription
+    user, error = get_current_user()
+    if error:
+        return error
+    if user is None:
+        return jsonify({"authenticated": False}), 200
+    tier, usage = _get_user_subscription(user.get("user_id"))
+    return jsonify({
+        "authenticated": True,
+        "user_id": user.get("user_id"),
+        "username": user.get("username"),
+        "zorora_tier": tier,
+        "usage": usage,
+    })
+
+
+@app.route('/api/auth/login', methods=['POST'])
+def auth_login_proxy():
+    """Proxy login to the Ona Platform auth API."""
+    import requests as http_requests
+    AUTH_API = os.environ.get("ONA_AUTH_API_ENDPOINT", "https://w0lovgppb9.execute-api.af-south-1.amazonaws.com/prod")
+    data = request.get_json() or {}
+    try:
+        resp = http_requests.post(
+            f"{AUTH_API}/api/auth/login",
+            json=data,
+            headers={"Content-Type": "application/json"},
+            timeout=10,
+        )
+        return (resp.text, resp.status_code, {"Content-Type": "application/json"})
+    except Exception as e:
+        logger.error(f"Auth proxy error: {e}")
+        return jsonify({"error": "Authentication service unavailable"}), 502
+
+
 def _run_research_with_progress(
     research_id: str,
     query: str,
@@ -310,6 +350,7 @@ def refine_research_query():
 
 
 @app.route('/api/research', methods=['POST'])
+@require_research_quota
 def start_research():
     """
     Start deep research workflow (async with progress tracking).
@@ -453,6 +494,7 @@ def get_research(research_id):
 
 
 @app.route('/api/research/<research_id>/chat', methods=['POST'])
+@require_auth
 def research_chat(research_id):
     """Follow-up chat for a research session."""
     try:
@@ -845,6 +887,7 @@ def get_news_intel_stats():
 
 
 @app.route('/api/alerts', methods=['POST'])
+@require_auth
 def create_alert():
     """Create a recurring digest alert from current Digest state."""
     try:
@@ -1938,6 +1981,7 @@ def get_discovery_zone_metrics(substation):
 # ---------------------------------------------------------------------------
 
 @app.route('/api/scouting/score', methods=['POST'])
+@require_auth
 def score_greenfield_site():
     """Score a clicked greenfield candidate site."""
     try:
@@ -1983,6 +2027,7 @@ def list_scout_watchlist():
 
 
 @app.route('/api/scouting/watchlist', methods=['POST'])
+@require_auth
 def create_scout_watchlist_item():
     """Persist a scored site in the greenfield watchlist."""
     try:
@@ -2391,6 +2436,7 @@ def delete_endpoint(endpoint_key):
 
 
 @app.route('/api/settings/config', methods=['POST'])
+@require_auth
 def save_settings_config():
     """
     Save configuration changes.
