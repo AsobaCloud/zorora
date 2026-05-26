@@ -1,0 +1,52 @@
+{
+  "source": "deterministic_fallback",
+  "meta": {
+    "error": null,
+    "attempt_errors": {
+      "hf_inputs_root": "HTTP 503: {\"error\":\"503 Service Unavailable\",\"code\":\"SERVICE_UNAVAILABLE\"}"
+    },
+    "endpoint_attempts": [
+      {
+        "attempt": 1,
+        "status": 503,
+        "error": "HTTP 503: {\"error\":\"503 Service Unavailable\",\"code\":\"SERVICE_UNAVAILABLE\"}"
+      },
+      {
+        "attempt": 2,
+        "status": 503,
+        "error": "HTTP 503: {\"error\":\"503 Service Unavailable\",\"code\":\"SERVICE_UNAVAILABLE\"}"
+      },
+      {
+        "attempt": 3,
+        "status": 503,
+        "error": "HTTP 503: {\"error\":\"503 Service Unavailable\",\"code\":\"SERVICE_UNAVAILABLE\"}"
+      },
+      {
+        "attempt": 4,
+        "status": 503,
+        "error": "HTTP 503: {\"error\":\"503 Service Unavailable\",\"code\":\"SERVICE_UNAVAILABLE\"}"
+      }
+    ],
+    "endpoint_contract": "POST / with {inputs, parameters}",
+    "fallback_reason": "endpoint unavailable/unparseable after root-route retries",
+    "passed_checks": [
+      "section:Executive Summary (So What)",
+      "section:Objective and Hypothesis",
+      "section:Dataset and Sampling",
+      "section:Experimental Design",
+      "section:Results",
+      "section:Reliability and Repeatability",
+      "section:Decision Use and Next Steps",
+      "summary_has_so_what",
+      "objective_states_case_control_hypothesis",
+      "dataset_mentions_counts",
+      "dataset_declares_non_random_baseline",
+      "results_compares_seeded_and_controls",
+      "results_include_market_ids",
+      "reliability_mentions_repeatability_thresholds",
+      "score_non_probability_disclaimer_present"
+    ],
+    "failed_checks": [],
+    "used_fallback": true
+  }
+}

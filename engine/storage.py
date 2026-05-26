@@ -55,6 +55,7 @@ class LocalStorage:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS research_findings (
                 research_id TEXT PRIMARY KEY,
+                user_id TEXT,                -- Owner user ID (NULL for legacy data)
                 query TEXT NOT NULL,
                 created_at TIMESTAMP NOT NULL,
                 completed_at TIMESTAMP,
@@ -67,6 +68,7 @@ class LocalStorage:
 
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_query ON research_findings(query)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_created_at ON research_findings(created_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_id ON research_findings(user_id)")
 
         # Sources index
         cursor.execute("""
@@ -162,12 +164,16 @@ class LocalStorage:
 
         # Index metadata in SQLite
         cursor = self.conn.cursor()
+        # Get user_id from state metadata if available
+        user_id = getattr(state, 'user_id', None)
+
         cursor.execute("""
             INSERT INTO research_findings
-            (research_id, query, created_at, completed_at, synthesis, file_path, total_sources, max_depth)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (research_id, user_id, query, created_at, completed_at, synthesis, file_path, total_sources, max_depth)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             research_id,
+            user_id,
             state.original_query,
             state.started_at,
             state.completed_at,
@@ -249,21 +255,54 @@ class LocalStorage:
         )
         return [dict(row) for row in cursor.fetchall()]
 
-    def search_research(self, query: Optional[str] = None, limit: int = 10) -> List[Dict[str, Any]]:
-        """Fast search using SQLite index"""
+    def search_research(self, query: Optional[str] = None, limit: int = 10, user_id: Optional[str] = None, user_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        """Fast search using SQLite index, filtered by user_id(s) if provided.
+
+        Args:
+            query: Search query string (optional)
+            limit: Max results to return
+            user_id: Single user ID to filter by (for personal access)
+            user_ids: List of user IDs to filter by (for team/enterprise access)
+        """
         cursor = self.conn.cursor()
 
-        if query:
-            cursor.execute("""
-                SELECT * FROM research_findings
-                WHERE query LIKE ?
-                ORDER BY created_at DESC LIMIT ?
-            """, (f'%{query}%', limit))
+        # Determine which user IDs to filter by
+        filter_user_ids = None
+        if user_ids:
+            filter_user_ids = user_ids
+        elif user_id:
+            filter_user_ids = [user_id]
+
+        if filter_user_ids:
+            # Build placeholders for IN clause
+            placeholders = ','.join(['?' for _ in filter_user_ids])
+
+            if query:
+                cursor.execute(f"""
+                    SELECT * FROM research_findings
+                    WHERE user_id IN ({placeholders}) AND query LIKE ?
+                    ORDER BY created_at DESC LIMIT ?
+                """, (*filter_user_ids, f'%{query}%', limit))
+            else:
+                cursor.execute(f"""
+                    SELECT * FROM research_findings
+                    WHERE user_id IN ({placeholders})
+                    ORDER BY created_at DESC LIMIT ?
+                """, (*filter_user_ids, limit))
         else:
-            cursor.execute("""
-                SELECT * FROM research_findings
-                ORDER BY created_at DESC LIMIT ?
-            """, (limit,))
+            # No user filter (legacy behavior - only show public/legacy research with NULL user_id)
+            if query:
+                cursor.execute("""
+                    SELECT * FROM research_findings
+                    WHERE user_id IS NULL AND query LIKE ?
+                    ORDER BY created_at DESC LIMIT ?
+                """, (f'%{query}%', limit))
+            else:
+                cursor.execute("""
+                    SELECT * FROM research_findings
+                    WHERE user_id IS NULL
+                    ORDER BY created_at DESC LIMIT ?
+                """, (limit,))
 
         return [dict(row) for row in cursor.fetchall()]
 

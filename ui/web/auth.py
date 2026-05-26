@@ -244,3 +244,61 @@ def require_research_quota(f):
         request.zorora_tier = tier
         return f(*args, **kwargs)
     return wrapper
+
+
+def get_user_team_context(user_id: str) -> dict:
+    """
+    Fetch user's team context from DynamoDB for Enterprise sharing.
+    Returns dict with team_id and can_share_team_content flag.
+    """
+    try:
+        response = _users_table.get_item(
+            Key={"user_id": user_id},
+            ProjectionExpression="group_id, team_id, subscriptions",
+        )
+        item = response.get("Item", {})
+
+        # Check if Enterprise tier
+        subscriptions = item.get("subscriptions", [])
+        is_enterprise = any(
+            sub.get("product") == "zorora" and sub.get("tier") == "enterprise"
+            for sub in subscriptions
+        )
+
+        team_id = item.get("group_id") or item.get("team_id")
+
+        return {
+            "team_id": team_id if is_enterprise else None,
+            "can_share_team_content": is_enterprise and team_id is not None,
+            "is_enterprise": is_enterprise,
+        }
+    except ClientError as e:
+        logger.error(f"DynamoDB error fetching team context for {user_id}: {e}")
+        return {"team_id": None, "can_share_team_content": False, "is_enterprise": False}
+
+
+def get_accessible_user_ids(user_id: str) -> list:
+    """
+    Returns list of user IDs the current user can access content for.
+    - Always includes the user's own ID
+    - For Enterprise users with a team, also includes team members' IDs
+    """
+    accessible = [user_id]
+
+    team_context = get_user_team_context(user_id)
+    if team_context["can_share_team_content"] and team_context["team_id"]:
+        try:
+            # Query for all team members
+            response = _users_table.scan(
+                FilterExpression="group_id = :team_id OR team_id = :team_id",
+                ExpressionAttributeValues={":team_id": team_context["team_id"]},
+                ProjectionExpression="user_id",
+            )
+            team_members = [item["user_id"] for item in response.get("Items", [])]
+            accessible.extend(team_members)
+            # Remove duplicates while preserving order
+            accessible = list(dict.fromkeys(accessible))
+        except ClientError as e:
+            logger.error(f"DynamoDB error fetching team members: {e}")
+
+    return accessible

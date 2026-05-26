@@ -100,15 +100,17 @@ class ResearchEngine:
         """
         return self.storage.load_research(research_id)
 
-    def search_research(self, query: Optional[str] = None, limit: int = 10) -> List[Dict[str, Any]]:
+    def search_research(self, query: Optional[str] = None, limit: int = 10, user_id: Optional[str] = None, user_ids: Optional[list] = None) -> List[Dict[str, Any]]:
         """
-        Search past research.
-        
+        Search past research, filtered by user_id(s) if provided.
+
         Args:
             query: Search query (optional)
             limit: Max results (default: 10)
-            
+            user_id: Filter by single user ID (None for legacy/public research)
+            user_ids: Filter by multiple user IDs for team/enterprise access
+
         Returns:
             List of research metadata dicts
         """
-        return self.storage.search_research(query=query, limit=limit)
+        return self.storage.search_research(query=query, limit=limit, user_id=user_id, user_ids=user_ids)

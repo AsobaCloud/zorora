@@ -392,6 +392,7 @@ def _run_research_with_progress(
     refined_query: str = None,
     research_type: str = None,
     asset_metadata: dict = None,
+    user_id: str = None,
 ):
     """Run research workflow in background thread and emit progress updates."""
     try:
@@ -413,6 +414,10 @@ def _run_research_with_progress(
             research_type=research_type,
             asset_metadata=asset_metadata,
         )
+
+        # Set user_id on state before saving (for user-specific research history)
+        if user_id:
+            state.user_id = user_id
 
         research_id_actual = research_engine.save_research(state)
 
@@ -502,6 +507,9 @@ def start_research():
             "phase": "init"
         }
         
+        # Get user_id from request (set by @require_research_quota decorator)
+        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+
         # Start research in background thread
         thread = threading.Thread(
             target=_run_research_with_progress,
@@ -510,6 +518,7 @@ def start_research():
                 "refined_query": refined_query,
                 "research_type": research_type,
                 "asset_metadata": asset_metadata,
+                "user_id": user_id,
             },
             daemon=True
         )
@@ -1022,6 +1031,7 @@ def create_alert():
 
 
 @app.route('/api/alerts', methods=['GET'])
+@require_auth
 def list_alerts():
     """List recurring digest alerts."""
     try:
@@ -1035,6 +1045,7 @@ def list_alerts():
 
 
 @app.route('/api/alerts/<alert_id>/results', methods=['GET'])
+@require_auth
 def get_alert_results(alert_id):
     """Return paginated alert results."""
     try:
@@ -1050,6 +1061,7 @@ def get_alert_results(alert_id):
 
 
 @app.route('/api/alerts/<alert_id>', methods=['PATCH'])
+@require_auth
 def update_alert(alert_id):
     """Update alert settings."""
     try:
@@ -1071,6 +1083,7 @@ def update_alert(alert_id):
 
 
 @app.route('/api/alerts/<alert_id>', methods=['DELETE'])
+@require_auth
 def delete_alert(alert_id):
     """Delete an alert and its results."""
     try:
@@ -1084,6 +1097,7 @@ def delete_alert(alert_id):
 
 
 @app.route('/api/alerts/<alert_id>/read', methods=['POST'])
+@require_auth
 def mark_alert_read(alert_id):
     """Mark all alert results as read."""
     try:
@@ -1372,6 +1386,7 @@ VALID_SCOUTING_STAGES = {"identified", "scored", "feasibility", "diligence", "de
 
 
 @app.route('/api/scouting/items', methods=['GET'])
+@require_auth
 def list_scouting_items():
     """List scouting kanban items by type, optionally filtered by stage."""
     try:
@@ -1389,6 +1404,7 @@ def list_scouting_items():
 
 
 @app.route('/api/scouting/items/<item_id>/stage', methods=['PUT'])
+@require_auth
 def update_scouting_item_stage(item_id):
     """Move a scouting item to a different pipeline stage."""
     try:
@@ -1460,6 +1476,7 @@ def _scoring_snapshot_from_site(site: dict) -> dict:
 
 
 @app.route("/api/scouting/items/<item_id>/score-preview", methods=["POST"])
+@require_auth
 def score_preview_scouting_item(item_id):
     """Compute scoring payload for a kanban item without persisting."""
     try:
@@ -1536,6 +1553,7 @@ def score_preview_scouting_item(item_id):
 
 
 @app.route("/api/scouting/items/<item_id>/apply-score", methods=["POST"])
+@require_auth
 def apply_scouting_score(item_id):
     """Persist score-preview output and set scouting_stage to scored."""
     try:
@@ -1574,6 +1592,7 @@ def apply_scouting_score(item_id):
 
 
 @app.route('/api/scouting/items', methods=['POST'])
+@require_auth
 def create_scouting_item():
     """Create a scouting item via the unified endpoint."""
     try:
@@ -1603,6 +1622,7 @@ def create_scouting_item():
 
 
 @app.route('/api/scouting/items/<item_id>', methods=['GET', 'DELETE'])
+@require_auth
 def scouting_item_get_or_delete(item_id):
     """Fetch one scouting item (GET) or delete it (DELETE)."""
     try:
@@ -1634,6 +1654,7 @@ def scouting_item_get_or_delete(item_id):
 
 
 @app.route('/api/scouting/items/<item_id>/notes', methods=['PATCH'])
+@require_auth
 def patch_scouting_item_notes(item_id):
     """Update team notes for a greenfield watchlist site or pipeline/bess asset."""
     try:
@@ -1688,6 +1709,7 @@ def get_feasibility_all(item_id):
 
 
 @app.route('/api/scouting/items/<item_id>/feasibility/<tab>', methods=['GET'])
+@require_auth
 def get_feasibility_tab(item_id, tab):
     """Return a single tab result or 404 if not yet run."""
     if tab not in FEASIBILITY_TABS:
@@ -1705,6 +1727,7 @@ def get_feasibility_tab(item_id, tab):
 
 
 @app.route('/api/scouting/items/<item_id>/feasibility/<tab>', methods=['POST'])
+@require_auth
 def run_feasibility_tab_endpoint(item_id, tab):
     """Run a feasibility tab analysis, persist result, and return it."""
     if tab not in FEASIBILITY_TABS:
@@ -2119,6 +2142,7 @@ def score_greenfield_site():
 
 
 @app.route('/api/scouting/watchlist', methods=['GET'])
+@require_auth
 def list_scout_watchlist():
     """List persisted greenfield scouting watchlist entries."""
     try:
@@ -2152,6 +2176,7 @@ def create_scout_watchlist_item():
 
 
 @app.route('/api/scouting/watchlist/<site_id>', methods=['DELETE'])
+@require_auth
 def delete_scout_watchlist_item(site_id):
     """Delete a site from the greenfield watchlist."""
     try:
@@ -2165,6 +2190,7 @@ def delete_scout_watchlist_item(site_id):
 
 
 @app.route('/api/scouting/compare', methods=['GET'])
+@require_auth
 def compare_scout_watchlist_sites():
     """Return watchlist sites for side-by-side comparison."""
     try:
@@ -2179,14 +2205,16 @@ def compare_scout_watchlist_sites():
 
 
 @app.route('/api/research/history', methods=['GET'])
+@require_auth
 def get_research_history():
     """
-    Get research history.
-    
+    Get research history for the authenticated user.
+    Enterprise users can also see team members' research.
+
     Query params:
     - limit: int (default: 10)
     - query: str (optional search)
-    
+
     Returns:
     {
         "results": [
@@ -2204,11 +2232,20 @@ def get_research_history():
     try:
         limit = int(request.args.get('limit', 10))
         search_query = request.args.get('query', None)
-        
-        results = research_engine.search_research(query=search_query, limit=limit)
-        
+        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+
+        # Get accessible user IDs (own + team for Enterprise)
+        from auth import get_accessible_user_ids
+        accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
+
+        results = research_engine.search_research(
+            query=search_query,
+            limit=limit,
+            user_ids=accessible_user_ids
+        )
+
         return jsonify({"results": results})
-        
+
     except Exception as e:
         logger.error(f"History error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
@@ -2217,6 +2254,7 @@ def get_research_history():
 # Settings API Routes
 
 @app.route('/api/settings/config', methods=['GET'])
+@require_auth
 def get_settings_config():
     """
     Get current configuration.
@@ -2251,6 +2289,7 @@ def get_settings_config():
 
 
 @app.route('/api/settings/models', methods=['GET'])
+@require_auth
 def get_settings_models():
     """
     Get available models from LM Studio and HF endpoints.
@@ -2274,6 +2313,7 @@ def get_settings_models():
 
 
 @app.route('/api/settings/endpoints', methods=['GET'])
+@require_auth
 def get_settings_endpoints():
     """
     Get saved endpoints (HF, OpenAI, Anthropic).
@@ -2360,6 +2400,7 @@ def get_settings_endpoints():
 
 
 @app.route('/api/settings/endpoint', methods=['POST'])
+@require_auth
 def save_endpoint():
     """
     Add or update an endpoint (HF, OpenAI, or Anthropic).
@@ -2478,6 +2519,7 @@ def save_endpoint():
 
 
 @app.route('/api/settings/endpoint/<endpoint_key>', methods=['DELETE'])
+@require_auth
 def delete_endpoint(endpoint_key):
     """
     Delete an endpoint (HF, OpenAI, or Anthropic).
