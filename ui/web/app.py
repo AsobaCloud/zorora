@@ -5,7 +5,7 @@ import os
 import threading
 import uuid
 import json
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context
 
 from engine.research_engine import ResearchEngine
@@ -273,10 +273,116 @@ def auth_login_proxy():
             headers={"Content-Type": "application/json"},
             timeout=10,
         )
+        # Handle MFA requirement from upstream
+        if resp.status_code == 403 or resp.status_code == 400:
+            try:
+                resp_data = resp.json()
+                if 'mfa' in resp_data.get('error', '').lower() or 'mfa_required' in resp_data:
+                    return jsonify({
+                        "error": "This account requires MFA. Please use a non-MFA account or contact support to disable MFA for Zorora access.",
+                        "mfa_required": True
+                    }), 403
+            except (ValueError, AttributeError):
+                pass
         return (resp.text, resp.status_code, {"Content-Type": "application/json"})
     except Exception as e:
         logger.error(f"Auth proxy error: {e}")
         return jsonify({"error": "Authentication service unavailable"}), 502
+
+
+@app.route('/api/auth/signup', methods=['POST'])
+def auth_signup():
+    """Create a new user account and return a JWT."""
+    import bcrypt
+    import jwt as pyjwt
+    import boto3
+    from botocore.exceptions import ClientError
+
+    data = request.get_json() or {}
+    username = (data.get("username") or "").strip().lower()
+    email = (data.get("email") or "").strip().lower()
+    password = (data.get("password") or "")
+
+    if not username or not email or not password:
+        return jsonify({"error": "Username, email, and password are required"}), 400
+    if len(username) < 3:
+        return jsonify({"error": "Username must be at least 3 characters"}), 400
+    if len(password) < 6:
+        return jsonify({"error": "Password must be at least 6 characters"}), 400
+    if "@" not in email:
+        return jsonify({"error": "Invalid email address"}), 400
+
+    region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "af-south-1"
+    dynamodb = boto3.resource("dynamodb", region_name=region)
+    users_table = dynamodb.Table(os.environ.get("USERS_TABLE", "ona-platform-users"))
+
+    # Check if username already exists (scan — acceptable for low-volume signups)
+    try:
+        resp = users_table.scan(
+            FilterExpression="username = :u",
+            ExpressionAttributeValues={":u": username},
+            ProjectionExpression="user_id",
+            Limit=1,
+        )
+        if resp.get("Items"):
+            return jsonify({"error": "Username already taken"}), 409
+    except ClientError as e:
+        logger.error(f"Signup check error: {e}")
+        return jsonify({"error": "Service error"}), 500
+
+    # Create user
+    from datetime import datetime, timezone
+    user_id = f"user_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}"
+    password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+    user_item = {
+        "user_id": user_id,
+        "username": username,
+        "email": email,
+        "password_hash": password_hash,
+        "is_active": True,
+        "role_id": "role_zorora_user",
+        "customer_ids": [],
+        "group_id": None,
+        "subscriptions": [],
+        "usage": {},
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    try:
+        users_table.put_item(Item=user_item)
+    except ClientError as e:
+        logger.error(f"Signup create error: {e}")
+        return jsonify({"error": "Failed to create account"}), 500
+
+    # Generate JWT
+    jwt_secret = os.environ.get("ONA_JWT_SECRET", "change-this-secret-key-in-production")
+    token = pyjwt.encode(
+        {
+            "user_id": user_id,
+            "username": username,
+            "role_id": "role_zorora_user",
+            "customer_ids": [],
+            "group_id": None,
+            "skin_id": None,
+            "exp": datetime.now(timezone.utc) + timedelta(hours=24),
+            "iat": datetime.now(timezone.utc),
+        },
+        jwt_secret,
+        algorithm="HS256",
+    )
+
+    return jsonify({
+        "token": token,
+        "user": {
+            "user_id": user_id,
+            "username": username,
+            "email": email,
+            "role_name": "Zorora User",
+        },
+        "message": "Account created successfully",
+    })
 
 
 def _run_research_with_progress(
