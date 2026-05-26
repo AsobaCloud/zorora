@@ -117,6 +117,43 @@ Step-by-step **Regional (Multi-AZ) EFS** creation, security groups, IAM, and **E
 
 **Production (`ona-zorora-prod`):** EFS + task definition revision with mount are recorded in [`infra/ona-zorora-prod-efs-applied.md`](infra/ona-zorora-prod-efs-applied.md) (do not duplicate-create the file system).
 
+## Authentication and Subscriptions (Hosted Platform)
+
+Zorora uses the Ona Platform auth system with JWT tokens and multi-tier subscription gating.
+
+### Tiers
+
+| Tier | Price | Research Queries | Features |
+|------|-------|------------------|----------|
+| **Explorer** | $20/mo | 10/month | Basic research, market intel, news |
+| **Professional** | $99/mo | Unlimited | Full research, alerts, chat, scouting |
+| **Enterprise** | $299/mo | Unlimited | All features + API access, custom integrations |
+
+### Authentication Flow
+
+1. **Signup**: User creates account via `/api/auth/signup` → stored in `ona-platform-users` DynamoDB table
+2. **Tier Selection**: User picks tier, redirected to Stripe checkout with `client_reference_id=user_id`
+3. **Payment**: Stripe processes payment, fires `checkout.session.completed` webhook
+4. **Activation**: Webhook Lambda updates DynamoDB `subscriptions` field with tier info
+5. **Polling**: Frontend polls `/api/auth/me` until subscription appears (handles race condition)
+
+### Gated vs Free Actions
+
+**Free** (no login required):
+- Browse Global View / market data
+- Read news intel
+
+**Gated** (requires subscription):
+- Start research (`POST /api/research`)
+- Chat with research (`POST /api/research/<id>/chat`)
+- Create alerts (`POST /api/alerts`)
+- Scouting actions (`POST /api/scouting/*`)
+- Settings changes
+
+### Local Development
+
+Local mode bypasses auth — all features available without login. Auth middleware only enforces gating when `ONA_JWT_SECRET` environment variable is present (production ECS task definition includes it from SSM).
+
 ## Configuration
 
 Research depth profiles, model budgets, and synthesis settings are configured in `config.py`. See the [full documentation](https://code.asoba.co) for details.

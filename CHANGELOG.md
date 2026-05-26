@@ -2,6 +2,18 @@
 
 All notable changes to Zorora are documented here, organized by milestone in reverse chronological order.
 
+## 2026-05-25 — v4.0.0: Authentication and Subscription Tiers
+
+Production authentication with multi-tier subscription gating and Stripe integration.
+
+- `23c5e24` Add subscription activation polling after Stripe payment (#182)
+- `f7209bc` Add auth middleware with JWT validation, login modal, and tier-based gating (#180)
+- Stripe webhook Lambda for checkout.session.completed events
+- Multi-product subscription support in ona-platform-users DynamoDB table
+- Usage counters with monthly reset for explorer tier (10 queries/month limit)
+- Gated endpoints: research, chat, alerts, scouting, settings
+- Free actions: browse global view, read news intel (no login required)
+
 ## 2026-03-06 — v3.5.0: Deep Research Contracts and Retrieval Expansion
 
 Deep research was upgraded to a contract-driven synthesis pipeline with stricter quality gates, expanded search surfaces, structured source integrations, and no raw evidence-dump fallback behavior.

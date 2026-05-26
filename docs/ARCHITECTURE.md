@@ -173,6 +173,53 @@ Current synthesis contract in this shared path:
 - Two-stage synthesis (`outline -> per-section expansion`) with quality gates
 - Deterministic structured fallback when model output is unusable (no raw evidence-dump output)
 
+## Authentication and Authorization
+
+Production deployments use JWT-based auth with tiered subscription gating.
+
+### Auth Middleware (`ui/web/auth.py`)
+
+```python
+@require_auth                    # Any valid subscription tier
+@require_research_quota         # Tier-specific query limits
+def research_endpoint():
+    ...
+```
+
+**Components:**
+- **JWT validation**: Tokens issued by Ona Platform auth Lambda, validated with shared secret from SSM
+- **DynamoDB lookup**: `ona-platform-users` table stores `subscriptions` (list) and `usage` (map) fields
+- **Tier limits**: Explorer = 10 queries/month, Professional/Enterprise = unlimited
+- **Quota reset**: Monthly auto-reset tracked via `zorora_queries_reset_at` timestamp
+
+### Subscription Schema (DynamoDB)
+
+```json
+{
+  "subscriptions": [
+    {
+      "product": "zorora",
+      "tier": "professional",
+      "started_at": "2026-05-25T00:00:00Z",
+      "stripe_subscription_id": "sub_xxx"
+    }
+  ],
+  "usage": {
+    "zorora_research_queries": 5,
+    "zorora_queries_reset_at": "2026-06-01T00:00:00+00:00"
+  }
+}
+```
+
+### Activation Flow
+
+1. User signs up → `/api/auth/signup` creates user with empty `subscriptions`
+2. Stripe checkout → `client_reference_id=user_id` passed to Stripe
+3. Webhook receives `checkout.session.completed` → Lambda updates `subscriptions`
+4. Frontend polls `/api/auth/me` until `zorora_tier != "none"`
+
+**Stripe Webhook Lambda**: `platform/infrastructure/stripe-webhook/handler.py` — maps price IDs to tiers, activates subscription in DynamoDB.
+
 ## Execution Flow
 
 ### Research Workflow
