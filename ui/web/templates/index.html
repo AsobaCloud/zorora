@@ -7104,42 +7104,52 @@
                 </div>
             </div>
 
-            <!-- Tier Selection -->
+            <!-- Signup + Tier Selection -->
             <div id="authTierView" style="display:none;">
                 <div style="text-align:center; margin-bottom:20px;">
-                    <h2 style="font-size:1.4rem; font-weight:700; color:#1A1A1A; margin:0 0 6px;">Choose Your Plan</h2>
-                    <p style="color:#6B7280; font-size:0.9rem; margin:0;">Select a plan to get started with Zorora.</p>
+                    <h2 style="font-size:1.4rem; font-weight:700; color:#1A1A1A; margin:0 0 6px;">Create Your Account</h2>
+                    <p style="color:#6B7280; font-size:0.9rem; margin:0;">Sign up and choose a plan to get started.</p>
                 </div>
-                <div style="display:flex; flex-direction:column; gap:12px;">
-                    <a href="https://buy.stripe.com/bJe6oH9Uh6ppbDb3xm2Nq03" target="_blank" style="display:block; padding:16px; border:2px solid #E5E7EB; border-radius:10px; text-decoration:none; transition:border 0.2s, box-shadow 0.2s;" onmouseover="this.style.borderColor='#6366f1'; this.style.boxShadow='0 2px 8px rgba(99,102,241,0.15)'" onmouseout="this.style.borderColor='#E5E7EB'; this.style.boxShadow='none'">
-                        <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <div>
-                                <div style="font-weight:700; color:#1A1A1A; font-size:1rem;">Explorer</div>
-                                <div style="color:#6B7280; font-size:0.8rem; margin-top:2px;">10 research queries/month &middot; Full market data</div>
-                            </div>
-                            <div style="font-weight:700; color:#6366f1; font-size:1.1rem;">$20<span style="font-size:0.75rem; font-weight:400; color:#6B7280;">/mo</span></div>
-                        </div>
-                    </a>
-                    <a href="https://buy.stripe.com/8x26oH5E1aFF22Bgk82Nq04" target="_blank" style="display:block; padding:16px; border:2px solid #6366f1; border-radius:10px; text-decoration:none; background:rgba(99,102,241,0.03); position:relative;" onmouseover="this.style.boxShadow='0 2px 8px rgba(99,102,241,0.2)'" onmouseout="this.style.boxShadow='none'">
-                        <div style="position:absolute; top:-8px; right:12px; background:#6366f1; color:#fff; font-size:0.65rem; font-weight:700; padding:2px 8px; border-radius:4px; text-transform:uppercase;">Most Popular</div>
-                        <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <div>
-                                <div style="font-weight:700; color:#1A1A1A; font-size:1rem;">Professional</div>
-                                <div style="color:#6B7280; font-size:0.8rem; margin-top:2px;">Unlimited research &middot; Discovery &middot; Alerts</div>
-                            </div>
-                            <div style="font-weight:700; color:#6366f1; font-size:1.1rem;">$99<span style="font-size:0.75rem; font-weight:400; color:#6B7280;">/mo</span></div>
-                        </div>
-                    </a>
-                    <a href="https://buy.stripe.com/bJeeVdaYl299cHfd7W2Nq05" target="_blank" style="display:block; padding:16px; border:2px solid #E5E7EB; border-radius:10px; text-decoration:none; transition:border 0.2s, box-shadow 0.2s;" onmouseover="this.style.borderColor='#6366f1'; this.style.boxShadow='0 2px 8px rgba(99,102,241,0.15)'" onmouseout="this.style.borderColor='#E5E7EB'; this.style.boxShadow='none'">
-                        <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <div>
-                                <div style="font-weight:700; color:#1A1A1A; font-size:1rem;">Enterprise</div>
-                                <div style="color:#6B7280; font-size:0.8rem; margin-top:2px;">Scouting pipeline &middot; API &middot; Team features</div>
-                            </div>
-                            <div style="font-weight:700; color:#6366f1; font-size:1.1rem;">$299<span style="font-size:0.75rem; font-weight:400; color:#6B7280;">/mo</span></div>
-                        </div>
-                    </a>
+                <div id="signupError" style="display:none; background:rgba(239,68,68,0.1); color:#EF4444; padding:10px 14px; border-radius:8px; font-size:0.85rem; margin-bottom:16px; border:1px solid rgba(239,68,68,0.2);"></div>
+                <div style="margin-bottom:12px;">
+                    <label style="display:block; font-weight:600; color:#2D2D2D; margin-bottom:6px; font-size:0.85rem;">Username</label>
+                    <input type="text" id="signupUsername" placeholder="Choose a username" style="width:100%; padding:10px 14px; border:2px solid #E5E7EB; border-radius:8px; font-size:0.9rem; font-family:inherit;" onfocus="this.style.borderColor='#6366f1'" onblur="this.style.borderColor='#E5E7EB'">
                 </div>
+                <div style="margin-bottom:12px;">
+                    <label style="display:block; font-weight:600; color:#2D2D2D; margin-bottom:6px; font-size:0.85rem;">Email</label>
+                    <input type="email" id="signupEmail" placeholder="you@company.com" style="width:100%; padding:10px 14px; border:2px solid #E5E7EB; border-radius:8px; font-size:0.9rem; font-family:inherit;" onfocus="this.style.borderColor='#6366f1'" onblur="this.style.borderColor='#E5E7EB'">
+                </div>
+                <div style="margin-bottom:16px;">
+                    <label style="display:block; font-weight:600; color:#2D2D2D; margin-bottom:6px; font-size:0.85rem;">Password</label>
+                    <input type="password" id="signupPassword" placeholder="Minimum 6 characters" style="width:100%; padding:10px 14px; border:2px solid #E5E7EB; border-radius:8px; font-size:0.9rem; font-family:inherit;" onfocus="this.style.borderColor='#6366f1'" onblur="this.style.borderColor='#E5E7EB'">
+                </div>
+                <div style="margin-bottom:18px;">
+                    <label style="display:block; font-weight:600; color:#2D2D2D; margin-bottom:8px; font-size:0.85rem;">Select a Plan</label>
+                    <div style="display:flex; flex-direction:column; gap:8px;">
+                        <label style="display:flex; align-items:center; gap:10px; padding:12px; border:2px solid #E5E7EB; border-radius:8px; cursor:pointer; transition:border 0.2s;" id="tierOption_explorer" onclick="selectTier('explorer')">
+                            <input type="radio" name="signupTier" value="explorer" style="accent-color:#6366f1;">
+                            <div style="flex:1; display:flex; justify-content:space-between; align-items:center;">
+                                <div><div style="font-weight:600; color:#1A1A1A; font-size:0.9rem;">Explorer</div><div style="color:#6B7280; font-size:0.75rem;">10 queries/month</div></div>
+                                <div style="font-weight:700; color:#6366f1; font-size:0.95rem;">$20/mo</div>
+                            </div>
+                        </label>
+                        <label style="display:flex; align-items:center; gap:10px; padding:12px; border:2px solid #6366f1; border-radius:8px; cursor:pointer; background:rgba(99,102,241,0.03);" id="tierOption_professional" onclick="selectTier('professional')">
+                            <input type="radio" name="signupTier" value="professional" checked style="accent-color:#6366f1;">
+                            <div style="flex:1; display:flex; justify-content:space-between; align-items:center;">
+                                <div><div style="font-weight:600; color:#1A1A1A; font-size:0.9rem;">Professional <span style="background:#6366f1; color:#fff; font-size:0.6rem; padding:1px 5px; border-radius:3px; margin-left:4px;">POPULAR</span></div><div style="color:#6B7280; font-size:0.75rem;">Unlimited research + alerts</div></div>
+                                <div style="font-weight:700; color:#6366f1; font-size:0.95rem;">$99/mo</div>
+                            </div>
+                        </label>
+                        <label style="display:flex; align-items:center; gap:10px; padding:12px; border:2px solid #E5E7EB; border-radius:8px; cursor:pointer; transition:border 0.2s;" id="tierOption_enterprise" onclick="selectTier('enterprise')">
+                            <input type="radio" name="signupTier" value="enterprise" style="accent-color:#6366f1;">
+                            <div style="flex:1; display:flex; justify-content:space-between; align-items:center;">
+                                <div><div style="font-weight:600; color:#1A1A1A; font-size:0.9rem;">Enterprise</div><div style="color:#6B7280; font-size:0.75rem;">Scouting + API + Teams</div></div>
+                                <div style="font-weight:700; color:#6366f1; font-size:0.95rem;">$299/mo</div>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+                <button onclick="doSignup()" id="signupBtn" style="width:100%; background:#6366f1; color:#fff; padding:13px; border:none; border-radius:8px; font-weight:600; font-size:0.95rem; cursor:pointer; font-family:inherit; transition:background 0.2s;">Create Account & Subscribe</button>
                 <div style="text-align:center; margin-top:18px;">
                     <p style="color:#6B7280; font-size:0.85rem; margin:0;">Already have an account? <a href="#" onclick="showLoginView(); return false;" style="color:#6366f1; font-weight:600; text-decoration:none;">Sign in</a></p>
                 </div>
@@ -7308,6 +7318,182 @@
     });
     document.getElementById('authUsername').addEventListener('keypress', function(e) {
         if (e.key === 'Enter') document.getElementById('authPassword').focus();
+    });
+
+    // Stripe payment links per tier
+    var STRIPE_LINKS = {
+        explorer: 'https://buy.stripe.com/bJe6oH9Uh6ppbDb3xm2Nq03',
+        professional: 'https://buy.stripe.com/8x26oH5E1aFF22Bgk82Nq04',
+        enterprise: 'https://buy.stripe.com/bJeeVdaYl299cHfd7W2Nq05'
+    };
+
+    function selectTier(tier) {
+        ['explorer', 'professional', 'enterprise'].forEach(function(t) {
+            var el = document.getElementById('tierOption_' + t);
+            if (t === tier) {
+                el.style.borderColor = '#6366f1';
+                el.style.background = 'rgba(99,102,241,0.03)';
+            } else {
+                el.style.borderColor = '#E5E7EB';
+                el.style.background = 'transparent';
+            }
+        });
+    }
+
+    async function doSignup() {
+        var btn = document.getElementById('signupBtn');
+        var errEl = document.getElementById('signupError');
+        var username = document.getElementById('signupUsername').value.trim();
+        var email = document.getElementById('signupEmail').value.trim();
+        var password = document.getElementById('signupPassword').value;
+        var tierRadio = document.querySelector('input[name="signupTier"]:checked');
+        var tier = tierRadio ? tierRadio.value : 'professional';
+
+        if (!username || !email || !password) {
+            errEl.textContent = 'Please fill in all fields';
+            errEl.style.display = 'block';
+            return;
+        }
+
+        btn.disabled = true;
+        btn.textContent = 'Creating account...';
+        errEl.style.display = 'none';
+
+        try {
+            var resp = await fetch('/api/auth/signup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: username, email: email, password: password })
+            });
+            var data = await resp.json();
+
+            if (!resp.ok) {
+                throw new Error(data.error || 'Signup failed');
+            }
+
+            // Save session
+            window.zororaAuth.setSession(data.token, data.user);
+
+            // Redirect to Stripe checkout with client_reference_id
+            var stripeUrl = STRIPE_LINKS[tier] + '?client_reference_id=' + encodeURIComponent(data.user.user_id);
+            window.open(stripeUrl, '_blank');
+
+            // Close modal and show success
+            closeAuthModal();
+            document.getElementById('signupPassword').value = '';
+        } catch(e) {
+            errEl.textContent = e.message || 'Signup failed';
+            errEl.style.display = 'block';
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Create Account & Subscribe';
+        }
+    }
+
+    // Poll for subscription activation after Stripe payment
+    async function pollForSubscription(maxAttempts = 30, interval = 2000) {
+        var attempt = 0;
+        var token = window.zororaAuth.getToken();
+
+        if (!token) {
+            console.log('No auth token, skipping subscription poll');
+            return;
+        }
+
+        // Show activating overlay
+        showActivatingOverlay();
+
+        while (attempt < maxAttempts) {
+            try {
+                var resp = await fetch('/api/auth/me', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+
+                if (!resp.ok) {
+                    throw new Error('Auth check failed: ' + resp.status);
+                }
+
+                var data = await resp.json();
+
+                // Check if subscription is active
+                if (data.zorora_tier && data.zorora_tier !== 'none') {
+                    // Subscription activated!
+                    hideActivatingOverlay();
+                    showActivationSuccess(data.zorora_tier);
+                    updateAuthUI(data);
+                    return;
+                }
+
+                // Not yet activated, wait and retry
+                attempt++;
+                if (attempt < maxAttempts) {
+                    await new Promise(r => setTimeout(r, interval));
+                }
+            } catch (e) {
+                console.error('Subscription poll error:', e);
+                attempt++;
+                if (attempt >= maxAttempts) {
+                    break;
+                }
+                await new Promise(r => setTimeout(r, interval));
+            }
+        }
+
+        // Timeout - subscription didn't activate
+        hideActivatingOverlay();
+        showActivationTimeout();
+    }
+
+    function showActivatingOverlay() {
+        var overlay = document.createElement('div');
+        overlay.id = 'activatingOverlay';
+        overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;backdrop-filter:blur(4px);';
+        overlay.innerHTML = '<div style="background:#fff;padding:32px 48px;border-radius:12px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,0.3);max-width:400px;">' +
+            '<div style="width:48px;height:48px;border:4px solid #E5E7EB;border-top-color:#6366f1;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 20px;"></div>' +
+            '<h3 style="margin:0 0 8px;font-size:1.3rem;color:#111827;">Activating your subscription...</h3>' +
+            '<p style="margin:0;color:#6B7280;font-size:0.95rem;">This may take a few moments. Please don\'t close this window.</p>' +
+            '</div>' +
+            '<style>@keyframes spin{to{transform:rotate(360deg);}}</style>';
+        document.body.appendChild(overlay);
+    }
+
+    function hideActivatingOverlay() {
+        var overlay = document.getElementById('activatingOverlay');
+        if (overlay) overlay.remove();
+    }
+
+    function showActivationSuccess(tier) {
+        var tierDisplay = tier.charAt(0).toUpperCase() + tier.slice(1);
+        showNotification('Welcome to Zorora ' + tierDisplay + '! Your subscription is active.', 'success');
+    }
+
+    function showActivationTimeout() {
+        showNotification('Subscription activation is taking longer than expected. Please refresh the page or contact support if this persists.', 'error');
+    }
+
+    function showNotification(message, type) {
+        var notif = document.createElement('div');
+        notif.style.cssText = 'position:fixed;top:20px;right:20px;padding:16px 24px;border-radius:8px;z-index:10000;font-weight:500;box-shadow:0 4px 12px rgba(0,0,0,0.15);' +
+            (type === 'success' ? 'background:#10B981;color:#fff;' : 'background:#EF4444;color:#fff;');
+        notif.textContent = message;
+        document.body.appendChild(notif);
+        setTimeout(function() { notif.remove(); }, 6000);
+    }
+
+    // Check if returning from Stripe payment
+    document.addEventListener('DOMContentLoaded', function() {
+        var urlParams = new URLSearchParams(window.location.search);
+        var stripeSuccess = urlParams.get('success') === 'true';
+        var stripeCanceled = urlParams.get('canceled') === 'true';
+
+        if (stripeSuccess && window.zororaAuth.isAuthenticated()) {
+            // Clean URL and poll for subscription
+            window.history.replaceState({}, document.title, window.location.pathname);
+            pollForSubscription();
+        } else if (stripeCanceled) {
+            window.history.replaceState({}, document.title, window.location.pathname);
+            showNotification('Payment canceled. You can try again anytime.', 'error');
+        }
     });
     </script>
 </body>
