@@ -70,6 +70,9 @@ setup(
         "scipy>=1.10.0",
         "odse>=0.1.0",
         "pypdf>=5.0.0",
+        "PyJWT>=2.8.0",
+        "boto3>=1.28.0",
+        "bcrypt>=4.0.0",
     ],
     extras_require={
         "policy": [
