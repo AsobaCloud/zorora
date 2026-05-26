@@ -1,4 +1,5 @@
 """Flask web application for Zorora deep research UI."""
+# Deploy trigger: force rebuild for auth gating deployment
 
 import logging
 import os
