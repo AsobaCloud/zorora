@@ -44,6 +44,8 @@ class AlertStore:
             """
             CREATE TABLE IF NOT EXISTS digest_alerts (
                 id TEXT PRIMARY KEY,
+                user_id TEXT,                -- Owner user ID
+                team_id TEXT,                -- Team ID for sharing
                 name TEXT NOT NULL,
                 topic TEXT,
                 date_window_days INTEGER NOT NULL DEFAULT 7,
@@ -56,6 +58,17 @@ class AlertStore:
             )
             """
         )
+        
+        # Migrations for existing tables
+        try:
+            cur.execute("ALTER TABLE digest_alerts ADD COLUMN user_id TEXT")
+        except sqlite3.OperationalError:
+            pass # Already exists
+        try:
+            cur.execute("ALTER TABLE digest_alerts ADD COLUMN team_id TEXT")
+        except sqlite3.OperationalError:
+            pass # Already exists
+
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS digest_alert_results (
@@ -80,16 +93,20 @@ class AlertStore:
         article_limit: int,
         staged_series: list[str],
         interval: str,
+        user_id: Optional[str] = None,
+        team_id: Optional[str] = None,
     ) -> str:
         alert_id = str(uuid.uuid4())
         self.conn.execute(
             """
             INSERT INTO digest_alerts
-            (id, name, topic, date_window_days, article_limit, staged_series_json, interval, last_run_at, created_at, enabled)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+            (id, user_id, team_id, name, topic, date_window_days, article_limit, staged_series_json, interval, last_run_at, created_at, enabled)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
             """,
             (
                 alert_id,
+                user_id,
+                team_id,
                 name,
                 topic,
                 int(date_window_days),
@@ -103,25 +120,55 @@ class AlertStore:
         self.conn.commit()
         return alert_id
 
-    def list_alerts(self) -> list[dict]:
-        rows = self.conn.execute(
+    def list_alerts(self, user_id: Optional[str] = None, user_ids: Optional[list[str]] = None) -> list[dict]:
+        # Filter by user_id(s) if provided
+        filter_user_ids = user_ids or ([user_id] if user_id else None)
+        
+        if filter_user_ids:
+            placeholders = ','.join(['?' for _ in filter_user_ids])
+            query = f"""
+                SELECT a.*, COALESCE((
+                    SELECT COUNT(*)
+                    FROM digest_alert_results r
+                    WHERE r.alert_id = a.id AND r.read = 0
+                ), 0) AS unread_count
+                FROM digest_alerts a
+                WHERE a.user_id IN ({placeholders})
+                ORDER BY a.created_at DESC
             """
-            SELECT a.*, COALESCE((
-                SELECT COUNT(*)
-                FROM digest_alert_results r
-                WHERE r.alert_id = a.id AND r.read = 0
-            ), 0) AS unread_count
-            FROM digest_alerts a
-            ORDER BY a.created_at DESC
-            """
-        ).fetchall()
+            rows = self.conn.execute(query, filter_user_ids).fetchall()
+        else:
+            # Legacy/Public behavior
+            rows = self.conn.execute(
+                """
+                SELECT a.*, COALESCE((
+                    SELECT COUNT(*)
+                    FROM digest_alert_results r
+                    WHERE r.alert_id = a.id AND r.read = 0
+                ), 0) AS unread_count
+                FROM digest_alerts a
+                WHERE a.user_id IS NULL
+                ORDER BY a.created_at DESC
+                """
+            ).fetchall()
+            
         return [self._row_to_alert(row) | {"unread_count": row["unread_count"]} for row in rows]
 
-    def get_alert(self, alert_id: str) -> Optional[dict]:
-        row = self.conn.execute(
-            "SELECT * FROM digest_alerts WHERE id = ?",
-            (alert_id,),
-        ).fetchone()
+    def get_alert(self, alert_id: str, user_id: Optional[str] = None, user_ids: Optional[list[str]] = None) -> Optional[dict]:
+        filter_user_ids = user_ids or ([user_id] if user_id else None)
+        
+        if filter_user_ids:
+            placeholders = ','.join(['?' for _ in filter_user_ids])
+            row = self.conn.execute(
+                f"SELECT * FROM digest_alerts WHERE id = ? AND user_id IN ({placeholders})",
+                (alert_id, *filter_user_ids),
+            ).fetchone()
+        else:
+            row = self.conn.execute(
+                "SELECT * FROM digest_alerts WHERE id = ? AND user_id IS NULL",
+                (alert_id,),
+            ).fetchone()
+            
         return self._row_to_alert(row) if row else None
 
     def update_alert(self, alert_id: str, **kwargs):

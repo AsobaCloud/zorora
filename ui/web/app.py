@@ -122,16 +122,16 @@ def normalize_country(name: str) -> str:
     return COUNTRY_ALIASES.get(name, name)
 
 
-def _load_research_by_id(research_id: str):
-    """Load research by exact ID with metadata fallback."""
-    research_data = research_engine.load_research(research_id)
+def _load_research_by_id(research_id: str, user_ids: list[str] = None):
+    """Load research by exact ID with metadata fallback, filtering by user_ids."""
+    research_data = research_engine.load_research(research_id, user_ids=user_ids)
     if research_data:
         return research_data
 
-    results = research_engine.search_research(query=research_id, limit=1)
+    results = research_engine.search_research(query=research_id, limit=1, user_ids=user_ids)
     if not results:
         return None
-    return research_engine.load_research(results[0]["research_id"])
+    return research_engine.load_research(results[0]["research_id"], user_ids=user_ids)
 
 
 def _compose_chat_reply(
@@ -584,6 +584,7 @@ def get_research_progress(research_id):
 
 
 @app.route('/api/research/<research_id>', methods=['GET'])
+@require_auth
 def get_research(research_id):
     """
     Get research results by ID.
@@ -598,9 +599,13 @@ def get_research(research_id):
     }
     """
     try:
-        research_data = _load_research_by_id(research_id)
+        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        from ui.web.auth import get_accessible_user_ids
+        accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
+
+        research_data = _load_research_by_id(research_id, user_ids=accessible_user_ids)
         if not research_data:
-            return jsonify({"error": "Research data not found"}), 404
+            return jsonify({"error": "Research data not found or unauthorized"}), 404
         
         return jsonify(research_data)
         
@@ -623,9 +628,13 @@ def research_chat(research_id):
         history = data.get("history") or []
         selected_source_ids = set(data.get("selected_source_ids") or [])
 
-        research_data = _load_research_by_id(research_id)
+        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        from ui.web.auth import get_accessible_user_ids
+        accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
+
+        research_data = _load_research_by_id(research_id, user_ids=accessible_user_ids)
         if not research_data:
-            return jsonify({"error": "Research not found"}), 404
+            return jsonify({"error": "Research not found or unauthorized"}), 404
 
         original_query = research_data.get("query") or research_data.get("original_query") or "research query"
         synthesis = research_data.get("synthesis") or ""
@@ -685,8 +694,8 @@ def research_chat(research_id):
         thread.append({"role": "user", "content": message, "at": datetime.now(timezone.utc).isoformat()})
         thread.append({"role": "assistant", "content": reply, "at": datetime.now(timezone.utc).isoformat()})
         try:
-            _local_storage.append_chat_turn(thread_key, "user", message)
-            _local_storage.append_chat_turn(thread_key, "assistant", reply)
+            _local_storage.append_chat_turn(thread_key, "user", message, user_ids=accessible_user_ids)
+            _local_storage.append_chat_turn(thread_key, "assistant", reply, user_ids=accessible_user_ids)
         except Exception as _e:
             logger.warning(f"Chat history persistence failed (non-fatal): {_e}")
 
@@ -715,9 +724,14 @@ def research_chat(research_id):
 
 
 @app.route('/api/research/<research_id>/chat/<message_id>/feedback', methods=['POST'])
+@require_auth
 def research_chat_feedback(research_id, message_id):
     """Persist thumbs up/down feedback for a research chat message (SEP-059)."""
     try:
+        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        from ui.web.auth import get_accessible_user_ids
+        accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
+
         data = request.get_json() or {}
         rating = data.get("rating")
         if rating not in ("up", "down"):
@@ -726,6 +740,7 @@ def research_chat_feedback(research_id, message_id):
             research_id=research_id,
             message_id=message_id,
             rating=rating,
+            user_ids=accessible_user_ids,
         )
         return jsonify({"status": "ok"})
     except Exception as e:
@@ -734,11 +749,16 @@ def research_chat_feedback(research_id, message_id):
 
 
 @app.route('/api/research/<research_id>/chat/history', methods=['GET'])
+@require_auth
 def research_chat_history(research_id):
     """Return persisted chat history for a research session (SEP-059)."""
     try:
+        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        from ui.web.auth import get_accessible_user_ids
+        accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
+
         thread_key = f"research:{research_id}"
-        rows = _local_storage.load_chat_thread(thread_key)
+        rows = _local_storage.load_chat_thread(thread_key, user_ids=accessible_user_ids)
         history = [
             {"role": r["role"], "content": r["content"], "at": r.get("created_at", "")}
             for r in rows
@@ -1007,6 +1027,10 @@ def get_news_intel_stats():
 def create_alert():
     """Create a recurring digest alert from current Digest state."""
     try:
+        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        # For now, team_id is optional but we'll extract it if available
+        team_id = request.user.get('team_id')
+        
         data = request.get_json() or {}
         name = (data.get("name") or "").strip()
         interval = (data.get("interval") or "daily").strip().lower()
@@ -1023,6 +1047,8 @@ def create_alert():
             article_limit=int(data.get("article_limit", 100)),
             staged_series=data.get("staged_series") or [],
             interval=interval,
+            user_id=user_id,
+            team_id=team_id,
         )
         store.close()
         return jsonify({"alert_id": alert_id, "status": "created"})
@@ -1036,8 +1062,12 @@ def create_alert():
 def list_alerts():
     """List recurring digest alerts."""
     try:
+        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        from ui.web.auth import get_accessible_user_ids
+        accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
+
         store = AlertStore()
-        alerts = store.list_alerts()
+        alerts = store.list_alerts(user_ids=accessible_user_ids)
         store.close()
         return jsonify({"alerts": alerts, "unread_total": sum(alert.get("unread_count", 0) for alert in alerts)})
     except Exception as e:
@@ -1050,9 +1080,19 @@ def list_alerts():
 def get_alert_results(alert_id):
     """Return paginated alert results."""
     try:
+        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        from ui.web.auth import get_accessible_user_ids
+        accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
+
+        store = AlertStore()
+        # Verify ownership
+        alert = store.get_alert(alert_id, user_ids=accessible_user_ids)
+        if not alert:
+            store.close()
+            return jsonify({"error": "Alert not found or unauthorized"}), 404
+
         limit = int(request.args.get("limit", 20))
         offset = int(request.args.get("offset", 0))
-        store = AlertStore()
         results = store.get_results(alert_id, limit=limit, offset=offset)
         store.close()
         return jsonify({"results": results})
@@ -1066,6 +1106,17 @@ def get_alert_results(alert_id):
 def update_alert(alert_id):
     """Update alert settings."""
     try:
+        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        from ui.web.auth import get_accessible_user_ids
+        accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
+
+        store = AlertStore()
+        # Verify ownership
+        alert = store.get_alert(alert_id, user_ids=accessible_user_ids)
+        if not alert:
+            store.close()
+            return jsonify({"error": "Alert not found or unauthorized"}), 404
+
         data = request.get_json() or {}
         updates = {}
         for key in ("name", "topic", "date_window_days", "article_limit", "interval", "enabled", "last_run_at"):
@@ -1073,11 +1124,11 @@ def update_alert(alert_id):
                 updates[key] = data[key]
         if "staged_series" in data:
             updates["staged_series"] = data["staged_series"]
-        store = AlertStore()
+        
         store.update_alert(alert_id, **updates)
-        alert = store.get_alert(alert_id)
+        updated_alert = store.get_alert(alert_id, user_ids=accessible_user_ids)
         store.close()
-        return jsonify({"status": "updated", "alert": alert})
+        return jsonify({"status": "updated", "alert": updated_alert})
     except Exception as e:
         logger.error(f"Update alert error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
@@ -1088,7 +1139,17 @@ def update_alert(alert_id):
 def delete_alert(alert_id):
     """Delete an alert and its results."""
     try:
+        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        from ui.web.auth import get_accessible_user_ids
+        accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
+
         store = AlertStore()
+        # Verify ownership
+        alert = store.get_alert(alert_id, user_ids=accessible_user_ids)
+        if not alert:
+            store.close()
+            return jsonify({"error": "Alert not found or unauthorized"}), 404
+
         store.delete_alert(alert_id)
         store.close()
         return jsonify({"status": "deleted"})
@@ -1330,13 +1391,18 @@ def refresh_regulatory_data():
 # ---------------------------------------------------------------------------
 
 @app.route('/api/pipeline/assets', methods=['GET'])
+@require_auth
 def list_pipeline_assets():
     """List brownfield acquisition pipeline assets."""
     try:
+        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        from ui.web.auth import get_accessible_user_ids
+        accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
+
         technology = request.args.get("technology")
         country = request.args.get("country")
         store = ImagingDataStore()
-        items = store.list_pipeline_assets(technology=technology, country=country)
+        items = store.list_pipeline_assets(technology=technology, country=country, user_ids=accessible_user_ids)
         store.close()
         return jsonify({"items": items, "count": len(items)})
     except Exception as e:
@@ -1345,9 +1411,13 @@ def list_pipeline_assets():
 
 
 @app.route('/api/pipeline/assets', methods=['POST'])
+@require_auth
 def create_pipeline_asset():
     """Persist a generation or deposit asset into the brownfield pipeline."""
     try:
+        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        team_id = request.user.get('team_id')
+
         data = request.get_json() or {}
         source_type = (data.get("source_type") or "").strip()
         asset = data.get("asset") or {}
@@ -1357,7 +1427,7 @@ def create_pipeline_asset():
             return jsonify({"error": "asset is required"}), 400
 
         store = ImagingDataStore()
-        saved = store.upsert_pipeline_asset(source_type=source_type, asset=asset)
+        saved = store.upsert_pipeline_asset(source_type=source_type, asset=asset, user_id=user_id, team_id=team_id)
         store.close()
         return jsonify({"status": "ok", "asset": saved})
     except Exception as e:
@@ -1366,11 +1436,13 @@ def create_pipeline_asset():
 
 
 @app.route('/api/pipeline/assets/<asset_id>', methods=['DELETE'])
+@require_auth
 def delete_pipeline_asset(asset_id):
     """Delete a brownfield pipeline asset."""
     try:
+        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
         store = ImagingDataStore()
-        store.delete_pipeline_asset(asset_id)
+        store.delete_pipeline_asset(asset_id, user_id=user_id)
         store.close()
         return jsonify({"status": "deleted"})
     except Exception as e:
@@ -1391,12 +1463,16 @@ VALID_SCOUTING_STAGES = {"identified", "scored", "feasibility", "diligence", "de
 def list_scouting_items():
     """List scouting kanban items by type, optionally filtered by stage."""
     try:
+        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        from ui.web.auth import get_accessible_user_ids
+        accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
+
         item_type = (request.args.get("type") or "").strip()
         if item_type not in VALID_SCOUTING_TYPES:
             return jsonify({"error": f"type must be one of {sorted(VALID_SCOUTING_TYPES)}"}), 400
         stage = request.args.get("stage")
         store = ImagingDataStore()
-        items = store.list_scouting_items(item_type, stage=stage)
+        items = store.list_scouting_items(item_type, stage=stage, user_ids=accessible_user_ids)
         store.close()
         return jsonify({"items": items, "count": len(items)})
     except Exception as e:
@@ -1409,6 +1485,10 @@ def list_scouting_items():
 def update_scouting_item_stage(item_id):
     """Move a scouting item to a different pipeline stage."""
     try:
+        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        from ui.web.auth import get_accessible_user_ids
+        accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
+
         data = request.get_json(silent=True) or {}
         item_type = (data.get("type") or "").strip()
         stage = (data.get("stage") or "").strip()
@@ -1421,11 +1501,11 @@ def update_scouting_item_stage(item_id):
         if stage not in VALID_SCOUTING_STAGES:
             return jsonify({"error": f"stage must be one of {sorted(VALID_SCOUTING_STAGES)}"}), 400
         store = ImagingDataStore()
-        store.update_scouting_stage(item_type, item_id, stage)
+        store.update_scouting_stage(item_type, item_id, stage, user_id=user_id)
         if item_type == "greenfield":
-            item = store.get_watchlist_site(item_id)
+            item = store.get_watchlist_site(item_id, user_ids=accessible_user_ids)
         else:
-            item = store.get_pipeline_asset(item_id)
+            item = store.get_pipeline_asset(item_id, user_ids=accessible_user_ids)
         store.close()
         return jsonify({"status": "ok", "item": item})
     except Exception as e:
@@ -1440,11 +1520,12 @@ def _compute_greenfield_score(
     technology: str,
     name: str | None = None,
     country: str | None = None,
+    user_ids: list[str] | None = None,
 ) -> dict:
     """Run greenfield rubric using DB-backed generation and pipeline lists."""
     resource_summary = fetch_resource_summary(lat=lat, lon=lon)
     generation_assets = store.get_generation_assets().get("features", [])
-    pipeline_assets = store.list_pipeline_assets()
+    pipeline_assets = store.list_pipeline_assets(user_ids=user_ids)
     return score_site(
         lat=lat,
         lon=lon,
@@ -1481,6 +1562,10 @@ def _scoring_snapshot_from_site(site: dict) -> dict:
 def score_preview_scouting_item(item_id):
     """Compute scoring payload for a kanban item without persisting."""
     try:
+        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        from ui.web.auth import get_accessible_user_ids
+        accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
+
         data = request.get_json(silent=True) or {}
         item_type = (data.get("type") or "").strip()
         if item_type not in VALID_SCOUTING_TYPES:
@@ -1494,9 +1579,9 @@ def score_preview_scouting_item(item_id):
         store = ImagingDataStore()
         try:
             if item_type == "greenfield":
-                row = store.get_watchlist_site(item_id)
+                row = store.get_watchlist_site(item_id, user_ids=accessible_user_ids)
                 if not row:
-                    return jsonify({"error": "not found"}), 404
+                    return jsonify({"error": "not found or unauthorized"}), 404
                 tech = technology_override or (row.get("technology") or "").strip().lower()
                 if not tech:
                     return jsonify({"error": "technology is required"}), 400
@@ -1507,14 +1592,15 @@ def score_preview_scouting_item(item_id):
                     tech,
                     row.get("name"),
                     row.get("country"),
+                    user_ids=accessible_user_ids,
                 )
                 site["id"] = row["id"]
                 site["notes"] = row.get("notes") or ""
                 return jsonify({"site": site})
 
-            row = store.get_pipeline_asset(item_id)
+            row = store.get_pipeline_asset(item_id, user_ids=accessible_user_ids)
             if not row:
-                return jsonify({"error": "not found"}), 404
+                return jsonify({"error": "not found or unauthorized"}), 404
 
             if item_type == "bess":
                 if row.get("source_type") != "bess":
@@ -1539,6 +1625,7 @@ def score_preview_scouting_item(item_id):
                     tech,
                     row.get("asset_name"),
                     row.get("country"),
+                    user_ids=accessible_user_ids,
                 )
             else:
                 return jsonify({"error": "unsupported type"}), 400
@@ -1558,6 +1645,10 @@ def score_preview_scouting_item(item_id):
 def apply_scouting_score(item_id):
     """Persist score-preview output and set scouting_stage to scored."""
     try:
+        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        from ui.web.auth import get_accessible_user_ids
+        accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
+
         data = request.get_json(silent=True) or {}
         item_type = (data.get("type") or "").strip()
         site = data.get("site")
@@ -1578,12 +1669,15 @@ def apply_scouting_score(item_id):
             if item_type == "greenfield":
                 to_save = dict(site)
                 to_save["scouting_stage"] = "scored"
-                saved = store.upsert_watchlist_site(to_save)
+                saved = store.upsert_watchlist_site(to_save, user_id=user_id)
             else:
+                # Verify ownership before updating pipeline asset
+                if not store.get_pipeline_asset(item_id, user_ids=accessible_user_ids):
+                    return jsonify({"error": "not found or unauthorized"}), 404
                 snapshot = _scoring_snapshot_from_site(site)
                 store.save_pipeline_scouting_score(item_id, snapshot)
-                store.update_scouting_stage(item_type, item_id, "scored")
-                saved = store.get_pipeline_asset(item_id)
+                store.update_scouting_stage(item_type, item_id, "scored", user_id=user_id)
+                saved = store.get_pipeline_asset(item_id, user_ids=accessible_user_ids)
         finally:
             store.close()
         return jsonify({"status": "ok", "item": saved})
@@ -1597,6 +1691,9 @@ def apply_scouting_score(item_id):
 def create_scouting_item():
     """Create a scouting item via the unified endpoint."""
     try:
+        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        team_id = request.user.get('team_id')
+
         data = request.get_json() or {}
         item_type = (data.get("type") or "").strip()
         if item_type not in VALID_SCOUTING_TYPES:
@@ -1606,7 +1703,7 @@ def create_scouting_item():
             site = data.get("site") or {}
             if not site:
                 return jsonify({"error": "site is required for greenfield"}), 400
-            saved = store.upsert_watchlist_site(site)
+            saved = store.upsert_watchlist_site(site, user_id=user_id, team_id=team_id)
             store.close()
             return jsonify({"status": "ok", "item": saved})
         else:
@@ -1614,7 +1711,7 @@ def create_scouting_item():
             asset = data.get("asset") or {}
             if not asset:
                 return jsonify({"error": "asset is required"}), 400
-            saved = store.upsert_pipeline_asset(source_type=source_type, asset=asset)
+            saved = store.upsert_pipeline_asset(source_type=source_type, asset=asset, user_id=user_id, team_id=team_id)
             store.close()
             return jsonify({"status": "ok", "item": saved})
     except Exception as e:
@@ -1627,6 +1724,10 @@ def create_scouting_item():
 def scouting_item_get_or_delete(item_id):
     """Fetch one scouting item (GET) or delete it (DELETE)."""
     try:
+        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        from ui.web.auth import get_accessible_user_ids
+        accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
+
         item_type = (request.args.get("type") or "").strip()
         if not item_type:
             return jsonify({"error": "type query parameter is required"}), 400
@@ -1636,16 +1737,18 @@ def scouting_item_get_or_delete(item_id):
         try:
             if request.method == "GET":
                 if item_type == "greenfield":
-                    item = store.get_watchlist_site(item_id)
+                    item = store.get_watchlist_site(item_id, user_ids=accessible_user_ids)
                 else:
-                    item = store.get_pipeline_asset(item_id)
+                    item = store.get_pipeline_asset(item_id, user_ids=accessible_user_ids)
                 if not item:
-                    return jsonify({"error": "not found"}), 404
+                    return jsonify({"error": "not found or unauthorized"}), 404
                 return jsonify({"item": item})
+            
+            # DELETE
             if item_type == "greenfield":
-                store.delete_watchlist_site(item_id)
+                store.delete_watchlist_site(item_id, user_id=user_id)
             else:
-                store.delete_pipeline_asset(item_id)
+                store.delete_pipeline_asset(item_id, user_id=user_id)
             return jsonify({"status": "deleted"})
         finally:
             store.close()
@@ -1659,6 +1762,10 @@ def scouting_item_get_or_delete(item_id):
 def patch_scouting_item_notes(item_id):
     """Update team notes for a greenfield watchlist site or pipeline/bess asset."""
     try:
+        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        from ui.web.auth import get_accessible_user_ids
+        accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
+
         data = request.get_json(silent=True) or {}
         item_type = (data.get("type") or "").strip()
         notes = data.get("notes")
@@ -1671,15 +1778,15 @@ def patch_scouting_item_notes(item_id):
         store = ImagingDataStore()
         try:
             if item_type == "greenfield":
-                if not store.get_watchlist_site(item_id):
-                    return jsonify({"error": "not found"}), 404
-                store.update_watchlist_notes(item_id, notes)
-                item = store.get_watchlist_site(item_id)
+                if not store.get_watchlist_site(item_id, user_ids=accessible_user_ids):
+                    return jsonify({"error": "not found or unauthorized"}), 404
+                store.update_watchlist_notes(item_id, notes, user_id=user_id)
+                item = store.get_watchlist_site(item_id, user_ids=accessible_user_ids)
             else:
-                if not store.get_pipeline_asset(item_id):
-                    return jsonify({"error": "not found"}), 404
-                store.update_pipeline_notes(item_id, notes)
-                item = store.get_pipeline_asset(item_id)
+                if not store.get_pipeline_asset(item_id, user_ids=accessible_user_ids):
+                    return jsonify({"error": "not found or unauthorized"}), 404
+                store.update_pipeline_notes(item_id, notes, user_id=user_id)
+                item = store.get_pipeline_asset(item_id, user_ids=accessible_user_ids)
             return jsonify({"status": "ok", "item": item})
         finally:
             store.close()
@@ -1696,12 +1803,17 @@ FEASIBILITY_TABS = {"production", "trading", "grid", "regulatory", "financial"}
 
 
 @app.route('/api/scouting/items/<item_id>/feasibility', methods=['GET'])
+@require_auth
 def get_feasibility_all(item_id):
     """Return all tab results and progress for a scouting item."""
     try:
+        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        from ui.web.auth import get_accessible_user_ids
+        accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
+
         store = ImagingDataStore()
-        results = store.get_feasibility_results(item_id)
-        progress = store.get_feasibility_progress(item_id)
+        results = store.get_feasibility_results(item_id, user_ids=accessible_user_ids)
+        progress = store.get_feasibility_progress(item_id, user_ids=accessible_user_ids)
         store.close()
         return jsonify({"results": results, "progress": progress})
     except Exception as e:
@@ -1716,8 +1828,12 @@ def get_feasibility_tab(item_id, tab):
     if tab not in FEASIBILITY_TABS:
         return jsonify({"error": f"tab must be one of {sorted(FEASIBILITY_TABS)}"}), 400
     try:
+        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        from ui.web.auth import get_accessible_user_ids
+        accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
+
         store = ImagingDataStore()
-        result = store.get_feasibility_result(item_id, tab)
+        result = store.get_feasibility_result(item_id, tab, user_ids=accessible_user_ids)
         store.close()
         if result is None:
             return jsonify({"error": f"Tab '{tab}' has not been run for item '{item_id}'"}), 404
@@ -1734,17 +1850,26 @@ def run_feasibility_tab_endpoint(item_id, tab):
     if tab not in FEASIBILITY_TABS:
         return jsonify({"error": f"tab must be one of {sorted(FEASIBILITY_TABS)}"}), 400
     try:
+        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        team_id = request.user.get('team_id') if hasattr(request, 'user') else None
+        from ui.web.auth import get_accessible_user_ids
+        accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
+
         data = request.get_json(silent=True) or {}
         item_type = (data.get("item_type") or "brownfield").strip()
 
         store = ImagingDataStore()
 
-        # Retrieve item data to pass to workflow
+        # Retrieve item data to pass to workflow — and verify the caller owns it
         item_data = {}
         if item_type == "greenfield":
-            item = store.get_watchlist_site(item_id)
+            item = store.get_watchlist_site(item_id, user_ids=accessible_user_ids)
         else:
-            item = store.get_pipeline_asset(item_id)
+            item = store.get_pipeline_asset(item_id, user_ids=accessible_user_ids)
+
+        if not item:
+            store.close()
+            return jsonify({"error": "not found or unauthorized"}), 404
 
         if item:
             if item_type == "greenfield":
@@ -1769,7 +1894,7 @@ def run_feasibility_tab_endpoint(item_id, tab):
         # For financial tab, include prior results
         extra_kwargs = {}
         if tab == "financial":
-            extra_kwargs["prior_results"] = store.get_feasibility_results(item_id)
+            extra_kwargs["prior_results"] = store.get_feasibility_results(item_id, user_ids=accessible_user_ids)
 
         from workflows.feasibility import run_feasibility_tab
         workflow_result = run_feasibility_tab(
@@ -1796,6 +1921,8 @@ def run_feasibility_tab_endpoint(item_id, tab):
             conclusion=workflow_result.get("conclusion", "marginal"),
             confidence=workflow_result.get("confidence", "medium"),
             findings=findings,
+            user_id=user_id,
+            team_id=team_id,
         )
         store.close()
 
@@ -1881,16 +2008,21 @@ def get_imaging_generation():
 
 
 @app.route('/api/imaging/search', methods=['GET'])
+@require_auth
 def imaging_discovery_search():
     """Search local discovery datasets (deposits, concessions, generation, scouting rows)."""
     try:
+        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        from ui.web.auth import get_accessible_user_ids
+        accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
+
         q = (request.args.get("q") or "").strip()
         limit = request.args.get("limit", 20, type=int) or 20
         if len(q) < 2:
             return jsonify({"results": [], "query": q})
         store = ImagingDataStore()
         try:
-            results = store.search_discovery(q, limit=limit)
+            results = store.search_discovery(q, limit=limit, user_ids=accessible_user_ids)
         finally:
             store.close()
         return jsonify({"results": results, "query": q})
@@ -2115,6 +2247,10 @@ def get_discovery_zone_metrics(substation):
 def score_greenfield_site():
     """Score a clicked greenfield candidate site."""
     try:
+        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        from ui.web.auth import get_accessible_user_ids
+        accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
+
         data = request.get_json() or {}
         if "lat" not in data or "lon" not in data:
             return jsonify({"error": "lat and lon are required"}), 400
@@ -2133,6 +2269,7 @@ def score_greenfield_site():
                 technology,
                 name=(data.get("name") or "").strip() or None,
                 country=(data.get("country") or "").strip() or None,
+                user_ids=accessible_user_ids,
             )
         finally:
             store.close()
@@ -2147,9 +2284,13 @@ def score_greenfield_site():
 def list_scout_watchlist():
     """List persisted greenfield scouting watchlist entries."""
     try:
+        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        from ui.web.auth import get_accessible_user_ids
+        accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
+
         technology = request.args.get("technology")
         store = ImagingDataStore()
-        items = store.list_watchlist_sites(technology=technology)
+        items = store.list_watchlist_sites(technology=technology, user_ids=accessible_user_ids)
         store.close()
         return jsonify({"items": items, "count": len(items)})
     except Exception as e:
@@ -2162,13 +2303,16 @@ def list_scout_watchlist():
 def create_scout_watchlist_item():
     """Persist a scored site in the greenfield watchlist."""
     try:
+        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        team_id = request.user.get('team_id') if hasattr(request, 'user') else None
+
         data = request.get_json() or {}
         site = data.get("site") or {}
         if not site:
             return jsonify({"error": "site is required"}), 400
 
         store = ImagingDataStore()
-        saved = store.upsert_watchlist_site(site)
+        saved = store.upsert_watchlist_site(site, user_id=user_id, team_id=team_id)
         store.close()
         return jsonify({"status": "ok", "site": saved})
     except Exception as e:
@@ -2181,8 +2325,9 @@ def create_scout_watchlist_item():
 def delete_scout_watchlist_item(site_id):
     """Delete a site from the greenfield watchlist."""
     try:
+        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
         store = ImagingDataStore()
-        store.delete_watchlist_site(site_id)
+        store.delete_watchlist_site(site_id, user_id=user_id)
         store.close()
         return jsonify({"status": "deleted"})
     except Exception as e:
@@ -2195,9 +2340,13 @@ def delete_scout_watchlist_item(site_id):
 def compare_scout_watchlist_sites():
     """Return watchlist sites for side-by-side comparison."""
     try:
+        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        from ui.web.auth import get_accessible_user_ids
+        accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
+
         ids = [item.strip() for item in (request.args.get("ids") or "").split(",") if item.strip()]
         store = ImagingDataStore()
-        items = store.get_watchlist_sites_by_ids(ids)
+        items = store.get_watchlist_sites_by_ids(ids, user_ids=accessible_user_ids)
         store.close()
         return jsonify({"items": items, "count": len(items)})
     except Exception as e:
@@ -2631,6 +2780,37 @@ def save_settings_config():
     except Exception as e:
         logger.error(f"Error saving config: {e}", exc_info=True)
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/settings/user', methods=['GET'])
+@require_auth
+def get_user_settings():
+    """Get per-user settings."""
+    try:
+        user_id = request.user.get('user_id')
+        settings = _local_storage.get_user_settings(user_id)
+        return jsonify(settings)
+    except Exception as e:
+        logger.error(f"Error getting user settings: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/settings/user', methods=['PATCH'])
+@require_auth
+def update_user_settings():
+    """Update per-user settings."""
+    try:
+        user_id = request.user.get('user_id')
+        data = request.get_json() or {}
+        
+        current = _local_storage.get_user_settings(user_id)
+        current.update(data)
+        
+        _local_storage.save_user_settings(user_id, current)
+        return jsonify({"status": "updated", "settings": current})
+    except Exception as e:
+        logger.error(f"Error updating user settings: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == '__main__':

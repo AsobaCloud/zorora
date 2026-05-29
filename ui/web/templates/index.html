@@ -22,6 +22,17 @@
             --card-hover: #F3F4F6;
         }
 
+        body.dark-theme {
+            --neutral-grey: #0f172a;
+            --white: #1e293b;
+            --border-grey: #334155;
+            --text-dark: #f8fafc;
+            --text-light: #94a3b8;
+            --card-hover: #1e293b;
+            --primary-black: #020617;
+            --light-purple: #1e1b4b;
+        }
+
         * {
             margin: 0;
             padding: 0;
@@ -6364,6 +6375,30 @@
                             <small class="form-help">Your Anthropic API key for accessing Anthropic endpoints</small>
                         </div>
                     </div>
+
+                    <div class="settings-section">
+                        <h3 class="settings-section-title">User Preferences</h3>
+                        <p class="settings-section-desc">Personalize your research experience.</p>
+                        
+                        <div class="form-group">
+                            <label for="defaultResearchDepth">Default Research Depth</label>
+                            <select id="defaultResearchDepth" class="form-input">
+                                <option value="1">Quick (1 iteration)</option>
+                                <option value="2">Balanced (2 iterations)</option>
+                                <option value="3">Thorough (3 iterations)</option>
+                            </select>
+                            <small class="form-help">Default depth for new research queries</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="preferredTheme">Preferred Theme</label>
+                            <select id="preferredTheme" class="form-input">
+                                <option value="dark">Dark</option>
+                                <option value="light">Light</option>
+                            </select>
+                            <small class="form-help">Choose your preferred UI theme</small>
+                        </div>
+                    </div>
                 </form>
             </div>
             
@@ -6523,6 +6558,7 @@
         let settingsConfig = null;
         let availableModels = [];
         let currentEndpointKey = null; // For editing endpoints
+        let userSettings = {};
 
         // Open settings modal
         async function openSettings() {
@@ -6566,10 +6602,11 @@
                 document.getElementById('settingsLoading').style.display = 'block';
                 document.getElementById('settingsForm').style.display = 'none';
                 
-                // Fetch config and models in parallel
-                const [configRes, modelsRes] = await Promise.all([
+                // Fetch config, models, and user settings in parallel
+                const [configRes, modelsRes, userRes] = await Promise.all([
                     fetch('/api/settings/config'),
-                    fetch('/api/settings/models')
+                    fetch('/api/settings/models'),
+                    fetch('/api/settings/user')
                 ]);
                 
                 if (!configRes.ok || !modelsRes.ok) {
@@ -6579,6 +6616,7 @@
                 settingsConfig = await configRes.json();
                 const modelsData = await modelsRes.json();
                 availableModels = modelsData.models;
+                userSettings = userRes.ok ? await userRes.json() : {};
                 
                 // Render form
                 renderSettingsForm();
@@ -6657,6 +6695,21 @@
             const anthropicApiKeyInput = document.getElementById('anthropicApiKey');
             if (settingsConfig.anthropic_api_key && settingsConfig.anthropic_api_key !== 'None') {
                 anthropicApiKeyInput.value = settingsConfig.anthropic_api_key;
+            }
+
+            // Populate User Preferences
+            const researchDepthSelect = document.getElementById('defaultResearchDepth');
+            if (userSettings.default_research_depth) {
+                researchDepthSelect.value = userSettings.default_research_depth;
+            } else {
+                researchDepthSelect.value = '1';
+            }
+            
+            const themeSelect = document.getElementById('preferredTheme');
+            if (userSettings.preferred_theme) {
+                themeSelect.value = userSettings.preferred_theme;
+            } else {
+                themeSelect.value = 'light';
             }
         }
 
@@ -7014,22 +7067,47 @@
                     // If token contains "...", do NOT include in updates (treat as unchanged)
                 });
                 
-                // Send to API
-                const response = await fetch('/api/settings/config', {
+                // Send to API (Global Config)
+                const configResponse = await fetch('/api/settings/config', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(updates),
                 });
-                
-                const result = await response.json();
-                
-                if (result.success) {
-                    alert(result.message || 'Settings saved successfully!');
+
+                const configResult = await configResponse.json();
+
+                // Collect and send User Preferences
+                const userUpdates = {
+                    default_research_depth: document.getElementById('defaultResearchDepth').value,
+                    preferred_theme: document.getElementById('preferredTheme').value,
+                };
+
+                const userResponse = await fetch('/api/settings/user', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(userUpdates),
+                });
+
+                const userResult = await userResponse.json();
+
+                if (configResult.success && userResponse.ok) {
+                    alert('Settings saved successfully! ' + (configResult.message || ''));
+
+                    // Apply theme if changed
+                    if (userUpdates.preferred_theme === 'dark') {
+                        document.body.classList.add('dark-theme');
+                    } else {
+                        document.body.classList.remove('dark-theme');
+                    }
+
                     closeSettings();
-                } else {
-                    alert('Error saving settings: ' + result.error);
+                }
+ else {
+                    const error = configResult.error || userResult.error || 'Failed to save some settings';
+                    alert('Error saving settings: ' + error);
                 }
             } catch (error) {
+
                 console.error('Error saving settings:', error);
                 alert('Failed to save settings: ' + error.message);
             } finally {
@@ -7480,21 +7558,51 @@
         setTimeout(function() { notif.remove(); }, 6000);
     }
 
-    // Check if returning from Stripe payment
-    document.addEventListener('DOMContentLoaded', function() {
-        var urlParams = new URLSearchParams(window.location.search);
-        var stripeSuccess = urlParams.get('success') === 'true';
-        var stripeCanceled = urlParams.get('canceled') === 'true';
+        // Check if returning from Stripe payment
+        document.addEventListener('DOMContentLoaded', async function() {
+            // Load user preferences
+            await loadUserPreferences();
 
-        if (stripeSuccess && window.zororaAuth.isAuthenticated()) {
-            // Clean URL and poll for subscription
-            window.history.replaceState({}, document.title, window.location.pathname);
-            pollForSubscription();
-        } else if (stripeCanceled) {
-            window.history.replaceState({}, document.title, window.location.pathname);
-            showNotification('Payment canceled. You can try again anytime.', 'error');
+            var urlParams = new URLSearchParams(window.location.search);
+            var stripeSuccess = urlParams.get('success') === 'true';
+            var stripeCanceled = urlParams.get('canceled') === 'true';
+
+            if (stripeSuccess && window.zororaAuth.isAuthenticated()) {
+                // Clean URL and poll for subscription
+                window.history.replaceState({}, document.title, window.location.pathname);
+                pollForSubscription();
+            } else if (stripeCanceled) {
+                window.history.replaceState({}, document.title, window.location.pathname);
+                showNotification('Payment canceled. You can try again anytime.', 'error');
+            }
+        });
+
+        async function loadUserPreferences() {
+            try {
+                const response = await fetch('/api/settings/user');
+                if (response.ok) {
+                    const prefs = await response.json();
+                    
+                    // Apply research depth
+                    if (prefs.default_research_depth) {
+                        const depthOption = document.querySelector(`.depth-option[data-depth="${prefs.default_research_depth}"]`);
+                        if (depthOption) {
+                            document.querySelectorAll('.depth-option').forEach(opt => opt.classList.remove('selected'));
+                            depthOption.classList.add('selected');
+                        }
+                    }
+                    
+                    // Apply theme
+                    if (prefs.preferred_theme === 'dark') {
+                        document.body.classList.add('dark-theme');
+                    } else {
+                        document.body.classList.remove('dark-theme');
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading user preferences:', error);
+            }
         }
-    });
     </script>
 </body>
 </html>

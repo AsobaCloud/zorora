@@ -108,6 +108,8 @@ class ImagingDataStore:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS pipeline_assets (
                 id TEXT PRIMARY KEY,
+                user_id TEXT,                -- Owner user ID
+                team_id TEXT,                -- Team ID for sharing
                 source_type TEXT NOT NULL,
                 source_asset_id TEXT NOT NULL,
                 asset_name TEXT,
@@ -132,6 +134,8 @@ class ImagingDataStore:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS scouting_watchlist (
                 id TEXT PRIMARY KEY,
+                user_id TEXT,                -- Owner user ID
+                team_id TEXT,                -- Team ID for sharing
                 name TEXT,
                 technology TEXT,
                 country TEXT,
@@ -157,6 +161,18 @@ class ImagingDataStore:
                 )
             except sqlite3.OperationalError:
                 pass  # column already exists
+
+        # Ownership migrations for existing tables
+        for table in ("pipeline_assets", "scouting_watchlist", "feasibility_results"):
+            try:
+                cur.execute(f"ALTER TABLE {table} ADD COLUMN user_id TEXT")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                cur.execute(f"ALTER TABLE {table} ADD COLUMN team_id TEXT")
+            except sqlite3.OperationalError:
+                pass
+
         try:
             cur.execute("ALTER TABLE pipeline_assets ADD COLUMN notes TEXT DEFAULT ''")
         except sqlite3.OperationalError:
@@ -176,6 +192,8 @@ class ImagingDataStore:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS feasibility_results (
                 id TEXT PRIMARY KEY,
+                user_id TEXT,
+                team_id TEXT,
                 item_id TEXT NOT NULL,
                 item_type TEXT NOT NULL,
                 tab TEXT NOT NULL,
@@ -203,6 +221,13 @@ class ImagingDataStore:
             )
         except Exception:
             pass
+            
+        # Update index for isolation
+        cur.execute("DROP INDEX IF EXISTS idx_pipeline_source")
+        cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_pipeline_source
+            ON pipeline_assets (source_type, source_asset_id, user_id)
+        """)
         conn.commit()
 
     # -- writes ---------------------------------------------------------------
@@ -320,8 +345,8 @@ class ImagingDataStore:
         )
         conn.commit()
 
-    def upsert_pipeline_asset(self, source_type: str, asset: dict) -> dict:
-        """Insert or update a brownfield pipeline asset keyed by source asset id."""
+    def upsert_pipeline_asset(self, source_type: str, asset: dict, user_id: Optional[str] = None, team_id: Optional[str] = None) -> dict:
+        """Insert or update a brownfield pipeline asset keyed by source asset id and owner."""
         props = dict(asset.get("properties") or asset)
         geometry = asset.get("geometry") or {}
         coords = geometry.get("coordinates") or [props.get("lon"), props.get("lat")]
@@ -349,12 +374,29 @@ class ImagingDataStore:
         now_utc = datetime.now(timezone.utc).isoformat()
 
         cur = self.conn.cursor()
-        cur.execute(
-            "SELECT id, created_at FROM pipeline_assets WHERE source_type = ? AND source_asset_id = ?",
-            (source_type, source_asset_id),
-        )
+        
+        # Ownership check for existing asset
+        if user_id:
+            cur.execute(
+                "SELECT id, created_at FROM pipeline_assets WHERE source_type = ? AND source_asset_id = ? AND user_id = ?",
+                (source_type, source_asset_id, user_id),
+            )
+        else:
+            cur.execute(
+                "SELECT id, created_at FROM pipeline_assets WHERE source_type = ? AND source_asset_id = ? AND user_id IS NULL",
+                (source_type, source_asset_id),
+            )
+            
         existing = cur.fetchone()
-        asset_id = existing["id"] if existing else f"{source_type}:{source_asset_id}"
+        if existing:
+            asset_id = existing["id"]
+        elif user_id:
+            # Namespace the primary key by owner so two users saving the same
+            # source asset get distinct rows instead of colliding on the PK and
+            # overwriting each other via INSERT OR REPLACE (mirrors watchlist site_id).
+            asset_id = f"{user_id}:{source_type}:{source_asset_id}"
+        else:
+            asset_id = f"{source_type}:{source_asset_id}"
         created_at = existing["created_at"] if existing else now_utc
 
         preserved_notes = ""
@@ -369,11 +411,13 @@ class ImagingDataStore:
 
         cur.execute(
             """INSERT OR REPLACE INTO pipeline_assets
-               (id, source_type, source_asset_id, asset_name, technology, capacity_mw, status,
+               (id, user_id, team_id, source_type, source_asset_id, asset_name, technology, capacity_mw, status,
                 operator, owner, country, lat, lon, research_query, metadata_json, notes, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 asset_id,
+                user_id,
+                team_id,
                 source_type,
                 source_asset_id,
                 asset_name,
@@ -393,7 +437,7 @@ class ImagingDataStore:
             ),
         )
         self.conn.commit()
-        return self.get_pipeline_asset(asset_id)
+        return self.get_pipeline_asset(asset_id, user_id=user_id)
 
     def save_pipeline_scouting_score(self, asset_id: str, snapshot: dict) -> dict:
         """Merge scoring snapshot into pipeline_assets.metadata_json under scouting_score."""
@@ -420,12 +464,20 @@ class ImagingDataStore:
             raise ValueError(f"pipeline asset not found after update: {asset_id}")
         return out
 
-    def upsert_watchlist_site(self, site: dict) -> dict:
+    def upsert_watchlist_site(self, site: dict, user_id: Optional[str] = None, team_id: Optional[str] = None) -> dict:
         """Insert or update a greenfield scouting watchlist site."""
         lat = float(site.get("lat"))
         lon = float(site.get("lon"))
         technology = str(site.get("technology", "") or "").strip().lower()
-        site_id = site.get("id") or f"{technology}:{lat:.4f}:{lon:.4f}"
+        
+        # Identity includes user_id for isolation if not explicitly provided
+        site_id = site.get("id")
+        if not site_id:
+            if user_id:
+                site_id = f"{user_id}:{technology}:{lat:.4f}:{lon:.4f}"
+            else:
+                site_id = f"{technology}:{lat:.4f}:{lon:.4f}"
+                
         now_utc = datetime.now(timezone.utc).isoformat()
 
         cur = self.conn.cursor()
@@ -465,12 +517,14 @@ class ImagingDataStore:
 
         cur.execute(
             """INSERT OR REPLACE INTO scouting_watchlist
-               (id, name, technology, country, lat, lon, overall_score, score_label, notes,
+               (id, user_id, team_id, name, technology, country, lat, lon, overall_score, score_label, notes,
                 factors_json, resource_json, scouting_stage, rubric_earned, rubric_possible,
                 screening_meta_json, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 site_id,
+                user_id,
+                team_id,
                 site.get("name", ""),
                 technology,
                 site.get("country", ""),
@@ -490,7 +544,7 @@ class ImagingDataStore:
             ),
         )
         self.conn.commit()
-        return self.get_watchlist_site(site_id)
+        return self.get_watchlist_site(site_id, user_id=user_id)
 
     # -- reads ----------------------------------------------------------------
 
@@ -582,11 +636,13 @@ class ImagingDataStore:
             })
         return {"type": "FeatureCollection", "features": features}
 
-    def search_discovery(self, query: str, limit: int = 20) -> list[dict]:
+    def search_discovery(self, query: str, limit: int = 20, user_id: Optional[str] = None, user_ids: Optional[list[str]] = None) -> list[dict]:
         """Search deposits, concessions, generation assets, pipeline, and watchlist by name/text."""
         raw = (query or "").strip()
         if len(raw) < 2:
             return []
+            
+        filter_user_ids = user_ids or ([user_id] if user_id else None)
         lim = max(1, min(int(limit or 20), 40))
         per = max(min(lim // 3, 12), 6)
         pat = f"%{raw.lower()}%"
@@ -652,14 +708,23 @@ class ImagingDataStore:
                 det = f"{det} · {st}" if det else st
             _append("generation", row, row["name"] or "", det)
 
-        cur.execute(
-            """SELECT id, asset_name, lat, lon, country, technology, capacity_mw, source_type FROM pipeline_assets
-               WHERE LOWER(COALESCE(asset_name,'')) LIKE ? OR LOWER(COALESCE(country,'')) LIKE ?
+        # Isolated: pipeline_assets
+        p_query = """SELECT id, asset_name, lat, lon, country, technology, capacity_mw, source_type FROM pipeline_assets
+               WHERE (LOWER(COALESCE(asset_name,'')) LIKE ? OR LOWER(COALESCE(country,'')) LIKE ?
                   OR LOWER(COALESCE(technology,'')) LIKE ? OR LOWER(COALESCE(operator,'')) LIKE ?
-                  OR LOWER(COALESCE(owner,'')) LIKE ?
-               LIMIT ?""",
-            (pat, pat, pat, pat, pat, per),
-        )
+                  OR LOWER(COALESCE(owner,'')) LIKE ?)"""
+        p_params = [pat, pat, pat, pat, pat]
+        
+        if filter_user_ids:
+            placeholders = ','.join(['?' for _ in filter_user_ids])
+            p_query += f" AND user_id IN ({placeholders})"
+            p_params.extend(filter_user_ids)
+        else:
+            p_query += " AND user_id IS NULL"
+            
+        p_query += " LIMIT ?"
+        p_params.append(per)
+        cur.execute(p_query, p_params)
         for row in cur.fetchall():
             kind = "bess" if row["source_type"] == "bess" else "pipeline"
             mw = row["capacity_mw"]
@@ -667,22 +732,38 @@ class ImagingDataStore:
             det = f"{row['technology'] or ''} · {mw_s}".strip(" ·")
             _append(kind, row, row["asset_name"] or "", det)
 
-        cur.execute(
-            """SELECT id, name, lat, lon, country, technology FROM scouting_watchlist
-               WHERE LOWER(COALESCE(name,'')) LIKE ? OR LOWER(COALESCE(country,'')) LIKE ?
-                  OR LOWER(COALESCE(technology,'')) LIKE ?
-               LIMIT ?""",
-            (pat, pat, pat, per),
-        )
+        # Isolated: scouting_watchlist
+        w_query = """SELECT id, name, lat, lon, country, technology FROM scouting_watchlist
+               WHERE (LOWER(COALESCE(name,'')) LIKE ? OR LOWER(COALESCE(country,'')) LIKE ?
+                  OR LOWER(COALESCE(technology,'')) LIKE ?)"""
+        w_params = [pat, pat, pat]
+        
+        if filter_user_ids:
+            placeholders = ','.join(['?' for _ in filter_user_ids])
+            w_query += f" AND user_id IN ({placeholders})"
+            w_params.extend(filter_user_ids)
+        else:
+            w_query += " AND user_id IS NULL"
+            
+        w_query += " LIMIT ?"
+        w_params.append(per)
+        cur.execute(w_query, w_params)
         for row in cur.fetchall():
             _append("greenfield", row, row["name"] or "", row["technology"] or "")
 
         return out[:lim]
 
-    def get_pipeline_asset(self, asset_id: str) -> Optional[dict]:
-        """Return a single brownfield pipeline asset by id."""
+    def get_pipeline_asset(self, asset_id: str, user_id: Optional[str] = None, user_ids: Optional[list[str]] = None) -> Optional[dict]:
+        """Return a single brownfield pipeline asset by id, with ownership check."""
+        filter_user_ids = user_ids or ([user_id] if user_id else None)
         cur = self.conn.cursor()
-        cur.execute("SELECT * FROM pipeline_assets WHERE id = ?", (asset_id,))
+        
+        if filter_user_ids:
+            placeholders = ','.join(['?' for _ in filter_user_ids])
+            cur.execute(f"SELECT * FROM pipeline_assets WHERE id = ? AND user_id IN ({placeholders})", (asset_id, *filter_user_ids))
+        else:
+            cur.execute("SELECT * FROM pipeline_assets WHERE id = ? AND user_id IS NULL", (asset_id,))
+            
         row = cur.fetchone()
         return self._row_to_pipeline_asset(row) if row else None
 
@@ -690,61 +771,107 @@ class ImagingDataStore:
         self,
         technology: Optional[str] = None,
         country: Optional[str] = None,
+        user_id: Optional[str] = None,
+        user_ids: Optional[list[str]] = None,
     ) -> list[dict]:
-        """List brownfield pipeline assets."""
+        """List brownfield pipeline assets, filtered by owner/team."""
+        filter_user_ids = user_ids or ([user_id] if user_id else None)
+        
         query = "SELECT * FROM pipeline_assets WHERE 1=1"
         params: list = []
+        
+        if filter_user_ids:
+            placeholders = ','.join(['?' for _ in filter_user_ids])
+            query += f" AND user_id IN ({placeholders})"
+            params.extend(filter_user_ids)
+        else:
+            query += " AND user_id IS NULL"
+            
         if technology:
             query += " AND technology = ?"
             params.append(technology)
         if country:
             query += " AND country = ?"
             params.append(country)
+            
         query += " ORDER BY created_at DESC"
         cur = self.conn.cursor()
         cur.execute(query, params)
         return [self._row_to_pipeline_asset(row) for row in cur.fetchall()]
 
-    def delete_pipeline_asset(self, asset_id: str):
+    def delete_pipeline_asset(self, asset_id: str, user_id: Optional[str] = None):
         """Delete a brownfield pipeline asset."""
-        self.conn.execute("DELETE FROM pipeline_assets WHERE id = ?", (asset_id,))
+        if user_id:
+            self.conn.execute("DELETE FROM pipeline_assets WHERE id = ? AND user_id = ?", (asset_id, user_id))
+        else:
+            self.conn.execute("DELETE FROM pipeline_assets WHERE id = ? AND user_id IS NULL", (asset_id,))
         self.conn.commit()
 
-    def get_watchlist_site(self, site_id: str) -> Optional[dict]:
-        """Return a single watchlist site by id."""
+    def get_watchlist_site(self, site_id: str, user_id: Optional[str] = None, user_ids: Optional[list[str]] = None) -> Optional[dict]:
+        """Return a single watchlist site by id, with ownership check."""
+        filter_user_ids = user_ids or ([user_id] if user_id else None)
         cur = self.conn.cursor()
-        cur.execute("SELECT * FROM scouting_watchlist WHERE id = ?", (site_id,))
+        
+        if filter_user_ids:
+            placeholders = ','.join(['?' for _ in filter_user_ids])
+            cur.execute(f"SELECT * FROM scouting_watchlist WHERE id = ? AND user_id IN ({placeholders})", (site_id, *filter_user_ids))
+        else:
+            cur.execute("SELECT * FROM scouting_watchlist WHERE id = ? AND user_id IS NULL", (site_id,))
+            
         row = cur.fetchone()
         return self._row_to_watchlist_site(row) if row else None
 
-    def list_watchlist_sites(self, technology: Optional[str] = None) -> list[dict]:
-        """List persisted scouting watchlist sites."""
+    def list_watchlist_sites(self, technology: Optional[str] = None, user_id: Optional[str] = None, user_ids: Optional[list[str]] = None) -> list[dict]:
+        """List persisted scouting watchlist sites, filtered by owner/team."""
+        filter_user_ids = user_ids or ([user_id] if user_id else None)
+        
         query = "SELECT * FROM scouting_watchlist WHERE 1=1"
         params: list = []
+        
+        if filter_user_ids:
+            placeholders = ','.join(['?' for _ in filter_user_ids])
+            query += f" AND user_id IN ({placeholders})"
+            params.extend(filter_user_ids)
+        else:
+            query += " AND user_id IS NULL"
+            
         if technology:
             query += " AND technology = ?"
             params.append(technology)
+            
         query += " ORDER BY created_at DESC"
         cur = self.conn.cursor()
         cur.execute(query, params)
         return [self._row_to_watchlist_site(row) for row in cur.fetchall()]
 
-    def get_watchlist_sites_by_ids(self, ids: list[str]) -> list[dict]:
-        """Return watchlist sites in the order requested."""
+    def get_watchlist_sites_by_ids(self, ids: list[str], user_id: Optional[str] = None, user_ids: Optional[list[str]] = None) -> list[dict]:
+        """Return watchlist sites in the order requested, with ownership check."""
         if not ids:
             return []
+        filter_user_ids = user_ids or ([user_id] if user_id else None)
         placeholders = ", ".join("?" for _ in ids)
+        
+        query = f"SELECT * FROM scouting_watchlist WHERE id IN ({placeholders})"
+        params = list(ids)
+        
+        if filter_user_ids:
+            u_placeholders = ','.join(['?' for _ in filter_user_ids])
+            query += f" AND user_id IN ({u_placeholders})"
+            params.extend(filter_user_ids)
+        else:
+            query += " AND user_id IS NULL"
+            
         cur = self.conn.cursor()
-        cur.execute(
-            f"SELECT * FROM scouting_watchlist WHERE id IN ({placeholders})",
-            ids,
-        )
+        cur.execute(query, params)
         rows = {row["id"]: self._row_to_watchlist_site(row) for row in cur.fetchall()}
         return [rows[site_id] for site_id in ids if site_id in rows]
 
-    def delete_watchlist_site(self, site_id: str):
+    def delete_watchlist_site(self, site_id: str, user_id: Optional[str] = None):
         """Delete a scouting watchlist site."""
-        self.conn.execute("DELETE FROM scouting_watchlist WHERE id = ?", (site_id,))
+        if user_id:
+            self.conn.execute("DELETE FROM scouting_watchlist WHERE id = ? AND user_id = ?", (site_id, user_id))
+        else:
+            self.conn.execute("DELETE FROM scouting_watchlist WHERE id = ? AND user_id IS NULL", (site_id,))
         self.conn.commit()
 
     def get_staleness(self, layer: str) -> Optional[float]:
@@ -792,6 +919,8 @@ class ImagingDataStore:
         conclusion: str,
         confidence: str,
         findings: dict,
+        user_id: Optional[str] = None,
+        team_id: Optional[str] = None,
     ):
         """Insert or replace a feasibility tab result and update the FTS index."""
         result_id = f"{item_id}:{tab}"
@@ -805,11 +934,13 @@ class ImagingDataStore:
         created_at = existing["created_at"] if existing else now_utc
         cur.execute(
             """INSERT OR REPLACE INTO feasibility_results
-               (id, item_id, item_type, tab, conclusion, confidence,
+               (id, user_id, team_id, item_id, item_type, tab, conclusion, confidence,
                 findings_json, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 result_id,
+                user_id,
+                team_id,
                 item_id,
                 item_type,
                 tab,
@@ -845,32 +976,56 @@ class ImagingDataStore:
             logger.warning("FTS incremental update failed (non-fatal): %s", exc)
         self.conn.commit()
 
-    def get_feasibility_results(self, item_id: str) -> list:
-        """Return all tab results for an item as a list of dicts."""
+    def get_feasibility_results(self, item_id: str, user_id: Optional[str] = None, user_ids: Optional[list[str]] = None) -> list:
+        """Return all tab results for an item as a list of dicts, filtered by owner/team."""
+        filter_user_ids = user_ids or ([user_id] if user_id else None)
         cur = self.conn.cursor()
-        cur.execute(
-            "SELECT * FROM feasibility_results WHERE item_id = ?",
-            (item_id,),
-        )
+        if filter_user_ids:
+            placeholders = ','.join(['?' for _ in filter_user_ids])
+            cur.execute(
+                f"SELECT * FROM feasibility_results WHERE item_id = ? AND user_id IN ({placeholders})",
+                (item_id, *filter_user_ids),
+            )
+        else:
+            cur.execute(
+                "SELECT * FROM feasibility_results WHERE item_id = ? AND user_id IS NULL",
+                (item_id,),
+            )
         return [self._row_to_feasibility_result(row) for row in cur.fetchall()]
 
-    def get_feasibility_result(self, item_id: str, tab: str) -> Optional[dict]:
-        """Return a single tab result or None if not yet run."""
+    def get_feasibility_result(self, item_id: str, tab: str, user_id: Optional[str] = None, user_ids: Optional[list[str]] = None) -> Optional[dict]:
+        """Return a single tab result or None if not yet run, filtered by owner/team."""
+        filter_user_ids = user_ids or ([user_id] if user_id else None)
         cur = self.conn.cursor()
-        cur.execute(
-            "SELECT * FROM feasibility_results WHERE item_id = ? AND tab = ?",
-            (item_id, tab),
-        )
+        if filter_user_ids:
+            placeholders = ','.join(['?' for _ in filter_user_ids])
+            cur.execute(
+                f"SELECT * FROM feasibility_results WHERE item_id = ? AND tab = ? AND user_id IN ({placeholders})",
+                (item_id, tab, *filter_user_ids),
+            )
+        else:
+            cur.execute(
+                "SELECT * FROM feasibility_results WHERE item_id = ? AND tab = ? AND user_id IS NULL",
+                (item_id, tab),
+            )
         row = cur.fetchone()
         return self._row_to_feasibility_result(row) if row else None
 
-    def get_feasibility_progress(self, item_id: str) -> dict:
-        """Return completion summary: {completed, total, tabs}."""
+    def get_feasibility_progress(self, item_id: str, user_id: Optional[str] = None, user_ids: Optional[list[str]] = None) -> dict:
+        """Return completion summary: {completed, total, tabs}, filtered by owner/team."""
+        filter_user_ids = user_ids or ([user_id] if user_id else None)
         cur = self.conn.cursor()
-        cur.execute(
-            "SELECT tab, conclusion FROM feasibility_results WHERE item_id = ?",
-            (item_id,),
-        )
+        if filter_user_ids:
+            placeholders = ','.join(['?' for _ in filter_user_ids])
+            cur.execute(
+                f"SELECT tab, conclusion FROM feasibility_results WHERE item_id = ? AND user_id IN ({placeholders})",
+                (item_id, *filter_user_ids),
+            )
+        else:
+            cur.execute(
+                "SELECT tab, conclusion FROM feasibility_results WHERE item_id = ? AND user_id IS NULL",
+                (item_id,),
+            )
         rows = cur.fetchall()
         tabs = {row["tab"]: row["conclusion"] for row in rows}
         return {
@@ -1013,42 +1168,74 @@ class ImagingDataStore:
     VALID_SCOUTING_STAGES = {"identified", "scored", "feasibility", "diligence", "decision"}
     VALID_ITEM_TYPES = {"brownfield", "greenfield", "bess"}
 
-    def update_scouting_stage(self, item_type: str, item_id: str, stage: str):
-        """Move a scouting item to a new pipeline stage."""
+    def update_scouting_stage(self, item_type: str, item_id: str, stage: str, user_id: Optional[str] = None):
+        """Move a scouting item to a new pipeline stage, with ownership check."""
         if item_type not in self.VALID_ITEM_TYPES:
             raise ValueError(f"Invalid item_type: {item_type!r}")
         if stage not in self.VALID_SCOUTING_STAGES:
             raise ValueError(f"Invalid stage: {stage!r}")
         table = "scouting_watchlist" if item_type == "greenfield" else "pipeline_assets"
-        self.conn.execute(
-            f"UPDATE {table} SET scouting_stage = ? WHERE id = ?",
-            (stage, item_id),
-        )
+        
+        if user_id:
+            self.conn.execute(
+                f"UPDATE {table} SET scouting_stage = ? WHERE id = ? AND user_id = ?",
+                (stage, item_id, user_id),
+            )
+        else:
+            self.conn.execute(
+                f"UPDATE {table} SET scouting_stage = ? WHERE id = ? AND user_id IS NULL",
+                (stage, item_id),
+            )
         self.conn.commit()
 
-    def update_watchlist_notes(self, site_id: str, notes: str):
+    def update_watchlist_notes(self, site_id: str, notes: str, user_id: Optional[str] = None):
+        """Update notes for a watchlist site."""
         now_utc = datetime.now(timezone.utc).isoformat()
-        self.conn.execute(
-            "UPDATE scouting_watchlist SET notes = ?, updated_at = ? WHERE id = ?",
-            (notes or "", now_utc, site_id),
-        )
+        if user_id:
+            self.conn.execute(
+                "UPDATE scouting_watchlist SET notes = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+                (notes or "", now_utc, site_id, user_id),
+            )
+        else:
+            self.conn.execute(
+                "UPDATE scouting_watchlist SET notes = ?, updated_at = ? WHERE id = ? AND user_id IS NULL",
+                (notes or "", now_utc, site_id),
+            )
         self.conn.commit()
 
-    def update_pipeline_notes(self, asset_id: str, notes: str):
+    def update_pipeline_notes(self, asset_id: str, notes: str, user_id: Optional[str] = None):
+        """Update notes for a pipeline asset."""
         now_utc = datetime.now(timezone.utc).isoformat()
-        self.conn.execute(
-            "UPDATE pipeline_assets SET notes = ?, updated_at = ? WHERE id = ?",
-            (notes or "", now_utc, asset_id),
-        )
+        if user_id:
+            self.conn.execute(
+                "UPDATE pipeline_assets SET notes = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+                (notes or "", now_utc, asset_id, user_id),
+            )
+        else:
+            self.conn.execute(
+                "UPDATE pipeline_assets SET notes = ?, updated_at = ? WHERE id = ? AND user_id IS NULL",
+                (notes or "", now_utc, asset_id),
+            )
         self.conn.commit()
 
-    def list_scouting_items(self, item_type: str, stage: str = None) -> list[dict]:
-        """List scouting items by type, optionally filtered by stage."""
+    def list_scouting_items(self, item_type: str, stage: str = None, user_id: Optional[str] = None, user_ids: Optional[list[str]] = None) -> list[dict]:
+        """List scouting items by type, optionally filtered by stage and owner/team."""
         if item_type not in self.VALID_ITEM_TYPES:
             raise ValueError(f"Invalid item_type: {item_type!r}")
+            
+        filter_user_ids = user_ids or ([user_id] if user_id else None)
+        
         if item_type == "greenfield":
             query = "SELECT * FROM scouting_watchlist WHERE 1=1"
             params: list = []
+            
+            if filter_user_ids:
+                placeholders = ','.join(['?' for _ in filter_user_ids])
+                query += f" AND user_id IN ({placeholders})"
+                params.extend(filter_user_ids)
+            else:
+                query += " AND user_id IS NULL"
+                
             if stage:
                 query += " AND scouting_stage = ?"
                 params.append(stage)
@@ -1059,6 +1246,14 @@ class ImagingDataStore:
         else:
             query = "SELECT * FROM pipeline_assets WHERE 1=1"
             params = []
+            
+            if filter_user_ids:
+                placeholders = ','.join(['?' for _ in filter_user_ids])
+                query += f" AND user_id IN ({placeholders})"
+                params.extend(filter_user_ids)
+            else:
+                query += " AND user_id IS NULL"
+                
             if item_type == "bess":
                 query += " AND source_type = 'bess'"
             else:

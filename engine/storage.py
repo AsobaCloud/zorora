@@ -129,6 +129,15 @@ class LocalStorage:
             "CREATE INDEX IF NOT EXISTS idx_chat_thread ON research_chat_history(thread_key)"
         )
 
+        # User settings store
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_settings (
+                user_id TEXT PRIMARY KEY,
+                settings_json TEXT NOT NULL,
+                updated_at TIMESTAMP NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+
         conn.commit()
 
     def close(self):
@@ -207,10 +216,16 @@ class LocalStorage:
     # SEP-059: feedback persistence
     # ------------------------------------------------------------------
 
-    def save_feedback(self, research_id: str, message_id: str, rating: str) -> None:
-        """Upsert thumbs up/down feedback for a chat message."""
+    def save_feedback(self, research_id: str, message_id: str, rating: str, user_id: Optional[str] = None, user_ids: Optional[List[str]] = None) -> None:
+        """Upsert thumbs up/down feedback for a chat message, with ownership check."""
         if rating not in ("up", "down"):
             raise ValueError(f"rating must be 'up' or 'down', got {rating!r}")
+            
+        # Verify research ownership before allowing feedback
+        if not self.load_research(research_id, user_id=user_id, user_ids=user_ids):
+            logger.warning(f"Unauthorized feedback attempt for research {research_id} by user {user_id}")
+            return
+
         cursor = self.conn.cursor()
         cursor.execute(
             """
@@ -224,8 +239,12 @@ class LocalStorage:
         )
         self.conn.commit()
 
-    def get_feedback(self, research_id: str) -> List[Dict[str, Any]]:
-        """Return all feedback rows for a research session."""
+    def get_feedback(self, research_id: str, user_id: Optional[str] = None, user_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        """Return all feedback rows for a research session, with ownership check."""
+        # Verify ownership
+        if not self.load_research(research_id, user_id=user_id, user_ids=user_ids):
+            return []
+
         cursor = self.conn.cursor()
         cursor.execute(
             "SELECT * FROM research_feedback WHERE research_id = ? ORDER BY created_at",
@@ -237,8 +256,16 @@ class LocalStorage:
     # SEP-059: chat history persistence
     # ------------------------------------------------------------------
 
-    def append_chat_turn(self, thread_key: str, role: str, content: str) -> None:
-        """Append a single chat turn to a persisted thread."""
+    def append_chat_turn(self, thread_key: str, role: str, content: str, user_id: Optional[str] = None, user_ids: Optional[List[str]] = None) -> None:
+        """Append a single chat turn to a persisted thread, with ownership check."""
+        # research thread_key is usually "research:{research_id}"
+        research_id = thread_key.split(":", 1)[1] if ":" in thread_key else thread_key
+        
+        # Verify ownership
+        if not self.load_research(research_id, user_id=user_id, user_ids=user_ids):
+            logger.warning(f"Unauthorized chat append for research {research_id} by user {user_id}")
+            return
+
         cursor = self.conn.cursor()
         cursor.execute(
             "INSERT INTO research_chat_history (thread_key, role, content) VALUES (?, ?, ?)",
@@ -246,8 +273,14 @@ class LocalStorage:
         )
         self.conn.commit()
 
-    def load_chat_thread(self, thread_key: str) -> List[Dict[str, Any]]:
-        """Return all turns for a thread in insertion order."""
+    def load_chat_thread(self, thread_key: str, user_id: Optional[str] = None, user_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        """Return all turns for a thread in insertion order, with ownership check."""
+        research_id = thread_key.split(":", 1)[1] if ":" in thread_key else thread_key
+        
+        # Verify ownership
+        if not self.load_research(research_id, user_id=user_id, user_ids=user_ids):
+            return []
+
         cursor = self.conn.cursor()
         cursor.execute(
             "SELECT * FROM research_chat_history WHERE thread_key = ? ORDER BY id",
@@ -306,13 +339,38 @@ class LocalStorage:
 
         return [dict(row) for row in cursor.fetchall()]
 
-    def load_research(self, research_id: str) -> Optional[Dict[str, Any]]:
-        """Load full research from JSON file"""
+    def load_research(self, research_id: str, user_id: Optional[str] = None, user_ids: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
+        """Load full research from JSON file, with optional ownership check.
+        
+        Args:
+            research_id: The ID of the research to load
+            user_id: Optional single user ID to verify ownership
+            user_ids: Optional list of user IDs to verify ownership (team access)
+        """
         cursor = self.conn.cursor()
-        cursor.execute("SELECT file_path FROM research_findings WHERE research_id = ?", (research_id,))
+        
+        # Determine which user IDs to filter by for ownership check
+        filter_user_ids = None
+        if user_ids:
+            filter_user_ids = user_ids
+        elif user_id:
+            filter_user_ids = [user_id]
+            
+        if filter_user_ids:
+            # Build placeholders for IN clause
+            placeholders = ','.join(['?' for _ in filter_user_ids])
+            cursor.execute(f"SELECT file_path FROM research_findings WHERE research_id = ? AND user_id IN ({placeholders})", (research_id, *filter_user_ids))
+        else:
+            # No user filter - check if it's a legacy public item (user_id IS NULL)
+            cursor.execute("SELECT file_path FROM research_findings WHERE research_id = ? AND user_id IS NULL", (research_id,))
 
         row = cursor.fetchone()
         if not row:
+            # If not found with user filter, check if it exists at all to provide better logs (but don't return it)
+            cursor.execute("SELECT user_id FROM research_findings WHERE research_id = ?", (research_id,))
+            exists_row = cursor.fetchone()
+            if exists_row:
+                logger.warning(f"Research {research_id} exists but ownership check failed for user {user_id}")
             return None
 
         file_path = Path(row['file_path'])
@@ -322,3 +380,34 @@ class LocalStorage:
 
         with open(file_path) as f:
             return json.load(f)
+
+    # ------------------------------------------------------------------
+    # User Settings
+    # ------------------------------------------------------------------
+
+    def get_user_settings(self, user_id: str) -> Dict[str, Any]:
+        """Load user-specific settings from SQLite."""
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT settings_json FROM user_settings WHERE user_id = ?", (user_id,))
+        row = cursor.fetchone()
+        if not row:
+            return {}
+        try:
+            return json.loads(row["settings_json"])
+        except Exception:
+            return {}
+
+    def save_user_settings(self, user_id: str, settings: Dict[str, Any]) -> None:
+        """Upsert user-specific settings to SQLite."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO user_settings (user_id, settings_json, updated_at)
+            VALUES (?, ?, datetime('now'))
+            ON CONFLICT (user_id) DO UPDATE SET
+                settings_json = excluded.settings_json,
+                updated_at = datetime('now')
+            """,
+            (user_id, json.dumps(settings)),
+        )
+        self.conn.commit()
