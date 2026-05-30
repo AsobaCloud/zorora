@@ -39,7 +39,7 @@ class WebNewsIntelApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["research_id"], "rid-1")
-        load_mock.assert_called_once_with("rid-1")
+        load_mock.assert_called_once_with("rid-1", user_ids=None)
         search_mock.assert_not_called()
 
     def test_get_research_falls_back_to_search_when_exact_lookup_misses(self):
@@ -57,7 +57,7 @@ class WebNewsIntelApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["research_id"], "rid-2")
         self.assertEqual(load_mock.call_count, 2)
-        search_mock.assert_called_once_with(query="missing-id", limit=1)
+        search_mock.assert_called_once_with(query="missing-id", limit=1, user_ids=None)
 
     def test_news_intel_articles_filters_topic_and_date(self):
         sample_articles = [
