@@ -66,6 +66,12 @@ class LocalStorage:
             )
         """)
 
+        # SEP-082: Migrate pre-existing research_findings tables that lack the user_id column.
+        # PRAGMA table_info returns one row per column; check if user_id is already present.
+        existing_columns = {row[1] for row in cursor.execute("PRAGMA table_info(research_findings)")}
+        if "user_id" not in existing_columns:
+            cursor.execute("ALTER TABLE research_findings ADD COLUMN user_id TEXT")
+
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_query ON research_findings(query)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_created_at ON research_findings(created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_id ON research_findings(user_id)")
