@@ -74,6 +74,8 @@ jobs:
     permissions:
       id-token: write
       contents: read
+    env:
+      IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
     steps:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -81,11 +83,44 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Update ECS service
+      - name: Register new task definition with built image
+        id: register
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          IMAGE="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${IMAGE_TAG}"
+          echo "Deploying image: ${IMAGE}"
+          aws ecs describe-task-definition \
+            --task-definition "$TASK_FAMILY" \
+            --query 'taskDefinition' --output json > task-def.json
+          python3 - "$IMAGE" <<'PY'
+          import json, sys
+          image = sys.argv[1]
+          td = json.load(open("task-def.json"))
+          for key in (
+              "taskDefinitionArn", "revision", "status", "requiresAttributes",
+              "compatibilities", "registeredAt", "registeredBy", "deregisteredAt",
+          ):
+              td.pop(key, None)
+          td["containerDefinitions"][0]["image"] = image
+          json.dump(td, open("task-def-new.json", "w"))
+          PY
+          NEW_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://task-def-new.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "Registered task definition: ${NEW_ARN}"
+          echo "task_def_arn=${NEW_ARN}" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy new task definition to ECS
         run: |
           aws ecs update-service \
-            --cluster $CLUSTER_NAME \
-            --service $SERVICE_NAME \
+            --cluster "$CLUSTER_NAME" \
+            --service "$SERVICE_NAME" \
+            --task-definition "${{ steps.register.outputs.task_def_arn }}" \
             --force-new-deployment \
-            --region $AWS_REGION
-          echo "Service updated — new deployment triggered"
+            --region "$AWS_REGION"
+          echo "Service updated to ${{ steps.register.outputs.task_def_arn }} — waiting for stability..."
+          aws ecs wait services-stable \
+            --cluster "$CLUSTER_NAME" \
+            --services "$SERVICE_NAME" \
+            --region "$AWS_REGION"
+          echo "Deployment stable."
