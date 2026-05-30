@@ -27,7 +27,12 @@ def _authenticated_test_user(monkeypatch):
     except Exception:
         return
 
-    fake_user = {"user_id": "test-user", "team_id": None}
+    # user_id=None routes every gated handler (which does
+    # `get_accessible_user_ids(user_id) if user_id else None`) to the legacy
+    # NULL-owned bucket, matching how the inherited endpoint tests seed data via
+    # the store without a user_id. require_auth only rejects a None *payload*, so a
+    # dict with user_id=None still authenticates.
+    fake_user = {"user_id": None, "team_id": None}
 
     # Covers @require_auth and @require_research_quota (both call get_current_user
     # and set request.user). Signature mirrors the real (payload, error) tuple.

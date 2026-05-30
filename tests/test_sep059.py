@@ -27,6 +27,7 @@ All tests are expected to FAIL until SEP-059 is implemented.
 from __future__ import annotations
 
 import importlib.util
+import json
 import pathlib
 import sys
 
@@ -63,6 +64,25 @@ def _skip_if_no_app():
 def _make_local_storage(tmp_path):
     from engine.storage import LocalStorage
     return LocalStorage(db_path=str(tmp_path / "zorora.db"))
+
+
+def _seed_research(store, research_id):
+    """Insert a NULL-owned research row + its JSON file so the ownership checks in
+    save_feedback / append_chat_turn (which call load_research, requiring both an
+    index row and its JSON file) succeed. Feedback and chat presuppose an existing
+    research session; these store-level tests predate isolation and didn't create one.
+    """
+    findings_dir = pathlib.Path(store.db_path).parent / "research" / "findings"
+    findings_dir.mkdir(parents=True, exist_ok=True)
+    file_path = findings_dir / f"{research_id}.json"
+    file_path.write_text(json.dumps({"research_id": research_id, "query": "seed"}))
+    store.conn.execute(
+        "INSERT OR IGNORE INTO research_findings "
+        "(research_id, user_id, query, created_at, file_path) "
+        "VALUES (?, NULL, ?, datetime('now'), ?)",
+        (research_id, "seed", str(file_path)),
+    )
+    store.conn.commit()
 
 
 def _make_imaging_store(tmp_path):
@@ -158,6 +178,7 @@ class TestFeedbackPersistence:
     def test_save_feedback_up(self, tmp_path):
         """Saving a thumbs-up feedback must be readable back."""
         store = _make_local_storage(tmp_path)
+        _seed_research(store, "r1")
         store.save_feedback(research_id="r1", message_id="m1", rating="up")
         rows = store.get_feedback(research_id="r1")
         store.close()
@@ -168,6 +189,7 @@ class TestFeedbackPersistence:
     def test_save_feedback_down(self, tmp_path):
         """Saving a thumbs-down feedback must be readable back."""
         store = _make_local_storage(tmp_path)
+        _seed_research(store, "r1")
         store.save_feedback(research_id="r1", message_id="m1", rating="down")
         rows = store.get_feedback(research_id="r1")
         store.close()
@@ -180,6 +202,7 @@ class TestFeedbackPersistence:
         from engine.storage import LocalStorage
 
         store_a = LocalStorage(db_path=db_path)
+        _seed_research(store_a, "r1")
         store_a.save_feedback(research_id="r1", message_id="msg-42", rating="up")
         store_a.close()
 
@@ -196,6 +219,7 @@ class TestFeedbackPersistence:
     def test_multiple_feedbacks_for_same_research(self, tmp_path):
         """Multiple feedback rows for different messages in one research session."""
         store = _make_local_storage(tmp_path)
+        _seed_research(store, "r1")
         store.save_feedback(research_id="r1", message_id="m1", rating="up")
         store.save_feedback(research_id="r1", message_id="m2", rating="down")
         rows = store.get_feedback(research_id="r1")
@@ -214,6 +238,7 @@ class TestFeedbackPersistence:
     def test_upsert_feedback_updates_existing_message(self, tmp_path):
         """Saving feedback twice for the same message_id must update, not duplicate."""
         store = _make_local_storage(tmp_path)
+        _seed_research(store, "r1")
         store.save_feedback(research_id="r1", message_id="m1", rating="down")
         store.save_feedback(research_id="r1", message_id="m1", rating="up")
         rows = store.get_feedback(research_id="r1")
@@ -288,6 +313,7 @@ class TestChatHistoryPersistence:
     def test_append_and_load_single_turn(self, tmp_path):
         """append_chat_turn writes a row; load_chat_thread returns it."""
         store = _make_local_storage(tmp_path)
+        _seed_research(store, "abc123")
         store.append_chat_turn(
             thread_key="research:abc123",
             role="user",
@@ -302,6 +328,7 @@ class TestChatHistoryPersistence:
     def test_append_preserves_order(self, tmp_path):
         """Multiple appended turns must come back in insertion order."""
         store = _make_local_storage(tmp_path)
+        _seed_research(store, "r1")
         store.append_chat_turn("research:r1", "user", "Question one")
         store.append_chat_turn("research:r1", "assistant", "Answer one")
         store.append_chat_turn("research:r1", "user", "Question two")
@@ -318,6 +345,7 @@ class TestChatHistoryPersistence:
         from engine.storage import LocalStorage
 
         store_a = LocalStorage(db_path=db_path)
+        _seed_research(store_a, "r1")
         store_a.append_chat_turn("research:r1", "user", "Hello persistent world")
         store_a.close()
 
