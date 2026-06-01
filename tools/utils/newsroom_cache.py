@@ -31,28 +31,38 @@ class NewsroomCache:
         self.cache_file = cache_dir / "articles.json"
         self.ttl_seconds = ttl_seconds
         self._ensure_cache_dir()
+        self._memory_cache = None  # (timestamp, data_dict)
 
     def _ensure_cache_dir(self):
         """Create cache directory if it doesn't exist."""
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
     def _load_cache(self) -> Dict[str, Any]:
-        """Load cache from disk."""
+        """Load cache from disk, with in-memory buffering."""
+        # Use memory cache if valid (short TTL for consistency)
+        if self._memory_cache:
+            m_time, m_data = self._memory_cache
+            if time.time() - m_time < 60:  # 60 second memory buffer
+                return m_data
+
         if not self.cache_file.exists():
             return {"last_fetch": 0, "articles": []}
 
         try:
             with open(self.cache_file, 'r') as f:
-                return json.load(f)
+                data = json.load(f)
+                self._memory_cache = (time.time(), data)
+                return data
         except (json.JSONDecodeError, IOError) as e:
             logger.warning(f"Failed to load newsroom cache: {e}")
             return {"last_fetch": 0, "articles": []}
 
     def _save_cache(self, data: Dict[str, Any]):
-        """Save cache to disk."""
+        """Save cache to disk and update memory buffer."""
         try:
             with open(self.cache_file, 'w') as f:
                 json.dump(data, f, indent=2)
+            self._memory_cache = (time.time(), data)
         except IOError as e:
             logger.error(f"Failed to save newsroom cache: {e}")
 

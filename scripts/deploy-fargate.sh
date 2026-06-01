@@ -78,6 +78,8 @@ echo "  Cluster: ${CLUSTER_NAME}"
 # ── Step 4: Register Task Definition ──
 echo "Step 4: Registering task definition..."
 
+TASK_ROLE_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:role/ona-zorora-task-role"
+
 TASK_DEF_JSON=$(cat <<TASKDEF
 {
   "family": "${TASK_FAMILY}",
@@ -86,15 +88,25 @@ TASK_DEF_JSON=$(cat <<TASKDEF
   "cpu": "256",
   "memory": "512",
   "executionRoleArn": "${EXECUTION_ROLE_ARN}",
+  "taskRoleArn": "${TASK_ROLE_ARN}",
   "containerDefinitions": [{
-    "name": "${APP_NAME}",
-    "image": "${IMAGE_URI}",
-    "essential": true,
-    "portMappings": [{
-      "containerPort": 5000,
-      "protocol": "tcp"
-    }],
-    "logConfiguration": {
+  "name": "${APP_NAME}",
+  "image": "${IMAGE_URI}",
+  "essential": true,
+  "portMappings": [{
+    "containerPort": 5000,
+    "protocol": "tcp"
+  }],
+  "environment": [
+    {"name": "NEWSROOM_JWT_TOKEN", "value": "${NEWSROOM_JWT_TOKEN:-}"},
+    {"name": "FRED_API_KEY", "value": "${FRED_API_KEY:-}"},
+    {"name": "OPENAI_API_KEY", "value": "${OPENAI_API_KEY:-}"},
+    {"name": "HF_TOKEN", "value": "${HF_TOKEN:-}"},
+    {"name": "BRAVE_SEARCH_API_KEY", "value": "${BRAVE_SEARCH_API_KEY:-}"},
+    {"name": "CONGRESS_GOV_API_KEY", "value": "${CONGRESS_GOV_API_KEY:-}"}
+  ],
+  "logConfiguration": {
+
       "logDriver": "awslogs",
       "options": {
         "awslogs-group": "${LOG_GROUP}",

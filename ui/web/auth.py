@@ -15,6 +15,8 @@ import boto3
 from botocore.exceptions import ClientError
 from flask import request, jsonify
 
+from typing import Optional
+
 logger = logging.getLogger(__name__)
 
 # JWT config — must match the Ona Platform auth Lambda
@@ -47,7 +49,7 @@ EXEMPT_PATHS = [
 ]
 
 
-def _decode_token(token: str) -> dict | None:
+def _decode_token(token: str) -> Optional[dict]:
     """Decode and validate a JWT token. Returns payload or None."""
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
@@ -58,21 +60,25 @@ def _decode_token(token: str) -> dict | None:
         return None
 
 
+# Tier order for comparison
+TIER_ORDER = ["none", "explorer", "professional", "enterprise"]
+
+
 def _get_user_subscription(user_id: str) -> tuple:
     """
-    Fetch user record from DynamoDB and return (zorora_tier, usage_dict).
-    Returns ('none', {}) if no subscription found.
+    Fetch user record from DynamoDB and return (zorora_tier, usage_dict, user_type).
+    Returns ('none', {}, 'regular') if no subscription found.
     """
     try:
         response = _users_table.get_item(
             Key={"user_id": user_id},
-            ProjectionExpression="subscriptions, #u",
+            ProjectionExpression="subscriptions, #u, user_type",
             ExpressionAttributeNames={"#u": "usage"},
         )
         item = response.get("Item", {})
     except ClientError as e:
         logger.error(f"DynamoDB error fetching user {user_id}: {e}")
-        return ("none", {})
+        return ("none", {}, "regular")
 
     # Find zorora subscription
     subscriptions = item.get("subscriptions", [])
@@ -83,7 +89,8 @@ def _get_user_subscription(user_id: str) -> tuple:
             break
 
     usage = item.get("usage", {})
-    return (zorora_tier, usage)
+    user_type = item.get("user_type", "regular")
+    return (zorora_tier, usage, user_type)
 
 
 def _increment_usage(user_id: str, counter_key: str) -> int:
@@ -154,6 +161,40 @@ def get_current_user():
     return payload, None
 
 
+def require_tier(min_tier):
+    """Decorator factory: require a minimum subscription tier."""
+    def decorator(f):
+        @functools.wraps(f)
+        def wrapper(*args, **kwargs):
+            user, error = get_current_user()
+            if error:
+                return error
+            if user is None:
+                return jsonify({"error": "Authentication required", "auth_required": True}), 401
+
+            user_id = user.get("user_id")
+            tier, usage, user_type = _get_user_subscription(user_id)
+
+            tier_idx = TIER_ORDER.index(tier) if tier in TIER_ORDER else 0
+            min_idx = TIER_ORDER.index(min_tier) if min_tier in TIER_ORDER else 0
+
+            if tier_idx < min_idx:
+                return jsonify({
+                    "error": f"{min_tier.capitalize()} subscription required",
+                    "subscription_upgrade_required": True,
+                    "current_tier": tier,
+                    "required_tier": min_tier
+                }), 403
+
+            request.user = user
+            request.zorora_tier = tier
+            request.zorora_usage = usage
+            request.user_type = user_type
+            return f(*args, **kwargs)
+        return wrapper
+    return decorator
+
+
 def require_auth(f):
     """Decorator: require valid JWT token."""
     @functools.wraps(f)
@@ -180,7 +221,7 @@ def require_subscription(product="zorora"):
                 return jsonify({"error": "Authentication required", "auth_required": True}), 401
 
             user_id = user.get("user_id")
-            tier, usage = _get_user_subscription(user_id)
+            tier, usage, user_type = _get_user_subscription(user_id)
 
             if tier == "none":
                 return jsonify({
@@ -191,6 +232,7 @@ def require_subscription(product="zorora"):
             request.user = user
             request.zorora_tier = tier
             request.zorora_usage = usage
+            request.user_type = user_type
             return f(*args, **kwargs)
         return wrapper
     return decorator
@@ -210,7 +252,7 @@ def require_research_quota(f):
             return jsonify({"error": "Authentication required", "auth_required": True}), 401
 
         user_id = user.get("user_id")
-        tier, usage = _get_user_subscription(user_id)
+        tier, usage, user_type = _get_user_subscription(user_id)
 
         if tier == "none":
             return jsonify({

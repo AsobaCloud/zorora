@@ -3192,7 +3192,9 @@
         async function loadResearchHistory() {
             const sidebarList = document.getElementById('sidebarList');
             try {
-                const response = await fetch('/api/research/history?limit=50');
+                const response = await fetch('/api/research/history?limit=50', {
+                    headers: window.zororaAuth.getAuthHeaders()
+                });
                 if (!response.ok) {
                     throw new Error('Failed to load history');
                 }
@@ -7549,6 +7551,51 @@
         showNotification('Subscription activation is taking longer than expected. Please refresh the page or contact support if this persists.', 'error');
     }
 
+    function updateAuthUI(data) {
+        if (!data || !data.authenticated) return;
+
+        const tier = data.zorora_tier || 'none';
+        
+        // Feature availability by tier
+        const TIER_FEATURES = {
+            'none': [],
+            'explorer': ['deep', 'global', 'regulatory'],
+            'professional': ['deep', 'global', 'regulatory', 'digest', 'alerts', 'imaging'],
+            'enterprise': ['deep', 'global', 'regulatory', 'digest', 'alerts', 'imaging', 'scouting']
+        };
+
+        const allowed = TIER_FEATURES[tier] || [];
+
+        // Toggle sidebar buttons based on tier
+        document.querySelectorAll('.mode-nav-btn').forEach(function(btn) {
+            const mode = btn.getAttribute('data-mode');
+            if (allowed.includes(mode)) {
+                btn.style.display = 'block';
+            } else {
+                btn.style.display = 'none';
+            }
+        });
+
+        // Update welcome message or other tier-specific UI elements if needed
+        const subtitle = document.querySelector('.welcome-subtitle');
+        if (subtitle && tier !== 'none') {
+            subtitle.innerHTML = 'Welcome back! You are on the <strong>' + tier.charAt(0).toUpperCase() + tier.slice(1) + '</strong> plan.';
+        }
+    }
+
+    async function checkAuthStatus() {
+        if (!window.zororaAuth.isAuthenticated()) return;
+        try {
+            const resp = await fetch('/api/auth/me');
+            if (resp.ok) {
+                const data = await resp.json();
+                updateAuthUI(data);
+            }
+        } catch (e) {
+            console.error('Auth check failed:', e);
+        }
+    }
+
     function showNotification(message, type) {
         var notif = document.createElement('div');
         notif.style.cssText = 'position:fixed;top:20px;right:20px;padding:16px 24px;border-radius:8px;z-index:10000;font-weight:500;box-shadow:0 4px 12px rgba(0,0,0,0.15);' +
@@ -7560,6 +7607,9 @@
 
         // Check if returning from Stripe payment
         document.addEventListener('DOMContentLoaded', async function() {
+            // Initialize UI based on auth
+            checkAuthStatus();
+
             // Load user preferences
             await loadUserPreferences();
 

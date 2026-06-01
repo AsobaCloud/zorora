@@ -34,7 +34,7 @@ from workflows.digest_synthesis import (
 )
 import config
 from config import LOGGING_LEVEL, LOGGING_FORMAT, LOG_FILE
-from ui.web.auth import require_auth, require_research_quota, get_current_user
+from ui.web.auth import require_auth, require_research_quota, get_current_user, require_tier
 
 # Configure logging for web UI (mirrors main.py setup)
 if not logging.root.handlers:
@@ -251,12 +251,13 @@ def auth_me():
         return error
     if user is None:
         return jsonify({"authenticated": False}), 200
-    tier, usage = _get_user_subscription(user.get("user_id"))
+    tier, usage, user_type = _get_user_subscription(user.get("user_id"))
     return jsonify({
         "authenticated": True,
         "user_id": user.get("user_id"),
         "username": user.get("username"),
         "zorora_tier": tier,
+        "user_type": user_type,
         "usage": usage,
     })
 
@@ -807,7 +808,9 @@ def get_news_intel_facets():
 
 
 @app.route('/api/news-intel/articles', methods=['POST'])
-def get_news_intel_articles():
+@require_tier('professional')
+def get_newsroom_articles():
+
     """Fetch newsroom articles from API and filter by topic/date range."""
     try:
         data = request.get_json() or {}
@@ -856,6 +859,7 @@ def get_news_intel_articles():
 
 
 @app.route('/api/news-intel/synthesize', methods=['POST'])
+@require_tier('professional')
 def synthesize_news_intel():
     """Synthesize filtered newsroom articles fetched via newsroom API."""
     try:
@@ -1023,7 +1027,7 @@ def get_news_intel_stats():
 
 
 @app.route('/api/alerts', methods=['POST'])
-@require_auth
+@require_tier('professional')
 def create_alert():
     """Create a recurring digest alert from current Digest state."""
     try:
@@ -1058,7 +1062,7 @@ def create_alert():
 
 
 @app.route('/api/alerts', methods=['GET'])
-@require_auth
+@require_tier('professional')
 def list_alerts():
     """List recurring digest alerts."""
     try:
@@ -1183,25 +1187,35 @@ def get_market_latest():
             return jsonify(cached_data)
     try:
         store = MarketDataStore()
+        all_obs = store.get_all_latest_observations()
+        store.close()
+
         results = []
         for sid, series in SERIES_CATALOG.items():
+            obs_list = all_obs.get((series.provider, sid))
+            if not obs_list:
+                continue
+
             try:
-                df = store.get_series_df(sid, provider=series.provider)
-                if df.empty:
-                    continue
-                latest_val = float(df["value"].iloc[-1])
-                latest_date = str(df.index[-1].date())
-                prev_val = float(df["value"].iloc[-2]) if len(df) >= 2 else None
+                latest = obs_list[0]
+                latest_val = float(latest["value"])
+                latest_date = latest["date"]
+                prev_val = float(obs_list[1]["value"]) if len(obs_list) >= 2 else None
                 pct_change = None
                 if prev_val and prev_val != 0:
                     pct_change = round(((latest_val - prev_val) / abs(prev_val)) * 100, 2)
-                # Compute freshness from fetch_metadata
-                staleness_hours = store.get_staleness(sid, provider=series.provider)
-                last_fetched = None
-                # Only compute last_fetched when staleness_hours is numeric
-                if isinstance(staleness_hours, (int, float)):
-                    from datetime import datetime, timedelta
-                    last_fetched = (datetime.utcnow() - timedelta(hours=staleness_hours)).isoformat() + "Z"
+                
+                last_fetched = latest["last_fetched_at"]
+                # Standardize to ISO format with Z for UTC to ensure JS compatibility
+                if last_fetched:
+                    if "Z" not in last_fetched and "+" not in last_fetched:
+                        last_fetched += "Z"
+                    elif "+" in last_fetched:
+                        # Convert 2024-05-22T12:00:00+00:00 to 2024-05-22T12:00:00Z
+                        base, offset = last_fetched.split("+", 1)
+                        if offset == "00:00":
+                            last_fetched = base + "Z"
+                        # Otherwise leave offset as is, JS handles it
 
                 results.append({
                     "series_id": sid,
@@ -1215,9 +1229,9 @@ def get_market_latest():
                     "pct_change": pct_change,
                     "last_fetched": last_fetched,
                 })
-            except Exception as e:
-                logger.debug(f"Skipping series {sid}: {e}")
-        store.close()
+            except (IndexError, ValueError, TypeError) as e:
+                logger.debug(f"Error processing series {sid} in bulk fetch: {e}")
+
         _market_latest_cache = (_time.time(), results)
         return jsonify(results)
     except Exception as e:
@@ -1459,7 +1473,7 @@ VALID_SCOUTING_STAGES = {"identified", "scored", "feasibility", "diligence", "de
 
 
 @app.route('/api/scouting/items', methods=['GET'])
-@require_auth
+@require_tier('enterprise')
 def list_scouting_items():
     """List scouting kanban items by type, optionally filtered by stage."""
     try:
@@ -1687,7 +1701,7 @@ def apply_scouting_score(item_id):
 
 
 @app.route('/api/scouting/items', methods=['POST'])
-@require_auth
+@require_tier('enterprise')
 def create_scouting_item():
     """Create a scouting item via the unified endpoint."""
     try:
@@ -1937,6 +1951,7 @@ def run_feasibility_tab_endpoint(item_id, tab):
 # ---------------------------------------------------------------------------
 
 @app.route('/api/imaging/deposits', methods=['GET'])
+@require_tier('professional')
 def get_imaging_deposits():
     """Return mineral deposits as GeoJSON with viability scores."""
     try:
@@ -1962,6 +1977,7 @@ def get_imaging_deposits():
 
 
 @app.route('/api/imaging/concessions', methods=['GET'])
+@require_tier('professional')
 def get_imaging_concessions():
     """Return mining concessions as GeoJSON."""
     try:
@@ -1976,6 +1992,7 @@ def get_imaging_concessions():
 
 
 @app.route('/api/imaging/generation', methods=['GET'])
+@require_tier('professional')
 def get_imaging_generation():
     """Return renewable generation assets as GeoJSON."""
     try:
@@ -2385,7 +2402,7 @@ def get_research_history():
         user_id = request.user.get('user_id') if hasattr(request, 'user') else None
 
         # Get accessible user IDs (own + team for Enterprise)
-        from auth import get_accessible_user_ids
+        from ui.web.auth import get_accessible_user_ids
         accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
 
         results = research_engine.search_research(

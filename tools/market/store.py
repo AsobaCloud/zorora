@@ -8,7 +8,7 @@ import sqlite3
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -215,6 +215,49 @@ class MarketDataStore:
         df["date"] = pd.to_datetime(df["date"])
         df.set_index("date", inplace=True)
         return df
+
+    def get_all_latest_observations(self) -> Dict[Tuple[str, str], List[dict]]:
+        """
+        Return the latest 2 observations for all series in a single query.
+        Returns mapping: (provider, series_id) -> list of obs dicts (descending date).
+        """
+        query = """
+            WITH RankedObs AS (
+                SELECT 
+                    provider, 
+                    series_id, 
+                    date, 
+                    value,
+                    ROW_NUMBER() OVER (PARTITION BY provider, series_id ORDER BY date DESC) as rn
+                FROM observations
+            )
+            SELECT 
+                r.provider, 
+                r.series_id, 
+                r.date, 
+                r.value, 
+                r.rn,
+                m.last_fetched_at
+            FROM RankedObs r
+            LEFT JOIN fetch_metadata m 
+                ON r.provider = m.provider 
+                AND r.series_id = m.series_id
+            WHERE r.rn <= 2
+            ORDER BY r.provider, r.series_id, r.rn
+        """
+        cur = self.conn.cursor()
+        cur.execute(query)
+        
+        from collections import defaultdict
+        results = defaultdict(list)
+        for row in cur.fetchall():
+            key = (row["provider"], row["series_id"])
+            results[key].append({
+                "date": row["date"],
+                "value": row["value"],
+                "last_fetched_at": row["last_fetched_at"]
+            })
+        return dict(results)
 
     def get_latest_point(self, series_id: str, provider: Optional[str] = None) -> Optional[dict]:
         """Return the latest stored observation plus previous-point change for one series."""

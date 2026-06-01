@@ -463,6 +463,7 @@ IMAGING = {
     "resource_timeout_seconds": 30,
     "target_commodities": ["Rare earths", "Niobium", "Tantalum", "Lithium", "Cobalt",
                            "Platinum", "Chromium", "Manganese", "Vanadium"],
+    "generation_workbook_path": "data/Africa-Energy-Tracker-2026-03-02.xlsx",
 }
 
 # SAPP (Southern African Power Pool) DAM Configuration
