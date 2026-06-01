@@ -79,8 +79,29 @@ def start_alert_check_thread():
     return t
 
 
+def start_newsroom_refresh_thread():
+    """Start a daemon thread that periodically refreshes the newsroom cache."""
+    def _refresh_loop():
+        from tools.research.newsroom import fetch_newsroom_cached
+        while True:
+            try:
+                logger.info("Background newsroom refresh: starting...")
+                # fetch_newsroom_cached with high max_results will trigger _fetch_newsroom_api_raw if stale
+                fetch_newsroom_cached(max_results=3000)
+                logger.info("Background newsroom refresh: completed")
+            except Exception as e:
+                logger.debug("Background newsroom refresh failed: %s", e)
+            # Refresh every 60 minutes
+            time.sleep(3600)
+
+    t = threading.Thread(target=_refresh_loop, daemon=True, name="newsroom-refresh")
+    t.start()
+    return t
+
+
 def start_all_background_threads():
     """Start all background refresh threads. Safe to call from any entry point."""
     start_market_refresh_thread()
     start_regulatory_refresh_thread()
     start_alert_check_thread()
+    start_newsroom_refresh_thread()

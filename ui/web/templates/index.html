@@ -1411,6 +1411,39 @@
             text-align: center;
         }
 
+        /* Global View Loading & Error States */
+        .gv-loading-state, .gv-error-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 40px 20px;
+            color: var(--text-light);
+            font-size: 0.9rem;
+        }
+        .gv-error-state { color: #e57373; }
+        .loading-spinner {
+            width: 24px;
+            height: 24px;
+            border: 2px solid rgba(0,0,0,0.1);
+            border-top-color: var(--primary-purple);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-bottom: 12px;
+        }
+        .loading-spinner-inline {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 1.5px solid rgba(0,0,0,0.1);
+            border-top-color: var(--primary-purple);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 6px;
+            vertical-align: middle;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
         /* Global View Panel */
         .global-view-panel {
             max-width: 1200px;
@@ -3997,74 +4030,93 @@
 
             loadFacets();
 
-            try {
-                const [statsRes, articlesRes, datasetsRes] = await Promise.all([
-                    fetch('/api/news-intel/stats', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(params),
-                    }),
-                    fetch('/api/news-intel/articles', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ ...params, limit: 200 }),
-                    }),
-                    fetch('/api/market/latest'),
-                ]);
+            // Set loading states
+            const mapCov = document.getElementById('gvMapCoverage');
+            if (mapCov) mapCov.innerHTML = '<span class="loading-spinner-inline"></span> Updating map...';
+            
+            const articlesTab = document.getElementById('gvArticlesTab');
+            if (articlesTab) {
+                articlesTab.innerHTML = '<div class="gv-loading-state"><span class="loading-spinner"></span> Loading news articles...</div>';
+            }
 
-                // Show warnings from either endpoint
-                let warningMsg = null;
-                if (statsRes.ok) {
-                    const statsData = await statsRes.json();
-                    renderGlobalMapMarkers(statsData.stats || []);
-                    // Coverage indicator
-                    const covEl = document.getElementById('gvMapCoverage');
-                    if (covEl && statsData.total_articles != null) {
-                        const geo = statsData.geo_tagged_articles || 0;
-                        const total = statsData.total_articles;
-                        const pct = total > 0 ? Math.round((geo / total) * 100) : 0;
-                        covEl.textContent = `${geo} of ${total} articles geo-tagged (${pct}%)`;
-                    }
-                    if (statsData.warning) warningMsg = statsData.warning;
-                }
+            const datasetsTab = document.getElementById('gvDatasetsTab');
+            if (datasetsTab) {
+                datasetsTab.innerHTML = '<div class="gv-loading-state"><span class="loading-spinner"></span> Loading market data...</div>';
+            }
 
-                if (articlesRes.ok) {
-                    const articlesData = await articlesRes.json();
-                    gvAllArticles = articlesData.articles || [];
-                    gvArticles = gvAllArticles;
-                    if (articlesData.warning) warningMsg = articlesData.warning;
-                    // Client-side keyword and source filter
-                    const search = (document.getElementById('gvSearch')?.value || '').toLowerCase();
-                    const selectedSources = gvFacetState.source.selected;
-                    if (search || selectedSources.size > 0) {
-                        gvArticles = gvArticles.filter(a => {
-                            if (search && !(a.headline || '').toLowerCase().includes(search)) return false;
-                            if (selectedSources.size > 0 && !selectedSources.has(a.source || '')) return false;
-                            return true;
-                        });
-                    }
-                    gvPage = 0;
-                    renderGvArticlesTable();
+            // 1. Stats (Map Markers)
+            fetch('/api/news-intel/stats', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(params),
+            }).then(res => res.ok ? res.json() : null)
+              .then(data => {
+                if (!data) return;
+                renderGlobalMapMarkers(data.stats || []);
+                const covEl = document.getElementById('gvMapCoverage');
+                if (covEl && data.total_articles != null) {
+                    const geo = data.geo_tagged_articles || 0;
+                    const total = data.total_articles;
+                    const pct = total > 0 ? Math.round((geo / total) * 100) : 0;
+                    covEl.textContent = `${geo} of ${total} articles geo-tagged (${pct}%)`;
                 }
+                if (data.warning) showGvWarning(data.warning);
+              }).catch(err => console.error('Stats fetch error:', err));
 
-                // Warning banner
-                const banner = document.getElementById('gvWarningBanner');
-                if (banner) {
-                    if (warningMsg) {
-                        document.getElementById('gvWarningText').textContent = warningMsg;
-                        banner.classList.remove('hidden');
-                    } else {
-                        banner.classList.add('hidden');
-                    }
+            // 2. Articles Table
+            fetch('/api/news-intel/articles', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ...params, limit: 200 }),
+            }).then(res => res.ok ? res.json() : null)
+              .then(data => {
+                if (!data) {
+                    if (articlesTab) articlesTab.innerHTML = '<div class="gv-error-state">Failed to load articles</div>';
+                    return;
                 }
+                gvAllArticles = data.articles || [];
+                gvArticles = gvAllArticles;
+                if (data.warning) showGvWarning(data.warning);
+                
+                // Client-side keyword and source filter
+                const search = (document.getElementById('gvSearch')?.value || '').toLowerCase();
+                const selectedSources = gvFacetState.source.selected;
+                if (search || selectedSources.size > 0) {
+                    gvArticles = gvArticles.filter(a => {
+                        if (search && !(a.headline || '').toLowerCase().includes(search)) return false;
+                        if (selectedSources.size > 0 && !selectedSources.has(a.source || '')) return false;
+                        return true;
+                    });
+                }
+                gvPage = 0;
+                renderGvArticlesTable();
+              }).catch(err => {
+                console.error('Articles fetch error:', err);
+                if (articlesTab) articlesTab.innerHTML = '<div class="gv-error-state">Error loading articles</div>';
+              });
 
-                if (datasetsRes.ok) {
-                    const datasets = await datasetsRes.json();
-                    renderDatasetCards(Array.isArray(datasets) ? datasets : []);
+            // 3. Market Latest
+            fetch('/api/market/latest').then(res => res.ok ? res.json() : null)
+              .then(data => {
+                if (!data) {
+                    if (datasetsTab) datasetsTab.innerHTML = '<div class="gv-error-state">Failed to load market data</div>';
+                    return;
                 }
-                _tabDataCache.globalKey = globalCacheKey;
-            } catch (err) {
-                console.error('Global view load error:', err);
+                renderDatasetCards(Array.isArray(data) ? data : []);
+              }).catch(err => {
+                console.error('Market fetch error:', err);
+                if (datasetsTab) datasetsTab.innerHTML = '<div class="gv-error-state">Error loading market data</div>';
+              });
+
+            _tabDataCache.globalKey = globalCacheKey;
+        }
+
+        function showGvWarning(msg) {
+            const banner = document.getElementById('gvWarningBanner');
+            const text = document.getElementById('gvWarningText');
+            if (banner && text) {
+                text.textContent = msg;
+                banner.classList.remove('hidden');
             }
         }
 

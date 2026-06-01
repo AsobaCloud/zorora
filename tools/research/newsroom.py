@@ -2,6 +2,7 @@
 
 import logging
 import requests
+import threading
 from typing import List, Dict, Any
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
@@ -9,6 +10,9 @@ from collections import Counter, defaultdict
 import config
 
 logger = logging.getLogger(__name__)
+
+# Lock for coalescing concurrent API fetches
+_fetch_lock = threading.Lock()
 
 STOP_WORDS = frozenset({
     'why', 'did', 'does', 'how', 'what', 'when', 'where', 'who',
@@ -78,20 +82,28 @@ def fetch_newsroom_cached(max_results: int = 100):
 
     cache = get_cache()
 
+    # Fast path: cache is fresh
     if cache.is_fresh():
         articles = cache.get_articles()
         logger.info(f"Newsroom cache hit: {len(articles)} articles (age: {int(cache.get_age_seconds())}s)")
         return (articles[:max_results], None)
 
-    # Cache is stale - fetch fresh data
-    logger.info("Newsroom cache stale, fetching fresh data...")
-    articles = _fetch_newsroom_api_raw(days_back=90, max_results=3000)
+    # Slow path: cache is stale, acquire lock to refresh
+    with _fetch_lock:
+        # Double-check freshness after acquiring lock
+        if cache.is_fresh():
+            articles = cache.get_articles()
+            logger.info(f"Newsroom cache hit (after lock): {len(articles)} articles")
+            return (articles[:max_results], None)
 
-    if articles:
-        cache.update(articles)
-        return (articles[:max_results], None)
+        logger.info("Newsroom cache stale, fetching fresh data...")
+        articles = _fetch_newsroom_api_raw(days_back=90, max_results=3000)
 
-    # API failed - try to use stale cache as fallback
+        if articles:
+            cache.update(articles)
+            return (articles[:max_results], None)
+
+    # Lock released and API failed - try to use stale cache as fallback
     stale_articles = cache.get_articles()
     if stale_articles:
         logger.warning(f"API failed, using stale cache: {len(stale_articles)} articles")
