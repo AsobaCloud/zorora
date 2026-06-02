@@ -98,7 +98,6 @@ TASK_DEF_JSON=$(cat <<TASKDEF
     "protocol": "tcp"
   }],
   "environment": [
-    {"name": "NEWSROOM_JWT_TOKEN", "value": "${NEWSROOM_JWT_TOKEN:-}"},
     {"name": "FRED_API_KEY", "value": "${FRED_API_KEY:-}"},
     {"name": "OPENAI_API_KEY", "value": "${OPENAI_API_KEY:-}"},
     {"name": "HF_TOKEN", "value": "${HF_TOKEN:-}"},

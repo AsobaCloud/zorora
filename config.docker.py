@@ -157,8 +157,8 @@ BRAVE_SEARCH = {
 }
 
 # Newsroom Configuration
-# JWT token for Ona data-admin newsroom API (valid for 1 year from Jan 2026)
-NEWSROOM_JWT_TOKEN = os.environ.get("NEWSROOM_JWT_TOKEN", "")
+# Now fetches from S3 export (no JWT required)
+# See: platform/docs/guides/newsroom-sync-architecture.md
 NEWSROOM_DAYS_BACK = 90  # Number of days of articles to search (90 = last quarter)
 NEWSROOM_MAX_RELEVANT = 25  # Max relevant articles to return after filtering
 
