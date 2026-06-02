@@ -4034,14 +4034,16 @@
             const mapCov = document.getElementById('gvMapCoverage');
             if (mapCov) mapCov.innerHTML = '<span class="loading-spinner-inline"></span> Updating map...';
             
-            const articlesTab = document.getElementById('gvArticlesTab');
-            if (articlesTab) {
-                articlesTab.innerHTML = '<div class="gv-loading-state"><span class="loading-spinner"></span> Loading news articles...</div>';
+            const articlesBody = document.getElementById('gvArticlesBody');
+            const articlesPagination = document.getElementById('gvPagination');
+            if (articlesBody) {
+                articlesBody.innerHTML = '<tr><td colspan="6"><div class="gv-loading-state"><span class="loading-spinner"></span> Loading news articles...</div></td></tr>';
             }
+            if (articlesPagination) articlesPagination.innerHTML = '';
 
-            const datasetsTab = document.getElementById('gvDatasetsTab');
-            if (datasetsTab) {
-                datasetsTab.innerHTML = '<div class="gv-loading-state"><span class="loading-spinner"></span> Loading market data...</div>';
+            const datasetGrid = document.getElementById('datasetCardsGrid');
+            if (datasetGrid) {
+                datasetGrid.innerHTML = '<div class="gv-loading-state"><span class="loading-spinner"></span> Loading market data...</div>';
             }
 
             // 1. Stats (Map Markers)
@@ -4071,7 +4073,7 @@
             }).then(res => res.ok ? res.json() : null)
               .then(data => {
                 if (!data) {
-                    if (articlesTab) articlesTab.innerHTML = '<div class="gv-error-state">Failed to load articles</div>';
+                    if (articlesBody) articlesBody.innerHTML = '<tr><td colspan="6"><div class="gv-error-state">Failed to load articles</div></td></tr>';
                     return;
                 }
                 gvAllArticles = data.articles || [];
@@ -4092,20 +4094,20 @@
                 renderGvArticlesTable();
               }).catch(err => {
                 console.error('Articles fetch error:', err);
-                if (articlesTab) articlesTab.innerHTML = '<div class="gv-error-state">Error loading articles</div>';
+                if (articlesBody) articlesBody.innerHTML = '<tr><td colspan="6"><div class="gv-error-state">Error loading articles</div></td></tr>';
               });
 
             // 3. Market Latest
             fetch('/api/market/latest').then(res => res.ok ? res.json() : null)
               .then(data => {
                 if (!data) {
-                    if (datasetsTab) datasetsTab.innerHTML = '<div class="gv-error-state">Failed to load market data</div>';
+                    if (datasetGrid) datasetGrid.innerHTML = '<div class="gv-error-state">Failed to load market data</div>';
                     return;
                 }
                 renderDatasetCards(Array.isArray(data) ? data : []);
               }).catch(err => {
                 console.error('Market fetch error:', err);
-                if (datasetsTab) datasetsTab.innerHTML = '<div class="gv-error-state">Error loading market data</div>';
+                if (datasetGrid) datasetGrid.innerHTML = '<div class="gv-error-state">Error loading market data</div>';
               });
 
             _tabDataCache.globalKey = globalCacheKey;
