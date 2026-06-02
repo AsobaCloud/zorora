@@ -26,8 +26,8 @@ echo "Image: ${IMAGE_URI}"
 echo ""
 
 # Step 1: Build Docker image
-echo "Step 1: Building Docker image (linux/amd64 for Fargate)..."
-docker build --platform linux/amd64 -t ona-zorora:latest .
+echo "Step 1: Building Docker image (ARM64 for Fargate Graviton)..."
+docker build -t ona-zorora:latest .
 docker tag ona-zorora:latest "${IMAGE_URI}"
 echo "✓ Image built"
 echo ""
@@ -90,7 +90,11 @@ cat > "${TASK_DEF_FILE}" <<EOF
   ],
   "requiresCompatibilities": ["FARGATE"],
   "cpu": "256",
-  "memory": "512"
+  "memory": "512",
+  "runtimePlatform": {
+    "cpuArchitecture": "ARM64",
+    "operatingSystemFamily": "LINUX"
+  }
 }
 EOF
 

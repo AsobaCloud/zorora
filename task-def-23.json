@@ -6,7 +6,7 @@
   "containerDefinitions": [
     {
       "name": "ona-zorora",
-      "image": "905418405543.dkr.ecr.af-south-1.amazonaws.com/ona-zorora:prod-TBD",
+      "image": "905418405543.dkr.ecr.af-south-1.amazonaws.com/ona-zorora:prod-224a469",
       "cpu": 0,
       "portMappings": [
         {
@@ -35,5 +35,9 @@
   ],
   "requiresCompatibilities": ["FARGATE"],
   "cpu": "256",
-  "memory": "512"
+  "memory": "512",
+  "runtimePlatform": {
+    "cpuArchitecture": "ARM64",
+    "operatingSystemFamily": "LINUX"
+  }
 }
