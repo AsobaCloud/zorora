@@ -62,7 +62,7 @@ jobs:
 
       - name: Build and push
         run: |
-          docker build --platform linux/amd64 -t zorora:${IMAGE_TAG} .
+          docker build --platform linux/arm64 -t zorora:${IMAGE_TAG} .
           docker tag zorora:${IMAGE_TAG} ${ECR_REGISTRY}/${ECR_REPO}:${IMAGE_TAG}
           docker tag zorora:${IMAGE_TAG} ${ECR_REGISTRY}/${ECR_REPO}:${STAGE}
           docker push ${ECR_REGISTRY}/${ECR_REPO}:${IMAGE_TAG}
@@ -102,6 +102,9 @@ jobs:
           ):
               td.pop(key, None)
           td["containerDefinitions"][0]["image"] = image
+          # Remove NEWSROOM_JWT_TOKEN - now fetches from S3 (no auth needed)
+          env = td["containerDefinitions"][0].get("environment", [])
+          td["containerDefinitions"][0]["environment"] = [e for e in env if e["name"] != "NEWSROOM_JWT_TOKEN"]
           json.dump(td, open("task-def-new.json", "w"))
           PY
           NEW_ARN=$(aws ecs register-task-definition \
