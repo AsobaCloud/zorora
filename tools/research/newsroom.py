@@ -1,4 +1,4 @@
-"""Newsroom search tool - fetches articles from Asoba newsroom API."""
+"""Newsroom search tool - fetches articles from S3 export (fast, no auth required)."""
 
 import logging
 import requests
@@ -11,7 +11,7 @@ import config
 
 logger = logging.getLogger(__name__)
 
-# Lock for coalescing concurrent API fetches
+# Lock for coalescing concurrent fetches
 _fetch_lock = threading.Lock()
 
 STOP_WORDS = frozenset({
@@ -21,49 +21,18 @@ STOP_WORDS = frozenset({
     'do', 'with', 'from', 'about', 'that', 'this', 'it', 'not',
 })
 
+# S3 export URL - single file with all articles, updated hourly by Lambda
+NEWSROOM_EXPORT_URL = "https://news-collection-website.s3.af-south-1.amazonaws.com/zorora-export/articles.json"
+
 
 def _extract_keywords(query: str) -> List[str]:
     """Extract substantive keywords from a query, removing stop words."""
     return [w for w in query.lower().split() if w not in STOP_WORDS and len(w) > 1]
 
-# Newsroom API endpoint (production)
-NEWSROOM_API_URL = "https://pj1ud6q3uf.execute-api.af-south-1.amazonaws.com/prod/api/data-admin/newsroom/articles"
-
 
 def _get_timeout() -> int:
-    """Get timeout for newsroom API."""
-    return getattr(config, 'NEWSROOM_CONFIG', {}).get('timeout', 60)
-
-# Error messages for common issues
-AUTH_ERROR_MSG = """⚠ Newsroom authentication failed (HTTP 401)
-
-To access the newsroom, you need a valid JWT token:
-1. Set NEWSROOM_JWT_TOKEN in config.py or as environment variable
-2. Get the token from Ona platform authentication (data-admin portal)
-3. Token format: Bearer <jwt_token>
-
-See docs/TROUBLESHOOTING.md for details."""
-
-FORBIDDEN_ERROR_MSG = """⚠ Newsroom access forbidden (HTTP 403)
-
-Your JWT token is valid but lacks permission to access newsroom articles.
-Contact the Ona platform admin to request newsroom access."""
-
-
-def _get_auth_headers() -> Dict[str, str]:
-    """Get authorization headers for newsroom API."""
-    import os
-
-    # Check config first, then environment variable
-    jwt_token = getattr(config, 'NEWSROOM_JWT_TOKEN', None) or os.environ.get('NEWSROOM_JWT_TOKEN')
-
-    if jwt_token:
-        # Support both "Bearer xxx" and raw token formats
-        if not jwt_token.startswith('Bearer '):
-            jwt_token = f'Bearer {jwt_token}'
-        return {'Authorization': jwt_token}
-
-    return {}
+    """Get timeout for newsroom fetch (S3 is fast)."""
+    return getattr(config, 'NEWSROOM_CONFIG', {}).get('timeout', 30)
 
 
 def fetch_newsroom_cached(max_results: int = 100):
@@ -100,8 +69,8 @@ def fetch_newsroom_cached(max_results: int = 100):
             logger.info(f"Newsroom cache hit (after lock): {len(articles)} articles")
             return (articles[:max_results], None)
 
-        logger.info("Newsroom cache stale, fetching fresh data...")
-        articles = _fetch_newsroom_api_raw(days_back=90, max_results=3000)
+        logger.info("Newsroom cache stale, fetching from S3 export...")
+        articles = _fetch_newsroom_export()
 
         if articles:
             cache.update(articles)
@@ -116,140 +85,89 @@ def fetch_newsroom_cached(max_results: int = 100):
     return ([], "Newsroom API unavailable and no cached data")
 
 
-def _fetch_newsroom_api_raw(days_back: int = 7, max_results: int = 500) -> List[Dict[str, Any]]:
+def _fetch_newsroom_export() -> List[Dict[str, Any]]:
     """
-    Raw API fetch without caching. Used by cache refresh.
-
-    Paginates through all available pages (API caps at 200 per page)
-    until max_results is reached or no more articles are returned.
-
-    Args:
-        days_back: Days to fetch (default: 7)
-        max_results: Max articles to collect across all pages (default: 500)
-
+    Fetch newsroom articles from S3 export file.
+    
+    Single HTTP request, returns all ~3000 articles in 2-3 seconds.
+    No authentication required - S3 bucket is public-read for this path.
+    
     Returns:
-        List of article dicts from API
+        List of article dicts
     """
     try:
-        date_from = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
-
-        headers = _get_auth_headers()
-        if not headers:
-            logger.warning("No NEWSROOM_JWT_TOKEN configured")
+        response = requests.get(
+            NEWSROOM_EXPORT_URL,
+            timeout=30,
+            headers={'Accept': 'application/json'}
+        )
+        
+        if response.status_code != 200:
+            logger.error(f"Newsroom S3 export returned {response.status_code}")
             return []
-
-        all_articles = []
-        seen_urls = set()
-        page = 1
-        page_size = 200
-
-        while len(all_articles) < max_results:
-            response = requests.get(
-                NEWSROOM_API_URL,
-                params={'limit': page_size, 'date_from': date_from, 'page': page},
-                headers=headers,
-                timeout=_get_timeout()
-            )
-
-            if response.status_code == 401:
-                logger.error("Newsroom API 401 - check NEWSROOM_JWT_TOKEN")
-                return all_articles
-            elif response.status_code == 403:
-                logger.error("Newsroom API 403 - token lacks newsroom access")
-                return all_articles
-            elif response.status_code != 200:
-                logger.warning(f"Newsroom API returned {response.status_code}")
-                return all_articles
-
-            data = response.json()
-            articles = data.get('articles', [])
-            if not articles:
-                break
-
-            new_articles = [a for a in articles if a.get('url') not in seen_urls]
-            if not new_articles:
-                break
-
-            all_articles.extend(new_articles)
-            seen_urls.update(a.get('url') for a in new_articles)
-            logger.info(f"✓ Newsroom API page {page}: {len(new_articles)} articles")
-
-            if len(articles) < page_size:
-                break
-            page += 1
-
-        logger.info(f"✓ Newsroom API total: {len(all_articles)} articles across {page} page(s)")
-        return all_articles[:max_results]
-
+        
+        data = response.json()
+        articles = data.get('articles', [])
+        
+        # Validate article format
+        valid_articles = []
+        for article in articles:
+            if article.get('headline') and article.get('url'):
+                valid_articles.append(article)
+        
+        logger.info(f"✓ Newsroom S3 export: {len(valid_articles)} articles (exported at {data.get('exported_at', 'unknown')})")
+        return valid_articles
+        
+    except requests.exceptions.Timeout:
+        logger.error("Newsroom S3 export timed out after 30s")
+        return []
     except Exception as e:
-        logger.warning(f"Newsroom API error: {e}")
+        logger.error(f"Newsroom S3 export error: {e}")
         return []
 
 
 def fetch_newsroom_api(query: str = None, days_back: int = 90, max_results: int = 25) -> List[Dict[str, Any]]:
     """
-    Fetch newsroom articles via API and return structured data.
-
-    This function returns structured data (List[Dict]) for use in deep research.
-    The data will be converted to Source objects in Phase 3.
-
-    Requires NEWSROOM_JWT_TOKEN in config.py or environment variable.
+    Fetch newsroom articles and return structured data.
+    Uses S3 export - no authentication required.
 
     Args:
-        query: Single-word search term (optional) - for multi-word/natural language
-               queries, use semantic_search_newsroom() instead
+        query: Search term for filtering (optional)
         days_back: Number of days to search back (default: 90)
         max_results: Max results to return (default: 25)
 
     Returns:
         List of article dictionaries with keys: headline, date, url, source, topic_tags, etc.
-        Returns empty list on error, with specific logging for auth failures.
     """
     try:
-        # Calculate date range
-        date_from = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
-
-        # Get auth headers
-        headers = _get_auth_headers()
-        if not headers:
-            logger.warning("No NEWSROOM_JWT_TOKEN configured - newsroom will be unavailable")
-
-        # Build params - extract best keyword for API search (API only supports single-word)
-        params = {
-            'limit': max_results,
-            'date_from': date_from
-        }
+        # Calculate date cutoff
+        date_cutoff = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
+        
+        # Fetch all articles from S3 export
+        all_articles = _fetch_newsroom_export()
+        
+        if not all_articles:
+            return []
+        
+        # Filter by date
+        articles = [a for a in all_articles if a.get('date', '') >= date_cutoff]
+        
+        # Apply search filter if query provided
         if query:
             keywords = _extract_keywords(query)
             if keywords:
-                params['search'] = keywords[0]
-
-        # Call newsroom API
-        response = requests.get(
-            NEWSROOM_API_URL,
-            params=params,
-            headers=headers,
-            timeout=_get_timeout()
-        )
-
-        if response.status_code == 200:
-            data = response.json()
-            articles = data.get('articles', [])
-
-            logger.info(f"✓ Newsroom: {len(articles)} articles (<500ms)")
-            return articles
-        elif response.status_code == 401:
-            logger.error("Newsroom API returned 401 Unauthorized - check NEWSROOM_JWT_TOKEN")
-            return []
-        elif response.status_code == 403:
-            logger.error("Newsroom API returned 403 Forbidden - token lacks newsroom access")
-            return []
-        else:
-            logger.warning(f"Newsroom API returned {response.status_code}")
-            return []
-
+                filtered = []
+                for article in articles:
+                    searchable = f"{article.get('headline', '')} {' '.join(article.get('topic_tags', []))}".lower()
+                    if any(kw in searchable for kw in keywords):
+                        filtered.append(article)
+                articles = filtered
+        
+        logger.info(f"Newsroom: {len(articles)} articles from S3 export")
+        return articles[:max_results]
+        
     except Exception as e:
-        logger.warning(f"Newsroom API error: {e}")
+        logger.warning(f"Newsroom fetch error: {e}")
         return []
 
 
@@ -271,11 +189,6 @@ def get_newsroom_headlines(query: str = None, max_results: int = None) -> str:
         max_results = getattr(config, 'NEWSROOM_MAX_RELEVANT', 25)
 
     try:
-        # Check if authentication is configured
-        headers = _get_auth_headers()
-        if not headers:
-            return AUTH_ERROR_MSG
-
         # Fetch from cache (7-day rolling window)
         articles, _cache_error = fetch_newsroom_cached(max_results=200)
 
