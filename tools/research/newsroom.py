@@ -22,7 +22,7 @@ STOP_WORDS = frozenset({
 })
 
 # S3 export URL - single file with all articles, updated hourly by Lambda
-NEWSROOM_EXPORT_URL = "https://news-collection-website.s3.af-south-1.amazonaws.com/zorora-export/articles.json"
+NEWSROOM_EXPORT_URL = "https://news-collection-website.s3.us-east-1.amazonaws.com/zorora-export/articles.json"
 
 
 def _extract_keywords(query: str) -> List[str]:
