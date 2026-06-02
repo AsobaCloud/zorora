@@ -1,6 +1,7 @@
 """Newsroom search tool - fetches articles from S3 export (fast, no auth required)."""
 
 import logging
+import os
 import requests
 import threading
 from typing import List, Dict, Any
@@ -22,7 +23,11 @@ STOP_WORDS = frozenset({
 })
 
 # S3 export URL - single file with all articles, updated hourly by Lambda
-NEWSROOM_EXPORT_URL = "https://news-collection-website.s3.us-east-1.amazonaws.com/zorora-export/articles.json"
+# Can be overridden via environment variable for quick fixes
+NEWSROOM_EXPORT_URL = os.environ.get(
+    "NEWSROOM_EXPORT_URL",
+    "https://news-collection-website.s3.us-east-1.amazonaws.com/zorora-export/articles.json"
+)
 
 
 def _extract_keywords(query: str) -> List[str]:
