@@ -28,7 +28,11 @@ def _extract_keywords(query: str) -> List[str]:
 
 # Newsroom API endpoint (production)
 NEWSROOM_API_URL = "https://pj1ud6q3uf.execute-api.af-south-1.amazonaws.com/prod/api/data-admin/newsroom/articles"
-NEWSROOM_API_TIMEOUT = 30
+
+
+def _get_timeout() -> int:
+    """Get timeout for newsroom API."""
+    return getattr(config, 'NEWSROOM_CONFIG', {}).get('timeout', 60)
 
 # Error messages for common issues
 AUTH_ERROR_MSG = """⚠ Newsroom authentication failed (HTTP 401)
@@ -144,7 +148,7 @@ def _fetch_newsroom_api_raw(days_back: int = 7, max_results: int = 500) -> List[
                 NEWSROOM_API_URL,
                 params={'limit': page_size, 'date_from': date_from, 'page': page},
                 headers=headers,
-                timeout=NEWSROOM_API_TIMEOUT
+                timeout=_get_timeout()
             )
 
             if response.status_code == 401:
@@ -225,7 +229,7 @@ def fetch_newsroom_api(query: str = None, days_back: int = 90, max_results: int 
             NEWSROOM_API_URL,
             params=params,
             headers=headers,
-            timeout=NEWSROOM_API_TIMEOUT
+            timeout=_get_timeout()
         )
 
         if response.status_code == 200:
