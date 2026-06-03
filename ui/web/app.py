@@ -7,7 +7,14 @@ import threading
 import uuid
 import json
 from datetime import date, datetime, timedelta, timezone
-from flask import Flask, render_template, request, jsonify, Response, stream_with_context
+from flask import (
+    Flask,
+    render_template,
+    request,
+    jsonify,
+    Response,
+    stream_with_context,
+)
 
 from engine.research_engine import ResearchEngine
 from engine.storage import LocalStorage
@@ -34,7 +41,12 @@ from workflows.digest_synthesis import (
 )
 import config
 from config import LOGGING_LEVEL, LOGGING_FORMAT, LOG_FILE
-from ui.web.auth import require_auth, require_research_quota, get_current_user, require_tier
+from ui.web.auth import (
+    require_auth,
+    require_research_quota,
+    get_current_user,
+    require_tier,
+)
 
 # Configure logging for web UI (mirrors main.py setup)
 if not logging.root.handlers:
@@ -46,9 +58,7 @@ if not logging.root.handlers:
 
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__,
-            template_folder='templates',
-            static_folder='static')
+app = Flask(__name__, template_folder="templates", static_folder="static")
 
 # Initialize research engine
 research_engine = ResearchEngine()
@@ -73,7 +83,9 @@ def _parse_date(date_str: str):
     return shared_parse_date(date_str)
 
 
-def _filter_newsroom_articles(articles, topic=None, date_from=None, date_to=None, limit=100):
+def _filter_newsroom_articles(
+    articles, topic=None, date_from=None, date_to=None, limit=100
+):
     """Filter newsroom articles by topic and date range."""
     return shared_filter_newsroom_articles(
         articles,
@@ -103,17 +115,27 @@ def fetch_newsroom_api(max_results=10000):
 
 
 COUNTRY_ALIASES = {
-    "US": "United States", "USA": "United States", "Usa": "United States",
-    "Us": "United States", "America": "United States",
-    "UK": "United Kingdom", "Uk": "United Kingdom", "Britain": "United Kingdom",
+    "US": "United States",
+    "USA": "United States",
+    "Usa": "United States",
+    "Us": "United States",
+    "America": "United States",
+    "UK": "United Kingdom",
+    "Uk": "United Kingdom",
+    "Britain": "United Kingdom",
     "Great Britain": "United Kingdom",
-    "UAE": "United Arab Emirates", "Uae": "United Arab Emirates",
-    "EU": "European Union", "Eu": "European Union",
-    "South Korea": "South Korea", "Republic of Korea": "South Korea",
-    "Russia": "Russia", "Russian Federation": "Russia",
+    "UAE": "United Arab Emirates",
+    "Uae": "United Arab Emirates",
+    "EU": "European Union",
+    "Eu": "European Union",
+    "South Korea": "South Korea",
+    "Republic of Korea": "South Korea",
+    "Russia": "Russia",
+    "Russian Federation": "Russia",
     "DRC": "Democratic Republic of the Congo",
     "Congo DR": "Democratic Republic of the Congo",
-    "SA": "South Africa", "RSA": "South Africa",
+    "SA": "South Africa",
+    "RSA": "South Africa",
 }
 
 
@@ -128,7 +150,9 @@ def _load_research_by_id(research_id: str, user_ids: list[str] = None):
     if research_data:
         return research_data
 
-    results = research_engine.search_research(query=research_id, limit=1, user_ids=user_ids)
+    results = research_engine.search_research(
+        query=research_id, limit=1, user_ids=user_ids
+    )
     if not results:
         return None
     return research_engine.load_research(results[0]["research_id"], user_ids=user_ids)
@@ -150,7 +174,9 @@ def _compose_chat_reply(
         title = source.get("title") or source.get("headline") or "Untitled"
         source_type = source.get("source_type") or source.get("source") or "unknown"
         url = source.get("url", "")
-        publication_date = str(source.get("publication_date") or source.get("date") or "")[:10]
+        publication_date = str(
+            source.get("publication_date") or source.get("date") or ""
+        )[:10]
         line = f"- {title} | {source_type} | {publication_date} | {url}"
         full_content = (source.get("content_full") or "").strip()
         snippet = (source.get("content_snippet") or "").strip()
@@ -199,7 +225,10 @@ def _compose_chat_reply(
         client = create_specialist_client("reasoning", model_config)
         response = client.chat_complete(
             [
-                {"role": "system", "content": "You provide grounded follow-up analysis with clear citations."},
+                {
+                    "role": "system",
+                    "content": "You provide grounded follow-up analysis with clear citations.",
+                },
                 {"role": "user", "content": prompt},
             ],
             tools=None,
@@ -224,49 +253,56 @@ def _stream_reply_events(reply: str):
     """Yield SSE events that incrementally stream a reply."""
     chunk_size = 120
     for i in range(0, len(reply), chunk_size):
-        delta = reply[i:i + chunk_size]
+        delta = reply[i : i + chunk_size]
         payload = {"delta": delta, "done": False}
         yield f"data: {json.dumps(payload)}\n\n"
     yield f"data: {json.dumps({'delta': '', 'done': True})}\n\n"
 
 
-@app.route('/health')
+@app.route("/health")
 def health():
     """Health check endpoint for container orchestrators."""
     return jsonify({"status": "ok"})
 
 
-@app.route('/')
+@app.route("/")
 def index():
     """Render main research UI"""
-    return render_template('index.html')
+    return render_template("index.html")
 
 
-@app.route('/api/auth/me', methods=['GET'])
+@app.route("/api/auth/me", methods=["GET"])
 def auth_me():
     """Return current user info and subscription status."""
     from ui.web.auth import _get_user_subscription
+
     user, error = get_current_user()
     if error:
         return error
     if user is None:
         return jsonify({"authenticated": False}), 200
     tier, usage, user_type = _get_user_subscription(user.get("user_id"))
-    return jsonify({
-        "authenticated": True,
-        "user_id": user.get("user_id"),
-        "username": user.get("username"),
-        "zorora_tier": tier,
-        "user_type": user_type,
-        "usage": usage,
-    })
+    return jsonify(
+        {
+            "authenticated": True,
+            "user_id": user.get("user_id"),
+            "username": user.get("username"),
+            "zorora_tier": tier,
+            "user_type": user_type,
+            "usage": usage,
+        }
+    )
 
 
-@app.route('/api/auth/login', methods=['POST'])
+@app.route("/api/auth/login", methods=["POST"])
 def auth_login_proxy():
     """Proxy login to the Ona Platform auth API."""
     import requests as http_requests
-    AUTH_API = os.environ.get("ONA_AUTH_API_ENDPOINT", "https://w0lovgppb9.execute-api.af-south-1.amazonaws.com/prod")
+
+    AUTH_API = os.environ.get(
+        "ONA_AUTH_API_ENDPOINT",
+        "https://w0lovgppb9.execute-api.af-south-1.amazonaws.com/prod",
+    )
     data = request.get_json() or {}
     try:
         resp = http_requests.post(
@@ -279,11 +315,16 @@ def auth_login_proxy():
         if resp.status_code == 403 or resp.status_code == 400:
             try:
                 resp_data = resp.json()
-                if 'mfa' in resp_data.get('error', '').lower() or 'mfa_required' in resp_data:
-                    return jsonify({
-                        "error": "This account requires MFA. Please use a non-MFA account or contact support to disable MFA for Zorora access.",
-                        "mfa_required": True
-                    }), 403
+                if (
+                    "mfa" in resp_data.get("error", "").lower()
+                    or "mfa_required" in resp_data
+                ):
+                    return jsonify(
+                        {
+                            "error": "This account requires MFA. Please use a non-MFA account or contact support to disable MFA for Zorora access.",
+                            "mfa_required": True,
+                        }
+                    ), 403
             except (ValueError, AttributeError):
                 pass
         return (resp.text, resp.status_code, {"Content-Type": "application/json"})
@@ -292,7 +333,7 @@ def auth_login_proxy():
         return jsonify({"error": "Authentication service unavailable"}), 502
 
 
-@app.route('/api/auth/signup', methods=['POST'])
+@app.route("/api/auth/signup", methods=["POST"])
 def auth_signup():
     """Create a new user account and return a JWT."""
     import bcrypt
@@ -303,7 +344,7 @@ def auth_signup():
     data = request.get_json() or {}
     username = (data.get("username") or "").strip().lower()
     email = (data.get("email") or "").strip().lower()
-    password = (data.get("password") or "")
+    password = data.get("password") or ""
 
     if not username or not email or not password:
         return jsonify({"error": "Username, email, and password are required"}), 400
@@ -314,7 +355,11 @@ def auth_signup():
     if "@" not in email:
         return jsonify({"error": "Invalid email address"}), 400
 
-    region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "af-south-1"
+    region = (
+        os.environ.get("AWS_REGION")
+        or os.environ.get("AWS_DEFAULT_REGION")
+        or "af-south-1"
+    )
     dynamodb = boto3.resource("dynamodb", region_name=region)
     users_table = dynamodb.Table(os.environ.get("USERS_TABLE", "ona-platform-users"))
 
@@ -334,8 +379,11 @@ def auth_signup():
 
     # Create user
     from datetime import datetime, timezone
+
     user_id = f"user_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}"
-    password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode(
+        "utf-8"
+    )
 
     user_item = {
         "user_id": user_id,
@@ -359,7 +407,9 @@ def auth_signup():
         return jsonify({"error": "Failed to create account"}), 500
 
     # Generate JWT
-    jwt_secret = os.environ.get("ONA_JWT_SECRET", "change-this-secret-key-in-production")
+    jwt_secret = os.environ.get(
+        "ONA_JWT_SECRET", "change-this-secret-key-in-production"
+    )
     token = pyjwt.encode(
         {
             "user_id": user_id,
@@ -375,16 +425,18 @@ def auth_signup():
         algorithm="HS256",
     )
 
-    return jsonify({
-        "token": token,
-        "user": {
-            "user_id": user_id,
-            "username": username,
-            "email": email,
-            "role_name": "Zorora User",
-        },
-        "message": "Account created successfully",
-    })
+    return jsonify(
+        {
+            "token": token,
+            "user": {
+                "user_id": user_id,
+                "username": username,
+                "email": email,
+                "role_name": "Zorora User",
+            },
+            "message": "Account created successfully",
+        }
+    )
 
 
 def _run_research_with_progress(
@@ -398,11 +450,12 @@ def _run_research_with_progress(
 ):
     """Run research workflow in background thread and emit progress updates."""
     try:
+
         def on_progress(status: str, phase: str, message: str):
             research_progress[research_id] = {
                 "status": status,
                 "message": message,
-                "phase": phase
+                "phase": phase,
             }
 
         profile = config.DEPTH_PROFILES.get(depth, config.DEPTH_PROFILES[1])
@@ -427,24 +480,29 @@ def _run_research_with_progress(
             "status": "completed",
             "message": f"Research complete! Found {state.total_sources} sources.",
             "phase": "complete",
-            "results": build_results_payload(state, query, research_id=research_id_actual, max_sources=profile["max_sources"]),
+            "results": build_results_payload(
+                state,
+                query,
+                research_id=research_id_actual,
+                max_sources=profile["max_sources"],
+            ),
         }
-        
+
     except Exception as e:
         logger.error(f"Research error: {e}", exc_info=True)
         research_progress[research_id] = {
             "status": "error",
             "message": f"Error: {str(e)}",
-            "phase": "error"
+            "phase": "error",
         }
 
 
-@app.route('/api/research/refine', methods=['POST'])
+@app.route("/api/research/refine", methods=["POST"])
 def refine_research_query():
     """Analyze a research query and return structured refinement suggestions."""
     try:
         data = request.get_json()
-        query = (data.get('query') or '').strip()
+        query = (data.get("query") or "").strip()
         if not query:
             return jsonify({"error": "Query is required"}), 400
 
@@ -452,28 +510,30 @@ def refine_research_query():
         return jsonify(result)
     except Exception as e:
         logger.warning(f"Query refinement error (non-fatal): {e}")
-        return jsonify({
-            "status": "well_specified",
-            "original_query": query,
-            "dimensions": {"topic": {"detected": True, "value": query}},
-            "gaps": [],
-            "refined_query": query,
-            "skip_refinement": True,
-        })
+        return jsonify(
+            {
+                "status": "well_specified",
+                "original_query": query,
+                "dimensions": {"topic": {"detected": True, "value": query}},
+                "gaps": [],
+                "refined_query": query,
+                "skip_refinement": True,
+            }
+        )
 
 
-@app.route('/api/research', methods=['POST'])
+@app.route("/api/research", methods=["POST"])
 @require_research_quota
 def start_research():
     """
     Start deep research workflow (async with progress tracking).
-    
+
     Request body:
     {
         "query": str,
         "depth": int (1-3, default: 1)
     }
-    
+
     Returns:
     {
         "research_id": str,
@@ -483,34 +543,34 @@ def start_research():
     """
     try:
         data = request.get_json()
-        query = data.get('query', '').strip()
-        depth = int(data.get('depth', 1))
-        refined_query = (data.get('refined_query') or '').strip() or None
-        research_type = (data.get('research_type') or '').strip() or None
-        asset_metadata = data.get('asset_metadata') or None
+        query = data.get("query", "").strip()
+        depth = int(data.get("depth", 1))
+        refined_query = (data.get("refined_query") or "").strip() or None
+        research_type = (data.get("research_type") or "").strip() or None
+        asset_metadata = data.get("asset_metadata") or None
         if not research_type:
             research_type = infer_research_type(refined_query or query)
 
         if not query:
             return jsonify({"error": "Query is required"}), 400
-        
+
         if depth not in [1, 2, 3]:
             return jsonify({"error": "Depth must be 1, 2, or 3"}), 400
-        
+
         logger.info(f"Starting research: {query} (depth={depth})")
-        
+
         # Generate unique research ID for progress tracking
         research_id = str(uuid.uuid4())
-        
+
         # Initialize progress
         research_progress[research_id] = {
             "status": "starting",
             "message": "Initializing research workflow...",
-            "phase": "init"
+            "phase": "init",
         }
-        
+
         # Get user_id from request (set by @require_research_quota decorator)
-        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        user_id = request.user.get("user_id") if hasattr(request, "user") else None
 
         # Start research in background thread
         thread = threading.Thread(
@@ -522,74 +582,78 @@ def start_research():
                 "asset_metadata": asset_metadata,
                 "user_id": user_id,
             },
-            daemon=True
+            daemon=True,
         )
         thread.start()
-        
-        return jsonify({
-            "research_id": research_id,
-            "status": "started",
-            "query": query,
-            "retrieved_at": datetime.now(timezone.utc).isoformat(),
-            "strict_citations_default": False,
-        })
-        
+
+        return jsonify(
+            {
+                "research_id": research_id,
+                "status": "started",
+                "query": query,
+                "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                "strict_citations_default": False,
+            }
+        )
+
     except Exception as e:
         logger.error(f"Research error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/research/<research_id>/progress', methods=['GET'])
+@app.route("/api/research/<research_id>/progress", methods=["GET"])
 def get_research_progress(research_id):
     """
     Get progress updates for research (Server-Sent Events).
-    
+
     Returns:
     SSE stream with progress updates
     """
+
     def generate():
         """Generate SSE events for progress updates."""
         import time
+
         last_status = None
         last_message = None
-        
+
         while True:
             if research_id not in research_progress:
                 yield f"data: {json.dumps({'error': 'Research not found'})}\n\n"
                 break
-            
+
             progress = research_progress[research_id]
             status = progress.get("status")
             message = progress.get("message")
-            
+
             # Send update if status or message changed
             if status != last_status or message != last_message:
                 yield f"data: {json.dumps(progress)}\n\n"
                 last_status = status
                 last_message = message
-                
+
                 # Close connection if completed or error
                 if status in ["completed", "error"]:
                     break
-            
+
             time.sleep(0.5)  # Poll every 500ms
-    
+
     return Response(
         stream_with_context(generate()),
-        mimetype='text/event-stream',
+        mimetype="text/event-stream",
         headers={
-            'Cache-Control': 'no-cache',
-            'X-Accel-Buffering': 'no'  # Disable nginx buffering
-        }
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        },
     )
 
 
-@app.route('/api/research/<research_id>', methods=['GET'])
+@app.route("/api/research/<research_id>", methods=["GET"])
 @require_auth
 def get_research(research_id):
     """
     Get research results by ID.
-    
+
     Returns:
     {
         "research_id": str,
@@ -600,22 +664,23 @@ def get_research(research_id):
     }
     """
     try:
-        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        user_id = request.user.get("user_id") if hasattr(request, "user") else None
         from ui.web.auth import get_accessible_user_ids
+
         accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
 
         research_data = _load_research_by_id(research_id, user_ids=accessible_user_ids)
         if not research_data:
             return jsonify({"error": "Research data not found or unauthorized"}), 404
-        
+
         return jsonify(research_data)
-        
+
     except Exception as e:
         logger.error(f"Get research error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/research/<research_id>/chat', methods=['POST'])
+@app.route("/api/research/<research_id>/chat", methods=["POST"])
 @require_auth
 def research_chat(research_id):
     """Follow-up chat for a research session."""
@@ -629,15 +694,20 @@ def research_chat(research_id):
         history = data.get("history") or []
         selected_source_ids = set(data.get("selected_source_ids") or [])
 
-        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        user_id = request.user.get("user_id") if hasattr(request, "user") else None
         from ui.web.auth import get_accessible_user_ids
+
         accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
 
         research_data = _load_research_by_id(research_id, user_ids=accessible_user_ids)
         if not research_data:
             return jsonify({"error": "Research not found or unauthorized"}), 404
 
-        original_query = research_data.get("query") or research_data.get("original_query") or "research query"
+        original_query = (
+            research_data.get("query")
+            or research_data.get("original_query")
+            or "research query"
+        )
         synthesis = research_data.get("synthesis") or ""
         sources = research_data.get("sources") or []
 
@@ -645,10 +715,13 @@ def research_chat(research_id):
         try:
             cf = config.CONTENT_FETCH
             if cf.get("enabled", False):
-                missing = [s for s in sources if s.get("url") and not s.get("content_full")]
+                missing = [
+                    s for s in sources if s.get("url") and not s.get("content_full")
+                ]
                 if missing:
                     from engine.models import Source as _Source
                     from tools.utils._content_extractor import ContentExtractor
+
                     source_objs = []
                     obj_map = {}
                     for sd in missing:
@@ -676,7 +749,9 @@ def research_chat(research_id):
             logger.warning(f"On-demand content fetch failed (non-fatal): {e}")
 
         if selected_source_ids:
-            scoped_sources = [s for s in sources if (s.get("source_id") in selected_source_ids)]
+            scoped_sources = [
+                s for s in sources if (s.get("source_id") in selected_source_ids)
+            ]
         else:
             scoped_sources = sources
 
@@ -692,26 +767,44 @@ def research_chat(research_id):
 
         thread_key = f"research:{research_id}"
         thread = chat_threads.setdefault(thread_key, [])
-        thread.append({"role": "user", "content": message, "at": datetime.now(timezone.utc).isoformat()})
-        thread.append({"role": "assistant", "content": reply, "at": datetime.now(timezone.utc).isoformat()})
+        thread.append(
+            {
+                "role": "user",
+                "content": message,
+                "at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        thread.append(
+            {
+                "role": "assistant",
+                "content": reply,
+                "at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
         try:
-            _local_storage.append_chat_turn(thread_key, "user", message, user_ids=accessible_user_ids)
-            _local_storage.append_chat_turn(thread_key, "assistant", reply, user_ids=accessible_user_ids)
+            _local_storage.append_chat_turn(
+                thread_key, "user", message, user_ids=accessible_user_ids
+            )
+            _local_storage.append_chat_turn(
+                thread_key, "assistant", reply, user_ids=accessible_user_ids
+            )
         except Exception as _e:
             logger.warning(f"Chat history persistence failed (non-fatal): {_e}")
 
         if bool(data.get("stream", False)):
             return Response(
                 stream_with_context(_stream_reply_events(reply)),
-                mimetype='text/event-stream',
-                headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'},
+                mimetype="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
 
         return jsonify(
             {
                 "reply": reply,
                 "mode": "evidence" if strict_citations else "advisory",
-                "used_source_ids": [s.get("source_id") for s in scoped_sources[:8] if s.get("source_id")],
+                "used_source_ids": [
+                    s.get("source_id") for s in scoped_sources[:8] if s.get("source_id")
+                ],
                 "thread_size": len(thread),
                 "source_count": len(scoped_sources),
                 "strict_citations": strict_citations,
@@ -724,13 +817,14 @@ def research_chat(research_id):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/research/<research_id>/chat/<message_id>/feedback', methods=['POST'])
+@app.route("/api/research/<research_id>/chat/<message_id>/feedback", methods=["POST"])
 @require_auth
 def research_chat_feedback(research_id, message_id):
     """Persist thumbs up/down feedback for a research chat message (SEP-059)."""
     try:
-        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        user_id = request.user.get("user_id") if hasattr(request, "user") else None
         from ui.web.auth import get_accessible_user_ids
+
         accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
 
         data = request.get_json() or {}
@@ -749,13 +843,14 @@ def research_chat_feedback(research_id, message_id):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/research/<research_id>/chat/history', methods=['GET'])
+@app.route("/api/research/<research_id>/chat/history", methods=["GET"])
 @require_auth
 def research_chat_history(research_id):
     """Return persisted chat history for a research session (SEP-059)."""
     try:
-        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        user_id = request.user.get("user_id") if hasattr(request, "user") else None
         from ui.web.auth import get_accessible_user_ids
+
         accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
 
         thread_key = f"research:{research_id}"
@@ -770,20 +865,20 @@ def research_chat_history(research_id):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/news-intel/facets', methods=['GET'])
+@app.route("/api/news-intel/facets", methods=["GET"])
 def get_news_intel_facets():
     """Return available topics, sources, and date range from cached articles."""
     try:
         from collections import Counter
 
-        articles = fetch_newsroom_api(max_results=5000)
+        articles = fetch_newsroom_api(max_results=10000)
 
         topic_counts = Counter()
         source_counts = Counter()
         dates = []
 
         for article in articles:
-            for tag in (article.get("topic_tags") or []):
+            for tag in article.get("topic_tags") or []:
                 topic_counts[tag] += 1
             src = article.get("source")
             if src:
@@ -792,10 +887,13 @@ def get_news_intel_facets():
             if d:
                 dates.append(d)
 
-        topics = [{"name": name, "count": count}
-                  for name, count in topic_counts.most_common()]
-        sources = [{"name": name, "count": count}
-                   for name, count in source_counts.most_common()]
+        topics = [
+            {"name": name, "count": count} for name, count in topic_counts.most_common()
+        ]
+        sources = [
+            {"name": name, "count": count}
+            for name, count in source_counts.most_common()
+        ]
         date_range = {
             "min": min(dates) if dates else None,
             "max": max(dates) if dates else None,
@@ -807,10 +905,9 @@ def get_news_intel_facets():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/news-intel/articles', methods=['POST'])
-@require_tier('professional')
+@app.route("/api/news-intel/articles", methods=["POST"])
+@require_tier("professional")
 def get_newsroom_articles():
-
     """Fetch newsroom articles from API and filter by topic/date range."""
     try:
         data = request.get_json() or {}
@@ -838,7 +935,7 @@ def get_newsroom_articles():
         )
 
         total_count = len(filtered)
-        page = filtered[offset:offset + limit]
+        page = filtered[offset : offset + limit]
 
         serialized = [
             {
@@ -852,14 +949,22 @@ def get_newsroom_articles():
             }
             for article in page
         ]
-        return jsonify({"count": len(serialized), "total_count": total_count, "offset": offset, "articles": serialized, "warning": warning})
+        return jsonify(
+            {
+                "count": len(serialized),
+                "total_count": total_count,
+                "offset": offset,
+                "articles": serialized,
+                "warning": warning,
+            }
+        )
     except Exception as e:
         logger.error(f"News intel articles error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/news-intel/synthesize', methods=['POST'])
-@require_tier('professional')
+@app.route("/api/news-intel/synthesize", methods=["POST"])
+@require_tier("professional")
 def synthesize_news_intel():
     """Synthesize filtered newsroom articles fetched via newsroom API."""
     try:
@@ -887,7 +992,9 @@ def synthesize_news_intel():
         staged_articles = data.get("staged_articles") or []
         if staged_articles:
             filtered = staged_articles + filtered
-        synthesis = _news_intel_synthesis(filtered, topic=topic, date_from=date_from, date_to=date_to)
+        synthesis = _news_intel_synthesis(
+            filtered, topic=topic, date_from=date_from, date_to=date_to
+        )
 
         return jsonify(
             {
@@ -913,7 +1020,7 @@ def synthesize_news_intel():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/news-intel/chat', methods=['POST'])
+@app.route("/api/news-intel/chat", methods=["POST"])
 def news_intel_chat():
     """Follow-up chat for a news-intel synthesis session."""
     try:
@@ -929,10 +1036,14 @@ def news_intel_chat():
         history = data.get("history") or []
         articles = data.get("articles") or []
         synthesis = data.get("synthesis") or ""
-        session_id = (data.get("session_id") or "").strip() or f"{topic}:{date_from}:{date_to}"
+        session_id = (
+            data.get("session_id") or ""
+        ).strip() or f"{topic}:{date_from}:{date_to}"
 
         if not articles:
-            return jsonify({"error": "articles are required for news-intel chat context"}), 400
+            return jsonify(
+                {"error": "articles are required for news-intel chat context"}
+            ), 400
 
         context_summary = (
             f"Topic: {topic or 'All'}\nDate From: {date_from or 'Any'}\nDate To: {date_to or 'Any'}\n\n"
@@ -949,14 +1060,26 @@ def news_intel_chat():
 
         thread_key = f"news:{session_id}"
         thread = chat_threads.setdefault(thread_key, [])
-        thread.append({"role": "user", "content": message, "at": datetime.now(timezone.utc).isoformat()})
-        thread.append({"role": "assistant", "content": reply, "at": datetime.now(timezone.utc).isoformat()})
+        thread.append(
+            {
+                "role": "user",
+                "content": message,
+                "at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        thread.append(
+            {
+                "role": "assistant",
+                "content": reply,
+                "at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
 
         if bool(data.get("stream", False)):
             return Response(
                 stream_with_context(_stream_reply_events(reply)),
-                mimetype='text/event-stream',
-                headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'},
+                mimetype="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
 
         return jsonify(
@@ -975,7 +1098,7 @@ def news_intel_chat():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/news-intel/stats', methods=['POST'])
+@app.route("/api/news-intel/stats", methods=["POST"])
 def get_news_intel_stats():
     """Aggregate articles by normalized country for map display."""
     try:
@@ -988,7 +1111,11 @@ def get_news_intel_stats():
 
         articles, warning = fetch_newsroom_cached(max_results=10000)
         filtered = _filter_newsroom_articles(
-            articles, topic=topic, date_from=date_from, date_to=date_to, limit=limit,
+            articles,
+            topic=topic,
+            date_from=date_from,
+            date_to=date_to,
+            limit=limit,
         )
 
         country_agg = {}
@@ -1011,30 +1138,39 @@ def get_news_intel_stats():
                 entry["sources"][src] = entry["sources"].get(src, 0) + 1
 
         stats = [
-            {"country": c, "count": v["count"], "topics": v["topics"], "sources": v["sources"]}
-            for c, v in sorted(country_agg.items(), key=lambda x: x[1]["count"], reverse=True)
+            {
+                "country": c,
+                "count": v["count"],
+                "topics": v["topics"],
+                "sources": v["sources"],
+            }
+            for c, v in sorted(
+                country_agg.items(), key=lambda x: x[1]["count"], reverse=True
+            )
         ]
 
-        return jsonify({
-            "total_articles": len(filtered),
-            "geo_tagged_articles": geo_tagged,
-            "stats": stats,
-            "warning": warning,
-        })
+        return jsonify(
+            {
+                "total_articles": len(filtered),
+                "geo_tagged_articles": geo_tagged,
+                "stats": stats,
+                "warning": warning,
+            }
+        )
     except Exception as e:
         logger.error(f"News intel stats error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/alerts', methods=['POST'])
-@require_tier('professional')
+@app.route("/api/alerts", methods=["POST"])
+@require_tier("professional")
 def create_alert():
     """Create a recurring digest alert from current Digest state."""
     try:
-        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        user_id = request.user.get("user_id") if hasattr(request, "user") else None
         # For now, team_id is optional but we'll extract it if available
-        team_id = request.user.get('team_id')
-        
+        team_id = request.user.get("team_id")
+
         data = request.get_json() or {}
         name = (data.get("name") or "").strip()
         interval = (data.get("interval") or "daily").strip().lower()
@@ -1061,31 +1197,38 @@ def create_alert():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/alerts', methods=['GET'])
-@require_tier('professional')
+@app.route("/api/alerts", methods=["GET"])
+@require_tier("professional")
 def list_alerts():
     """List recurring digest alerts."""
     try:
-        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        user_id = request.user.get("user_id") if hasattr(request, "user") else None
         from ui.web.auth import get_accessible_user_ids
+
         accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
 
         store = AlertStore()
         alerts = store.list_alerts(user_ids=accessible_user_ids)
         store.close()
-        return jsonify({"alerts": alerts, "unread_total": sum(alert.get("unread_count", 0) for alert in alerts)})
+        return jsonify(
+            {
+                "alerts": alerts,
+                "unread_total": sum(alert.get("unread_count", 0) for alert in alerts),
+            }
+        )
     except Exception as e:
         logger.error(f"List alerts error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/alerts/<alert_id>/results', methods=['GET'])
+@app.route("/api/alerts/<alert_id>/results", methods=["GET"])
 @require_auth
 def get_alert_results(alert_id):
     """Return paginated alert results."""
     try:
-        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        user_id = request.user.get("user_id") if hasattr(request, "user") else None
         from ui.web.auth import get_accessible_user_ids
+
         accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
 
         store = AlertStore()
@@ -1105,13 +1248,14 @@ def get_alert_results(alert_id):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/alerts/<alert_id>', methods=['PATCH'])
+@app.route("/api/alerts/<alert_id>", methods=["PATCH"])
 @require_auth
 def update_alert(alert_id):
     """Update alert settings."""
     try:
-        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        user_id = request.user.get("user_id") if hasattr(request, "user") else None
         from ui.web.auth import get_accessible_user_ids
+
         accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
 
         store = AlertStore()
@@ -1123,12 +1267,20 @@ def update_alert(alert_id):
 
         data = request.get_json() or {}
         updates = {}
-        for key in ("name", "topic", "date_window_days", "article_limit", "interval", "enabled", "last_run_at"):
+        for key in (
+            "name",
+            "topic",
+            "date_window_days",
+            "article_limit",
+            "interval",
+            "enabled",
+            "last_run_at",
+        ):
             if key in data:
                 updates[key] = data[key]
         if "staged_series" in data:
             updates["staged_series"] = data["staged_series"]
-        
+
         store.update_alert(alert_id, **updates)
         updated_alert = store.get_alert(alert_id, user_ids=accessible_user_ids)
         store.close()
@@ -1138,13 +1290,14 @@ def update_alert(alert_id):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/alerts/<alert_id>', methods=['DELETE'])
+@app.route("/api/alerts/<alert_id>", methods=["DELETE"])
 @require_auth
 def delete_alert(alert_id):
     """Delete an alert and its results."""
     try:
-        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        user_id = request.user.get("user_id") if hasattr(request, "user") else None
         from ui.web.auth import get_accessible_user_ids
+
         accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
 
         store = AlertStore()
@@ -1162,7 +1315,7 @@ def delete_alert(alert_id):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/alerts/<alert_id>/read', methods=['POST'])
+@app.route("/api/alerts/<alert_id>/read", methods=["POST"])
 @require_auth
 def mark_alert_read(alert_id):
     """Mark all alert results as read."""
@@ -1176,10 +1329,11 @@ def mark_alert_read(alert_id):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/market/latest', methods=['GET'])
+@app.route("/api/market/latest", methods=["GET"])
 def get_market_latest():
     """Return latest observation per series from MarketDataStore."""
     import time as _time
+
     global _market_latest_cache
     if _market_latest_cache is not None:
         cached_at, cached_data = _market_latest_cache
@@ -1203,8 +1357,10 @@ def get_market_latest():
                 prev_val = float(obs_list[1]["value"]) if len(obs_list) >= 2 else None
                 pct_change = None
                 if prev_val and prev_val != 0:
-                    pct_change = round(((latest_val - prev_val) / abs(prev_val)) * 100, 2)
-                
+                    pct_change = round(
+                        ((latest_val - prev_val) / abs(prev_val)) * 100, 2
+                    )
+
                 last_fetched = latest["last_fetched_at"]
                 # Standardize to ISO format with Z for UTC to ensure JS compatibility
                 if last_fetched:
@@ -1217,18 +1373,20 @@ def get_market_latest():
                             last_fetched = base + "Z"
                         # Otherwise leave offset as is, JS handles it
 
-                results.append({
-                    "series_id": sid,
-                    "name": series.label,
-                    "group": series.group,
-                    "unit": series.unit,
-                    "source": series.provider,
-                    "latest_value": latest_val,
-                    "latest_date": latest_date,
-                    "prev_value": prev_val,
-                    "pct_change": pct_change,
-                    "last_fetched": last_fetched,
-                })
+                results.append(
+                    {
+                        "series_id": sid,
+                        "name": series.label,
+                        "group": series.group,
+                        "unit": series.unit,
+                        "source": series.provider,
+                        "latest_value": latest_val,
+                        "latest_date": latest_date,
+                        "prev_value": prev_val,
+                        "pct_change": pct_change,
+                        "last_fetched": last_fetched,
+                    }
+                )
             except (IndexError, ValueError, TypeError) as e:
                 logger.debug(f"Error processing series {sid} in bulk fetch: {e}")
 
@@ -1239,11 +1397,12 @@ def get_market_latest():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/market/refresh', methods=['POST'])
+@app.route("/api/market/refresh", methods=["POST"])
 def refresh_market_data_all():
     """Force-refresh all market data immediately."""
     try:
         from workflows.market_workflow import MarketWorkflow
+
         wf = MarketWorkflow()
         count = wf.update_all(force=True)
         return jsonify({"status": "ok", "updated": count})
@@ -1258,7 +1417,7 @@ def _strip_bulk_fields(items, extra_keys=()):
     return [{k: v for k, v in item.items() if k not in strip} for item in items]
 
 
-@app.route('/api/regulatory/rps', methods=['GET'])
+@app.route("/api/regulatory/rps", methods=["GET"])
 def get_regulatory_rps():
     """Return parsed RPS/CES targets with optional state/year filters."""
     try:
@@ -1267,7 +1426,9 @@ def get_regulatory_rps():
         standard_type = request.args.get("standard_type")
         limit = request.args.get("limit", type=int)
         store = RegulatoryDataStore()
-        items = store.get_rps_targets(state=state, year=year, standard_type=standard_type)
+        items = store.get_rps_targets(
+            state=state, year=year, standard_type=standard_type
+        )
         store.close()
         total = len(items)
         if limit is not None:
@@ -1278,7 +1439,7 @@ def get_regulatory_rps():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/regulatory/eia/capacity', methods=['GET'])
+@app.route("/api/regulatory/eia/capacity", methods=["GET"])
 def get_regulatory_capacity():
     """Return EIA operating generator capacity rows."""
     try:
@@ -1286,7 +1447,9 @@ def get_regulatory_capacity():
         fuel_type = request.args.get("fuel_type")
         limit = request.args.get("limit", type=int)
         store = RegulatoryDataStore()
-        items = store.get_eia_series("operating-generator-capacity", state=state, fuel_type=fuel_type)
+        items = store.get_eia_series(
+            "operating-generator-capacity", state=state, fuel_type=fuel_type
+        )
         store.close()
         total = len(items)
         if limit is not None:
@@ -1297,7 +1460,7 @@ def get_regulatory_capacity():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/regulatory/eia/generation', methods=['GET'])
+@app.route("/api/regulatory/eia/generation", methods=["GET"])
 def get_regulatory_generation():
     """Return EIA generation rows from operational data."""
     try:
@@ -1305,7 +1468,9 @@ def get_regulatory_generation():
         fuel_type = request.args.get("fuel_type")
         limit = request.args.get("limit", type=int)
         store = RegulatoryDataStore()
-        items = store.get_eia_series("electric-power-operational-data", state=state, fuel_type=fuel_type)
+        items = store.get_eia_series(
+            "electric-power-operational-data", state=state, fuel_type=fuel_type
+        )
         store.close()
         total = len(items)
         if limit is not None:
@@ -1316,7 +1481,7 @@ def get_regulatory_generation():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/regulatory/rates', methods=['GET'])
+@app.route("/api/regulatory/rates", methods=["GET"])
 def get_regulatory_rates():
     """Return stored utility rate records."""
     try:
@@ -1335,7 +1500,7 @@ def get_regulatory_rates():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/regulatory/events', methods=['GET'])
+@app.route("/api/regulatory/events", methods=["GET"])
 def get_regulatory_events():
     """Return structured regulatory events."""
     try:
@@ -1362,7 +1527,7 @@ def get_regulatory_events():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/regulatory/provenance', methods=['GET'])
+@app.route("/api/regulatory/provenance", methods=["GET"])
 def get_regulatory_provenance():
     """Return raw-document and transform-run provenance for regulatory event sources."""
     try:
@@ -1377,18 +1542,22 @@ def get_regulatory_provenance():
         raw_documents = store.get_raw_documents(**query_args)
         transform_runs = store.get_transform_runs(**query_args)
         store.close()
-        return jsonify({
-            "raw_documents": _strip_bulk_fields(raw_documents, extra_keys=("payload_text",)),
-            "transform_runs": _strip_bulk_fields(transform_runs),
-            "raw_document_count": len(raw_documents),
-            "transform_run_count": len(transform_runs),
-        })
+        return jsonify(
+            {
+                "raw_documents": _strip_bulk_fields(
+                    raw_documents, extra_keys=("payload_text",)
+                ),
+                "transform_runs": _strip_bulk_fields(transform_runs),
+                "raw_document_count": len(raw_documents),
+                "transform_run_count": len(transform_runs),
+            }
+        )
     except Exception as e:
         logger.error(f"Regulatory provenance error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/regulatory/refresh', methods=['POST'])
+@app.route("/api/regulatory/refresh", methods=["POST"])
 def refresh_regulatory_data():
     """Force-refresh regulatory ingest sources."""
     try:
@@ -1404,19 +1573,23 @@ def refresh_regulatory_data():
 # Brownfield pipeline endpoints
 # ---------------------------------------------------------------------------
 
-@app.route('/api/pipeline/assets', methods=['GET'])
+
+@app.route("/api/pipeline/assets", methods=["GET"])
 @require_auth
 def list_pipeline_assets():
     """List brownfield acquisition pipeline assets."""
     try:
-        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        user_id = request.user.get("user_id") if hasattr(request, "user") else None
         from ui.web.auth import get_accessible_user_ids
+
         accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
 
         technology = request.args.get("technology")
         country = request.args.get("country")
         store = ImagingDataStore()
-        items = store.list_pipeline_assets(technology=technology, country=country, user_ids=accessible_user_ids)
+        items = store.list_pipeline_assets(
+            technology=technology, country=country, user_ids=accessible_user_ids
+        )
         store.close()
         return jsonify({"items": items, "count": len(items)})
     except Exception as e:
@@ -1424,13 +1597,13 @@ def list_pipeline_assets():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/pipeline/assets', methods=['POST'])
+@app.route("/api/pipeline/assets", methods=["POST"])
 @require_auth
 def create_pipeline_asset():
     """Persist a generation or deposit asset into the brownfield pipeline."""
     try:
-        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
-        team_id = request.user.get('team_id')
+        user_id = request.user.get("user_id") if hasattr(request, "user") else None
+        team_id = request.user.get("team_id")
 
         data = request.get_json() or {}
         source_type = (data.get("source_type") or "").strip()
@@ -1441,7 +1614,9 @@ def create_pipeline_asset():
             return jsonify({"error": "asset is required"}), 400
 
         store = ImagingDataStore()
-        saved = store.upsert_pipeline_asset(source_type=source_type, asset=asset, user_id=user_id, team_id=team_id)
+        saved = store.upsert_pipeline_asset(
+            source_type=source_type, asset=asset, user_id=user_id, team_id=team_id
+        )
         store.close()
         return jsonify({"status": "ok", "asset": saved})
     except Exception as e:
@@ -1449,12 +1624,12 @@ def create_pipeline_asset():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/pipeline/assets/<asset_id>', methods=['DELETE'])
+@app.route("/api/pipeline/assets/<asset_id>", methods=["DELETE"])
 @require_auth
 def delete_pipeline_asset(asset_id):
     """Delete a brownfield pipeline asset."""
     try:
-        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        user_id = request.user.get("user_id") if hasattr(request, "user") else None
         store = ImagingDataStore()
         store.delete_pipeline_asset(asset_id, user_id=user_id)
         store.close()
@@ -1472,21 +1647,26 @@ VALID_SCOUTING_TYPES = {"brownfield", "greenfield", "bess"}
 VALID_SCOUTING_STAGES = {"identified", "scored", "feasibility", "diligence", "decision"}
 
 
-@app.route('/api/scouting/items', methods=['GET'])
-@require_tier('enterprise')
+@app.route("/api/scouting/items", methods=["GET"])
+@require_tier("enterprise")
 def list_scouting_items():
     """List scouting kanban items by type, optionally filtered by stage."""
     try:
-        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        user_id = request.user.get("user_id") if hasattr(request, "user") else None
         from ui.web.auth import get_accessible_user_ids
+
         accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
 
         item_type = (request.args.get("type") or "").strip()
         if item_type not in VALID_SCOUTING_TYPES:
-            return jsonify({"error": f"type must be one of {sorted(VALID_SCOUTING_TYPES)}"}), 400
+            return jsonify(
+                {"error": f"type must be one of {sorted(VALID_SCOUTING_TYPES)}"}
+            ), 400
         stage = request.args.get("stage")
         store = ImagingDataStore()
-        items = store.list_scouting_items(item_type, stage=stage, user_ids=accessible_user_ids)
+        items = store.list_scouting_items(
+            item_type, stage=stage, user_ids=accessible_user_ids
+        )
         store.close()
         return jsonify({"items": items, "count": len(items)})
     except Exception as e:
@@ -1494,13 +1674,14 @@ def list_scouting_items():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/scouting/items/<item_id>/stage', methods=['PUT'])
+@app.route("/api/scouting/items/<item_id>/stage", methods=["PUT"])
 @require_auth
 def update_scouting_item_stage(item_id):
     """Move a scouting item to a different pipeline stage."""
     try:
-        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        user_id = request.user.get("user_id") if hasattr(request, "user") else None
         from ui.web.auth import get_accessible_user_ids
+
         accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
 
         data = request.get_json(silent=True) or {}
@@ -1511,9 +1692,13 @@ def update_scouting_item_stage(item_id):
         if not stage:
             return jsonify({"error": "stage is required"}), 400
         if item_type not in VALID_SCOUTING_TYPES:
-            return jsonify({"error": f"type must be one of {sorted(VALID_SCOUTING_TYPES)}"}), 400
+            return jsonify(
+                {"error": f"type must be one of {sorted(VALID_SCOUTING_TYPES)}"}
+            ), 400
         if stage not in VALID_SCOUTING_STAGES:
-            return jsonify({"error": f"stage must be one of {sorted(VALID_SCOUTING_STAGES)}"}), 400
+            return jsonify(
+                {"error": f"stage must be one of {sorted(VALID_SCOUTING_STAGES)}"}
+            ), 400
         store = ImagingDataStore()
         store.update_scouting_stage(item_type, item_id, stage, user_id=user_id)
         if item_type == "greenfield":
@@ -1576,8 +1761,9 @@ def _scoring_snapshot_from_site(site: dict) -> dict:
 def score_preview_scouting_item(item_id):
     """Compute scoring payload for a kanban item without persisting."""
     try:
-        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        user_id = request.user.get("user_id") if hasattr(request, "user") else None
         from ui.web.auth import get_accessible_user_ids
+
         accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
 
         data = request.get_json(silent=True) or {}
@@ -1596,7 +1782,9 @@ def score_preview_scouting_item(item_id):
                 row = store.get_watchlist_site(item_id, user_ids=accessible_user_ids)
                 if not row:
                     return jsonify({"error": "not found or unauthorized"}), 404
-                tech = technology_override or (row.get("technology") or "").strip().lower()
+                tech = (
+                    technology_override or (row.get("technology") or "").strip().lower()
+                )
                 if not tech:
                     return jsonify({"error": "technology is required"}), 400
                 site = _compute_greenfield_score(
@@ -1629,7 +1817,9 @@ def score_preview_scouting_item(item_id):
             elif item_type == "brownfield":
                 if row.get("source_type") == "bess":
                     return jsonify({"error": "use type bess for this item"}), 400
-                tech = technology_override or (row.get("technology") or "").strip().lower()
+                tech = (
+                    technology_override or (row.get("technology") or "").strip().lower()
+                )
                 if not tech:
                     return jsonify({"error": "technology is required"}), 400
                 site = _compute_greenfield_score(
@@ -1659,8 +1849,9 @@ def score_preview_scouting_item(item_id):
 def apply_scouting_score(item_id):
     """Persist score-preview output and set scouting_stage to scored."""
     try:
-        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        user_id = request.user.get("user_id") if hasattr(request, "user") else None
         from ui.web.auth import get_accessible_user_ids
+
         accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
 
         data = request.get_json(silent=True) or {}
@@ -1690,7 +1881,9 @@ def apply_scouting_score(item_id):
                     return jsonify({"error": "not found or unauthorized"}), 404
                 snapshot = _scoring_snapshot_from_site(site)
                 store.save_pipeline_scouting_score(item_id, snapshot)
-                store.update_scouting_stage(item_type, item_id, "scored", user_id=user_id)
+                store.update_scouting_stage(
+                    item_type, item_id, "scored", user_id=user_id
+                )
                 saved = store.get_pipeline_asset(item_id, user_ids=accessible_user_ids)
         finally:
             store.close()
@@ -1700,18 +1893,20 @@ def apply_scouting_score(item_id):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/scouting/items', methods=['POST'])
-@require_tier('enterprise')
+@app.route("/api/scouting/items", methods=["POST"])
+@require_tier("enterprise")
 def create_scouting_item():
     """Create a scouting item via the unified endpoint."""
     try:
-        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
-        team_id = request.user.get('team_id')
+        user_id = request.user.get("user_id") if hasattr(request, "user") else None
+        team_id = request.user.get("team_id")
 
         data = request.get_json() or {}
         item_type = (data.get("type") or "").strip()
         if item_type not in VALID_SCOUTING_TYPES:
-            return jsonify({"error": f"type must be one of {sorted(VALID_SCOUTING_TYPES)}"}), 400
+            return jsonify(
+                {"error": f"type must be one of {sorted(VALID_SCOUTING_TYPES)}"}
+            ), 400
         store = ImagingDataStore()
         if item_type == "greenfield":
             site = data.get("site") or {}
@@ -1725,7 +1920,9 @@ def create_scouting_item():
             asset = data.get("asset") or {}
             if not asset:
                 return jsonify({"error": "asset is required"}), 400
-            saved = store.upsert_pipeline_asset(source_type=source_type, asset=asset, user_id=user_id, team_id=team_id)
+            saved = store.upsert_pipeline_asset(
+                source_type=source_type, asset=asset, user_id=user_id, team_id=team_id
+            )
             store.close()
             return jsonify({"status": "ok", "item": saved})
     except Exception as e:
@@ -1733,31 +1930,38 @@ def create_scouting_item():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/scouting/items/<item_id>', methods=['GET', 'DELETE'])
+@app.route("/api/scouting/items/<item_id>", methods=["GET", "DELETE"])
 @require_auth
 def scouting_item_get_or_delete(item_id):
     """Fetch one scouting item (GET) or delete it (DELETE)."""
     try:
-        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        user_id = request.user.get("user_id") if hasattr(request, "user") else None
         from ui.web.auth import get_accessible_user_ids
+
         accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
 
         item_type = (request.args.get("type") or "").strip()
         if not item_type:
             return jsonify({"error": "type query parameter is required"}), 400
         if item_type not in VALID_SCOUTING_TYPES:
-            return jsonify({"error": f"type must be one of {sorted(VALID_SCOUTING_TYPES)}"}), 400
+            return jsonify(
+                {"error": f"type must be one of {sorted(VALID_SCOUTING_TYPES)}"}
+            ), 400
         store = ImagingDataStore()
         try:
             if request.method == "GET":
                 if item_type == "greenfield":
-                    item = store.get_watchlist_site(item_id, user_ids=accessible_user_ids)
+                    item = store.get_watchlist_site(
+                        item_id, user_ids=accessible_user_ids
+                    )
                 else:
-                    item = store.get_pipeline_asset(item_id, user_ids=accessible_user_ids)
+                    item = store.get_pipeline_asset(
+                        item_id, user_ids=accessible_user_ids
+                    )
                 if not item:
                     return jsonify({"error": "not found or unauthorized"}), 404
                 return jsonify({"item": item})
-            
+
             # DELETE
             if item_type == "greenfield":
                 store.delete_watchlist_site(item_id, user_id=user_id)
@@ -1771,13 +1975,14 @@ def scouting_item_get_or_delete(item_id):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/scouting/items/<item_id>/notes', methods=['PATCH'])
+@app.route("/api/scouting/items/<item_id>/notes", methods=["PATCH"])
 @require_auth
 def patch_scouting_item_notes(item_id):
     """Update team notes for a greenfield watchlist site or pipeline/bess asset."""
     try:
-        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        user_id = request.user.get("user_id") if hasattr(request, "user") else None
         from ui.web.auth import get_accessible_user_ids
+
         accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
 
         data = request.get_json(silent=True) or {}
@@ -1788,7 +1993,9 @@ def patch_scouting_item_notes(item_id):
         if not isinstance(notes, str):
             return jsonify({"error": "notes must be a string"}), 400
         if item_type not in VALID_SCOUTING_TYPES:
-            return jsonify({"error": f"type must be one of {sorted(VALID_SCOUTING_TYPES)}"}), 400
+            return jsonify(
+                {"error": f"type must be one of {sorted(VALID_SCOUTING_TYPES)}"}
+            ), 400
         store = ImagingDataStore()
         try:
             if item_type == "greenfield":
@@ -1816,13 +2023,14 @@ def patch_scouting_item_notes(item_id):
 FEASIBILITY_TABS = {"production", "trading", "grid", "regulatory", "financial"}
 
 
-@app.route('/api/scouting/items/<item_id>/feasibility', methods=['GET'])
+@app.route("/api/scouting/items/<item_id>/feasibility", methods=["GET"])
 @require_auth
 def get_feasibility_all(item_id):
     """Return all tab results and progress for a scouting item."""
     try:
-        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        user_id = request.user.get("user_id") if hasattr(request, "user") else None
         from ui.web.auth import get_accessible_user_ids
+
         accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
 
         store = ImagingDataStore()
@@ -1835,38 +2043,44 @@ def get_feasibility_all(item_id):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/scouting/items/<item_id>/feasibility/<tab>', methods=['GET'])
+@app.route("/api/scouting/items/<item_id>/feasibility/<tab>", methods=["GET"])
 @require_auth
 def get_feasibility_tab(item_id, tab):
     """Return a single tab result or 404 if not yet run."""
     if tab not in FEASIBILITY_TABS:
         return jsonify({"error": f"tab must be one of {sorted(FEASIBILITY_TABS)}"}), 400
     try:
-        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        user_id = request.user.get("user_id") if hasattr(request, "user") else None
         from ui.web.auth import get_accessible_user_ids
+
         accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
 
         store = ImagingDataStore()
-        result = store.get_feasibility_result(item_id, tab, user_ids=accessible_user_ids)
+        result = store.get_feasibility_result(
+            item_id, tab, user_ids=accessible_user_ids
+        )
         store.close()
         if result is None:
-            return jsonify({"error": f"Tab '{tab}' has not been run for item '{item_id}'"}), 404
+            return jsonify(
+                {"error": f"Tab '{tab}' has not been run for item '{item_id}'"}
+            ), 404
         return jsonify(result)
     except Exception as e:
         logger.error(f"Feasibility get tab error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/scouting/items/<item_id>/feasibility/<tab>', methods=['POST'])
+@app.route("/api/scouting/items/<item_id>/feasibility/<tab>", methods=["POST"])
 @require_auth
 def run_feasibility_tab_endpoint(item_id, tab):
     """Run a feasibility tab analysis, persist result, and return it."""
     if tab not in FEASIBILITY_TABS:
         return jsonify({"error": f"tab must be one of {sorted(FEASIBILITY_TABS)}"}), 400
     try:
-        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
-        team_id = request.user.get('team_id') if hasattr(request, 'user') else None
+        user_id = request.user.get("user_id") if hasattr(request, "user") else None
+        team_id = request.user.get("team_id") if hasattr(request, "user") else None
         from ui.web.auth import get_accessible_user_ids
+
         accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
 
         data = request.get_json(silent=True) or {}
@@ -1908,9 +2122,12 @@ def run_feasibility_tab_endpoint(item_id, tab):
         # For financial tab, include prior results
         extra_kwargs = {}
         if tab == "financial":
-            extra_kwargs["prior_results"] = store.get_feasibility_results(item_id, user_ids=accessible_user_ids)
+            extra_kwargs["prior_results"] = store.get_feasibility_results(
+                item_id, user_ids=accessible_user_ids
+            )
 
         from workflows.feasibility import run_feasibility_tab
+
         workflow_result = run_feasibility_tab(
             item_id=item_id,
             item_type=item_type,
@@ -1950,21 +2167,23 @@ def run_feasibility_tab_endpoint(item_id, tab):
 # Imaging (OSINT mineral intelligence) endpoints
 # ---------------------------------------------------------------------------
 
-@app.route('/api/imaging/deposits', methods=['GET'])
-@require_tier('professional')
+
+@app.route("/api/imaging/deposits", methods=["GET"])
+@require_tier("professional")
 def get_imaging_deposits():
     """Return mineral deposits as GeoJSON with viability scores."""
     try:
-        commodity = request.args.get('commodity')
-        country = request.args.get('country')
+        commodity = request.args.get("commodity")
+        country = request.args.get("country")
         store = ImagingDataStore()
         img_config = getattr(config, "IMAGING", {})
         stale_hours = img_config.get("stale_threshold_hours", 168)
         # Auto-fetch from MRDS when store is empty or stale
         staleness = store.get_staleness("deposits")
         if staleness is None or staleness > stale_hours:
-            logger.info("Imaging deposits stale (%.1fh), fetching from MRDS",
-                        staleness or -1)
+            logger.info(
+                "Imaging deposits stale (%.1fh), fetching from MRDS", staleness or -1
+            )
             deposits = fetch_deposits()
             store.upsert_deposits(deposits.get("features", []))
         geojson = store.get_deposits(commodity=commodity, country=country)
@@ -1976,12 +2195,12 @@ def get_imaging_deposits():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/imaging/concessions', methods=['GET'])
-@require_tier('professional')
+@app.route("/api/imaging/concessions", methods=["GET"])
+@require_tier("professional")
 def get_imaging_concessions():
     """Return mining concessions as GeoJSON."""
     try:
-        country = request.args.get('country')
+        country = request.args.get("country")
         store = ImagingDataStore()
         geojson = store.get_concessions(country=country)
         store.close()
@@ -1991,15 +2210,15 @@ def get_imaging_concessions():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/imaging/generation', methods=['GET'])
-@require_tier('professional')
+@app.route("/api/imaging/generation", methods=["GET"])
+@require_tier("professional")
 def get_imaging_generation():
     """Return renewable generation assets as GeoJSON."""
     try:
-        technology = request.args.get('technology')
-        status = request.args.get('status')
-        country = request.args.get('country')
-        min_capacity = request.args.get('min_capacity_mw', type=float)
+        technology = request.args.get("technology")
+        status = request.args.get("status")
+        country = request.args.get("country")
+        min_capacity = request.args.get("min_capacity_mw", type=float)
         store = ImagingDataStore()
         img_config = getattr(config, "IMAGING", {})
         stale_hours = img_config.get("stale_threshold_hours", 168)
@@ -2024,13 +2243,14 @@ def get_imaging_generation():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/imaging/search', methods=['GET'])
+@app.route("/api/imaging/search", methods=["GET"])
 @require_auth
 def imaging_discovery_search():
     """Search local discovery datasets (deposits, concessions, generation, scouting rows)."""
     try:
-        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        user_id = request.user.get("user_id") if hasattr(request, "user") else None
         from ui.web.auth import get_accessible_user_ids
+
         accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
 
         q = (request.args.get("q") or "").strip()
@@ -2039,7 +2259,9 @@ def imaging_discovery_search():
             return jsonify({"results": [], "query": q})
         store = ImagingDataStore()
         try:
-            results = store.search_discovery(q, limit=limit, user_ids=accessible_user_ids)
+            results = store.search_discovery(
+                q, limit=limit, user_ids=accessible_user_ids
+            )
         finally:
             store.close()
         return jsonify({"results": results, "query": q})
@@ -2048,7 +2270,7 @@ def imaging_discovery_search():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/geocode', methods=['GET'])
+@app.route("/api/geocode", methods=["GET"])
 def geocode_lookup():
     """Proxy place search via Nominatim (OpenStreetMap). Use for jump-to-place when not in local DB."""
     import urllib.error
@@ -2098,34 +2320,43 @@ def geocode_lookup():
         return jsonify({"results": [], "error": str(e)}), 200
 
 
-@app.route('/api/imaging/config', methods=['GET'])
+@app.route("/api/imaging/config", methods=["GET"])
 def get_imaging_config():
     """Return imaging tile URLs, filter options, and viability thresholds."""
     img_config = getattr(config, "IMAGING", {})
-    return jsonify({
-        "satellite_tile_url": img_config.get("satellite_tile_url", ""),
-        "viirs_tile_url": img_config.get("viirs_tile_url", ""),
-        "target_commodities": img_config.get("target_commodities", []),
-        "generation_technologies": ["solar", "wind", "hydropower", "bioenergy", "geothermal"],
-        "resource_layers": [
-            {
-                "key": "solar_resource",
-                "label": "Solar Resource",
-                "url": img_config.get("solar_overlay_tile_url", ""),
-                "attribution": img_config.get("solar_overlay_attribution", ""),
-            },
-        ],
-        "scouting_technologies": ["solar", "wind"],
-        "viability_tiers": {"high": [65, 100], "medium": [35, 64], "low": [0, 34]},
-    })
+    return jsonify(
+        {
+            "satellite_tile_url": img_config.get("satellite_tile_url", ""),
+            "viirs_tile_url": img_config.get("viirs_tile_url", ""),
+            "target_commodities": img_config.get("target_commodities", []),
+            "generation_technologies": [
+                "solar",
+                "wind",
+                "hydropower",
+                "bioenergy",
+                "geothermal",
+            ],
+            "resource_layers": [
+                {
+                    "key": "solar_resource",
+                    "label": "Solar Resource",
+                    "url": img_config.get("solar_overlay_tile_url", ""),
+                    "attribution": img_config.get("solar_overlay_attribution", ""),
+                },
+            ],
+            "scouting_technologies": ["solar", "wind"],
+            "viability_tiers": {"high": [65, 100], "medium": [35, 64], "low": [0, 34]},
+        }
+    )
 
 
-@app.route('/api/imaging/refresh', methods=['POST'])
+@app.route("/api/imaging/refresh", methods=["POST"])
 def refresh_imaging_data():
     """Force-refresh deposits and concessions from upstream sources."""
     try:
         from tools.imaging.mrds_client import fetch_deposits
         from tools.imaging.concessions_client import fetch_concessions_sa
+
         store = ImagingDataStore()
         deposits = fetch_deposits()
         store.upsert_deposits(deposits.get("features", []))
@@ -2134,12 +2365,14 @@ def refresh_imaging_data():
         generation = load_generation_assets()
         store.upsert_generation_assets(generation.get("features", []))
         store.close()
-        return jsonify({
-            "status": "ok",
-            "deposits": len(deposits.get("features", [])),
-            "concessions": len(concessions.get("features", [])),
-            "generation_assets": len(generation.get("features", [])),
-        })
+        return jsonify(
+            {
+                "status": "ok",
+                "deposits": len(deposits.get("features", [])),
+                "concessions": len(concessions.get("features", [])),
+                "generation_assets": len(generation.get("features", [])),
+            }
+        )
     except Exception as e:
         logger.error(f"Imaging refresh error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
@@ -2155,7 +2388,7 @@ _discovery_metrics_cache = None
 _discovery_substations_cache = None
 
 
-@app.route('/api/discovery/gcca/mts-zones', methods=['GET'])
+@app.route("/api/discovery/gcca/mts-zones", methods=["GET"])
 def get_discovery_mts_zones():
     """Return MTS substation zones as GeoJSON with DAM node annotation."""
     global _discovery_mts_cache
@@ -2163,6 +2396,7 @@ def get_discovery_mts_zones():
         if _discovery_mts_cache is None:
             from tools.imaging.gcca_client import load_mts_zones
             from tools.imaging.grid_metrics import SUPPLY_AREA_DAM_NODE
+
             fc = load_mts_zones()
             for f in fc.get("features", []):
                 area = f.get("properties", {}).get("supplyarea", "")
@@ -2174,7 +2408,7 @@ def get_discovery_mts_zones():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/discovery/gcca/supply-areas', methods=['GET'])
+@app.route("/api/discovery/gcca/supply-areas", methods=["GET"])
 def get_discovery_supply_areas():
     """Return supply area boundary polygons as GeoJSON with DAM node annotation."""
     global _discovery_supply_cache
@@ -2182,6 +2416,7 @@ def get_discovery_supply_areas():
         if _discovery_supply_cache is None:
             from tools.imaging.gcca_client import load_supply_areas
             from tools.imaging.grid_metrics import SUPPLY_AREA_DAM_NODE
+
             fc = load_supply_areas()
             for f in fc.get("features", []):
                 area = f.get("properties", {}).get("supplyarea", "")
@@ -2193,7 +2428,7 @@ def get_discovery_supply_areas():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/discovery/gcca/substations', methods=['GET'])
+@app.route("/api/discovery/gcca/substations", methods=["GET"])
 def get_discovery_substations():
     """Return MTS substation point locations as GeoJSON with DAM node annotation."""
     global _discovery_substations_cache
@@ -2201,6 +2436,7 @@ def get_discovery_substations():
         if _discovery_substations_cache is None:
             from tools.imaging.gcca_client import load_substations
             from tools.imaging.grid_metrics import SUPPLY_AREA_DAM_NODE
+
             fc = load_substations()
             for f in fc.get("features", []):
                 area = f.get("properties", {}).get("supply_area", "")
@@ -2220,6 +2456,7 @@ def _ensure_zone_metrics():
     from tools.imaging.gcca_client import load_mts_zones
     from tools.imaging.grid_metrics import compute_zone_metrics
     from tools.market.sapp_client import parse_all_dam_files
+
     mts = load_mts_zones()
     dam = parse_all_dam_files()
     store = ImagingDataStore()
@@ -2230,7 +2467,7 @@ def _ensure_zone_metrics():
     return _discovery_metrics_cache
 
 
-@app.route('/api/discovery/zone-metrics', methods=['GET'])
+@app.route("/api/discovery/zone-metrics", methods=["GET"])
 def get_discovery_zone_metrics_all():
     """Return DAM price stats + RE asset counts for all MTS zones."""
     try:
@@ -2241,7 +2478,7 @@ def get_discovery_zone_metrics_all():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/discovery/zone-metrics/<substation>', methods=['GET'])
+@app.route("/api/discovery/zone-metrics/<substation>", methods=["GET"])
 def get_discovery_zone_metrics(substation):
     """Return DAM price stats + RE asset count for a specific MTS zone."""
     try:
@@ -2259,13 +2496,15 @@ def get_discovery_zone_metrics(substation):
 # Greenfield scouting endpoints
 # ---------------------------------------------------------------------------
 
-@app.route('/api/scouting/score', methods=['POST'])
+
+@app.route("/api/scouting/score", methods=["POST"])
 @require_auth
 def score_greenfield_site():
     """Score a clicked greenfield candidate site."""
     try:
-        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        user_id = request.user.get("user_id") if hasattr(request, "user") else None
         from ui.web.auth import get_accessible_user_ids
+
         accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
 
         data = request.get_json() or {}
@@ -2296,18 +2535,21 @@ def score_greenfield_site():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/scouting/watchlist', methods=['GET'])
+@app.route("/api/scouting/watchlist", methods=["GET"])
 @require_auth
 def list_scout_watchlist():
     """List persisted greenfield scouting watchlist entries."""
     try:
-        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        user_id = request.user.get("user_id") if hasattr(request, "user") else None
         from ui.web.auth import get_accessible_user_ids
+
         accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
 
         technology = request.args.get("technology")
         store = ImagingDataStore()
-        items = store.list_watchlist_sites(technology=technology, user_ids=accessible_user_ids)
+        items = store.list_watchlist_sites(
+            technology=technology, user_ids=accessible_user_ids
+        )
         store.close()
         return jsonify({"items": items, "count": len(items)})
     except Exception as e:
@@ -2315,13 +2557,13 @@ def list_scout_watchlist():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/scouting/watchlist', methods=['POST'])
+@app.route("/api/scouting/watchlist", methods=["POST"])
 @require_auth
 def create_scout_watchlist_item():
     """Persist a scored site in the greenfield watchlist."""
     try:
-        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
-        team_id = request.user.get('team_id') if hasattr(request, 'user') else None
+        user_id = request.user.get("user_id") if hasattr(request, "user") else None
+        team_id = request.user.get("team_id") if hasattr(request, "user") else None
 
         data = request.get_json() or {}
         site = data.get("site") or {}
@@ -2337,12 +2579,12 @@ def create_scout_watchlist_item():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/scouting/watchlist/<site_id>', methods=['DELETE'])
+@app.route("/api/scouting/watchlist/<site_id>", methods=["DELETE"])
 @require_auth
 def delete_scout_watchlist_item(site_id):
     """Delete a site from the greenfield watchlist."""
     try:
-        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        user_id = request.user.get("user_id") if hasattr(request, "user") else None
         store = ImagingDataStore()
         store.delete_watchlist_site(site_id, user_id=user_id)
         store.close()
@@ -2352,16 +2594,21 @@ def delete_scout_watchlist_item(site_id):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/scouting/compare', methods=['GET'])
+@app.route("/api/scouting/compare", methods=["GET"])
 @require_auth
 def compare_scout_watchlist_sites():
     """Return watchlist sites for side-by-side comparison."""
     try:
-        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        user_id = request.user.get("user_id") if hasattr(request, "user") else None
         from ui.web.auth import get_accessible_user_ids
+
         accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
 
-        ids = [item.strip() for item in (request.args.get("ids") or "").split(",") if item.strip()]
+        ids = [
+            item.strip()
+            for item in (request.args.get("ids") or "").split(",")
+            if item.strip()
+        ]
         store = ImagingDataStore()
         items = store.get_watchlist_sites_by_ids(ids, user_ids=accessible_user_ids)
         store.close()
@@ -2371,7 +2618,7 @@ def compare_scout_watchlist_sites():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/research/history', methods=['GET'])
+@app.route("/api/research/history", methods=["GET"])
 @require_auth
 def get_research_history():
     """
@@ -2397,18 +2644,17 @@ def get_research_history():
     }
     """
     try:
-        limit = int(request.args.get('limit', 10))
-        search_query = request.args.get('query', None)
-        user_id = request.user.get('user_id') if hasattr(request, 'user') else None
+        limit = int(request.args.get("limit", 10))
+        search_query = request.args.get("query", None)
+        user_id = request.user.get("user_id") if hasattr(request, "user") else None
 
         # Get accessible user IDs (own + team for Enterprise)
         from ui.web.auth import get_accessible_user_ids
+
         accessible_user_ids = get_accessible_user_ids(user_id) if user_id else None
 
         results = research_engine.search_research(
-            query=search_query,
-            limit=limit,
-            user_ids=accessible_user_ids
+            query=search_query, limit=limit, user_ids=accessible_user_ids
         )
 
         return jsonify({"results": results})
@@ -2420,12 +2666,13 @@ def get_research_history():
 
 # Settings API Routes
 
-@app.route('/api/settings/config', methods=['GET'])
+
+@app.route("/api/settings/config", methods=["GET"])
 @require_auth
 def get_settings_config():
     """
     Get current configuration.
-    
+
     Returns:
     {
         "api_url": str,
@@ -2438,7 +2685,7 @@ def get_settings_config():
     """
     try:
         config = config_manager.read_config()
-        
+
         # Mask API tokens (always mask in responses)
         for token_key in ["hf_token", "openai_api_key", "anthropic_api_key"]:
             if config.get(token_key):
@@ -2448,21 +2695,21 @@ def get_settings_config():
                 else:
                     masked = "***"
                 config[token_key] = masked
-        
+
         return jsonify(config)
     except Exception as e:
         logger.error(f"Error getting config: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/settings/models', methods=['GET'])
+@app.route("/api/settings/models", methods=["GET"])
 @require_auth
 def get_settings_models():
     """
     Get available models from LM Studio and HF endpoints.
-    
+
     NOTE: This fetches models live on every request - no caching.
-    
+
     Returns:
     {
         "models": [
@@ -2479,12 +2726,12 @@ def get_settings_models():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/settings/endpoints', methods=['GET'])
+@app.route("/api/settings/endpoints", methods=["GET"])
 @require_auth
 def get_settings_endpoints():
     """
     Get saved endpoints (HF, OpenAI, Anthropic).
-    
+
     Returns:
     {
         "endpoints": [
@@ -2496,7 +2743,7 @@ def get_settings_endpoints():
     try:
         config = config_manager.read_config()
         endpoints = []
-        
+
         # HF endpoints
         for key, endpoint_config in config.get("hf_endpoints", {}).items():
             endpoint_data = {
@@ -2504,7 +2751,9 @@ def get_settings_endpoints():
                 "provider": "hf",
                 "url": endpoint_config.get("url", ""),
                 "model": endpoint_config.get("model_name", ""),
-                "model_name": endpoint_config.get("model_name", ""),  # Keep for backward compat
+                "model_name": endpoint_config.get(
+                    "model_name", ""
+                ),  # Keep for backward compat
                 "timeout": endpoint_config.get("timeout", 120),
                 "enabled": endpoint_config.get("enabled", True),
             }
@@ -2517,7 +2766,7 @@ def get_settings_endpoints():
                     masked = "***"
                 endpoint_data["api_key"] = masked
             endpoints.append(endpoint_data)
-        
+
         # OpenAI endpoints
         for key, endpoint_config in config.get("openai_endpoints", {}).items():
             endpoint_data = {
@@ -2538,7 +2787,7 @@ def get_settings_endpoints():
                     masked = "***"
                 endpoint_data["api_key"] = masked
             endpoints.append(endpoint_data)
-        
+
         # Anthropic endpoints
         for key, endpoint_config in config.get("anthropic_endpoints", {}).items():
             endpoint_data = {
@@ -2559,19 +2808,19 @@ def get_settings_endpoints():
                     masked = "***"
                 endpoint_data["api_key"] = masked
             endpoints.append(endpoint_data)
-        
+
         return jsonify({"endpoints": endpoints})
     except Exception as e:
         logger.error(f"Error getting endpoints: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/settings/endpoint', methods=['POST'])
+@app.route("/api/settings/endpoint", methods=["POST"])
 @require_auth
 def save_endpoint():
     """
     Add or update an endpoint (HF, OpenAI, or Anthropic).
-    
+
     Request body:
     {
         "key": str,
@@ -2583,38 +2832,63 @@ def save_endpoint():
         "enabled": bool (optional),
         "max_tokens": int (optional, for OpenAI/Anthropic),
     }
-    
+
     Returns:
     {"success": bool, "error": str}
     """
     try:
         data = request.get_json()
         provider = data.get("provider", "hf").lower()
-        
+
         # Validate required fields
         if not data.get("key"):
             return jsonify({"success": False, "error": "Missing 'key' field"}), 400
-        
+
         # Validate key (Python identifier)
         import re
-        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_-]*$', data["key"]):
-            return jsonify({"success": False, "error": "Invalid endpoint key (must be valid Python identifier)"}), 400
-        
+
+        if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_-]*$", data["key"]):
+            return jsonify(
+                {
+                    "success": False,
+                    "error": "Invalid endpoint key (must be valid Python identifier)",
+                }
+            ), 400
+
         # Read current config
         current = config_manager.read_config()
-        
+
         if provider == "hf":
             # HF endpoint validation
             if not data.get("url") or not (data.get("model_name") or data.get("model")):
-                return jsonify({"success": False, "error": "HF endpoint requires 'url' and 'model_name'"}), 400
-            
+                return jsonify(
+                    {
+                        "success": False,
+                        "error": "HF endpoint requires 'url' and 'model_name'",
+                    }
+                ), 400
+
             if not data["url"].startswith(("http://", "https://")):
-                return jsonify({"success": False, "error": "URL must start with http:// or https://"}), 400
-            
+                return jsonify(
+                    {
+                        "success": False,
+                        "error": "URL must start with http:// or https://",
+                    }
+                ), 400
+
             # Validate API key is not masked
-            if "api_key" in data and isinstance(data["api_key"], str) and "..." in data["api_key"]:
-                return jsonify({"success": False, "error": "Invalid API key format (masked token detected)"}), 400
-            
+            if (
+                "api_key" in data
+                and isinstance(data["api_key"], str)
+                and "..." in data["api_key"]
+            ):
+                return jsonify(
+                    {
+                        "success": False,
+                        "error": "Invalid API key format (masked token detected)",
+                    }
+                ), 400
+
             hf_endpoints = current.get("hf_endpoints", {}).copy()
             endpoint_config = {
                 "url": data["url"],
@@ -2627,16 +2901,27 @@ def save_endpoint():
                 endpoint_config["api_key"] = data["api_key"]
             hf_endpoints[data["key"]] = endpoint_config
             result = config_manager.write_config({"hf_endpoints": hf_endpoints})
-            
+
         elif provider == "openai":
             # OpenAI endpoint validation
             if not data.get("model"):
-                return jsonify({"success": False, "error": "OpenAI endpoint requires 'model'"}), 400
-            
+                return jsonify(
+                    {"success": False, "error": "OpenAI endpoint requires 'model'"}
+                ), 400
+
             # Validate API key is not masked
-            if "api_key" in data and isinstance(data["api_key"], str) and "..." in data["api_key"]:
-                return jsonify({"success": False, "error": "Invalid API key format (masked token detected)"}), 400
-            
+            if (
+                "api_key" in data
+                and isinstance(data["api_key"], str)
+                and "..." in data["api_key"]
+            ):
+                return jsonify(
+                    {
+                        "success": False,
+                        "error": "Invalid API key format (masked token detected)",
+                    }
+                ), 400
+
             openai_endpoints = current.get("openai_endpoints", {}).copy()
             endpoint_config = {
                 "model": data["model"],
@@ -2649,16 +2934,27 @@ def save_endpoint():
                 endpoint_config["api_key"] = data["api_key"]
             openai_endpoints[data["key"]] = endpoint_config
             result = config_manager.write_config({"openai_endpoints": openai_endpoints})
-            
+
         elif provider == "anthropic":
             # Anthropic endpoint validation
             if not data.get("model"):
-                return jsonify({"success": False, "error": "Anthropic endpoint requires 'model'"}), 400
-            
+                return jsonify(
+                    {"success": False, "error": "Anthropic endpoint requires 'model'"}
+                ), 400
+
             # Validate API key is not masked
-            if "api_key" in data and isinstance(data["api_key"], str) and "..." in data["api_key"]:
-                return jsonify({"success": False, "error": "Invalid API key format (masked token detected)"}), 400
-            
+            if (
+                "api_key" in data
+                and isinstance(data["api_key"], str)
+                and "..." in data["api_key"]
+            ):
+                return jsonify(
+                    {
+                        "success": False,
+                        "error": "Invalid API key format (masked token detected)",
+                    }
+                ), 400
+
             anthropic_endpoints = current.get("anthropic_endpoints", {}).copy()
             endpoint_config = {
                 "model": data["model"],
@@ -2670,141 +2966,153 @@ def save_endpoint():
             if "api_key" in data and data["api_key"]:
                 endpoint_config["api_key"] = data["api_key"]
             anthropic_endpoints[data["key"]] = endpoint_config
-            result = config_manager.write_config({"anthropic_endpoints": anthropic_endpoints})
-            
+            result = config_manager.write_config(
+                {"anthropic_endpoints": anthropic_endpoints}
+            )
+
         else:
-            return jsonify({"success": False, "error": f"Invalid provider: {provider}. Must be 'hf', 'openai', or 'anthropic'"}), 400
-        
+            return jsonify(
+                {
+                    "success": False,
+                    "error": f"Invalid provider: {provider}. Must be 'hf', 'openai', or 'anthropic'",
+                }
+            ), 400
+
         if result["success"]:
             return jsonify({"success": True})
         else:
             return jsonify({"success": False, "error": result["error"]}), 400
-            
+
     except Exception as e:
         logger.error(f"Error saving endpoint: {e}", exc_info=True)
         return jsonify({"success": False, "error": str(e)}), 500
 
 
-@app.route('/api/settings/endpoint/<endpoint_key>', methods=['DELETE'])
+@app.route("/api/settings/endpoint/<endpoint_key>", methods=["DELETE"])
 @require_auth
 def delete_endpoint(endpoint_key):
     """
     Delete an endpoint (HF, OpenAI, or Anthropic).
-    
+
     NOTE: If the endpoint is in use by any role, those roles are automatically
     reassigned to "local" endpoint without user confirmation.
-    
+
     Returns:
     {"success": bool, "error": str}
     """
     try:
         # Read current config
         current = config_manager.read_config()
-        
+
         updates = {}
         endpoint_found = False
-        
+
         # Check and remove from HF endpoints
         hf_endpoints = current.get("hf_endpoints", {}).copy()
         if endpoint_key in hf_endpoints:
             del hf_endpoints[endpoint_key]
             updates["hf_endpoints"] = hf_endpoints
             endpoint_found = True
-        
+
         # Check and remove from OpenAI endpoints
         openai_endpoints = current.get("openai_endpoints", {}).copy()
         if endpoint_key in openai_endpoints:
             del openai_endpoints[endpoint_key]
             updates["openai_endpoints"] = openai_endpoints
             endpoint_found = True
-        
+
         # Check and remove from Anthropic endpoints
         anthropic_endpoints = current.get("anthropic_endpoints", {}).copy()
         if endpoint_key in anthropic_endpoints:
             del anthropic_endpoints[endpoint_key]
             updates["anthropic_endpoints"] = anthropic_endpoints
             endpoint_found = True
-        
+
         if not endpoint_found:
             return jsonify({"success": False, "error": "Endpoint not found"}), 404
-        
+
         # Auto-reassign any roles using this endpoint to "local"
         # No confirmation required - automatic and silent
         model_endpoints = current.get("model_endpoints", {}).copy()
         for role, endpoint in list(model_endpoints.items()):
             if endpoint == endpoint_key:
                 model_endpoints[role] = "local"  # Automatic fallback
-        
+
         updates["model_endpoints"] = model_endpoints
-        
+
         # Write config
         result = config_manager.write_config(updates)
-        
+
         if result["success"]:
             return jsonify({"success": True})
         else:
             return jsonify({"success": False, "error": result["error"]}), 400
-            
+
     except Exception as e:
         logger.error(f"Error deleting endpoint: {e}", exc_info=True)
         return jsonify({"success": False, "error": str(e)}), 500
 
 
-@app.route('/api/settings/config', methods=['POST'])
+@app.route("/api/settings/config", methods=["POST"])
 @require_auth
 def save_settings_config():
     """
     Save configuration changes.
-    
+
     NOTE: Server is NOT automatically restarted. Changes take effect only after
     manual restart. Success message includes restart instruction.
-    
+
     Request body:
     {
         "model_endpoints": {...},
         "specialized_models": {...},
         "hf_token": str (optional, must NOT be masked),
     }
-    
+
     Returns:
     {"success": bool, "error": str, "message": str}
     """
     try:
         data = request.get_json()
-        
+
         # Validate API tokens are not masked
         for token_key in ["hf_token", "openai_api_key", "anthropic_api_key"]:
-            if token_key in data and isinstance(data[token_key], str) and "..." in data[token_key]:
-                return jsonify({
-                    "success": False,
-                    "error": f"Invalid {token_key} format (masked token detected - token unchanged)"
-                }), 400
-        
+            if (
+                token_key in data
+                and isinstance(data[token_key], str)
+                and "..." in data[token_key]
+            ):
+                return jsonify(
+                    {
+                        "success": False,
+                        "error": f"Invalid {token_key} format (masked token detected - token unchanged)",
+                    }
+                ), 400
+
         # Validate and write config
         result = config_manager.write_config(data)
-        
+
         if result["success"]:
-            return jsonify({
-                "success": True,
-                "message": "Configuration saved successfully. Please restart the server for changes to take effect."
-            })
+            return jsonify(
+                {
+                    "success": True,
+                    "message": "Configuration saved successfully. Please restart the server for changes to take effect.",
+                }
+            )
         else:
-            return jsonify({
-                "success": False,
-                "error": result["error"]
-            }), 400
-            
+            return jsonify({"success": False, "error": result["error"]}), 400
+
     except Exception as e:
         logger.error(f"Error saving config: {e}", exc_info=True)
         return jsonify({"success": False, "error": str(e)}), 500
 
 
-@app.route('/api/settings/user', methods=['GET'])
+@app.route("/api/settings/user", methods=["GET"])
 @require_auth
 def get_user_settings():
     """Get per-user settings."""
     try:
-        user_id = request.user.get('user_id')
+        user_id = request.user.get("user_id")
         settings = _local_storage.get_user_settings(user_id)
         return jsonify(settings)
     except Exception as e:
@@ -2812,17 +3120,17 @@ def get_user_settings():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/settings/user', methods=['PATCH'])
+@app.route("/api/settings/user", methods=["PATCH"])
 @require_auth
 def update_user_settings():
     """Update per-user settings."""
     try:
-        user_id = request.user.get('user_id')
+        user_id = request.user.get("user_id")
         data = request.get_json() or {}
-        
+
         current = _local_storage.get_user_settings(user_id)
         current.update(data)
-        
+
         _local_storage.save_user_settings(user_id, current)
         return jsonify({"status": "updated", "settings": current})
     except Exception as e:
@@ -2830,5 +3138,5 @@ def update_user_settings():
         return jsonify({"error": str(e)}), 500
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     app.run(debug=True, port=5000)

@@ -24,6 +24,7 @@ from tools.utils.newsroom_cache import NewsroomCache
 # 1. Cache rolling window is 90 days
 # ---------------------------------------------------------------------------
 
+
 class TestCacheRollingWindow:
     """Real cache instances on temp dirs — exercises actual pruning logic."""
 
@@ -33,7 +34,11 @@ class TestCacheRollingWindow:
             cache = NewsroomCache(cache_dir=Path(tmpdir))
             now = datetime.now()
             articles = [
-                {"url": f"https://example.com/{age}d", "date": (now - timedelta(days=age)).strftime('%Y-%m-%d'), "headline": f"{age} days old"}
+                {
+                    "url": f"https://example.com/{age}d",
+                    "date": (now - timedelta(days=age)).strftime("%Y-%m-%d"),
+                    "headline": f"{age} days old",
+                }
                 for age in [1, 30, 60, 85, 91, 100, 120]
             ]
             cache.update(articles)
@@ -53,8 +58,16 @@ class TestCacheRollingWindow:
         """A 60-day-old article written to cache should survive read-back."""
         with tempfile.TemporaryDirectory() as tmpdir:
             cache = NewsroomCache(cache_dir=Path(tmpdir))
-            date_60d = (datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d')
-            cache.update([{"url": "https://example.com/old", "date": date_60d, "headline": "Sixty days"}])
+            date_60d = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d")
+            cache.update(
+                [
+                    {
+                        "url": "https://example.com/old",
+                        "date": date_60d,
+                        "headline": "Sixty days",
+                    }
+                ]
+            )
             # Read from a fresh cache instance (proves disk persistence)
             cache2 = NewsroomCache(cache_dir=Path(tmpdir))
             result = cache2.get_articles()
@@ -66,6 +79,7 @@ class TestCacheRollingWindow:
 # 2. Cache merge dedup by URL
 # ---------------------------------------------------------------------------
 
+
 class TestCacheMergeDedup:
     """Real cache on temp dirs — exercises actual merge + dedup on disk."""
 
@@ -73,10 +87,14 @@ class TestCacheMergeDedup:
         """Two update() calls with different URLs should accumulate both."""
         with tempfile.TemporaryDirectory() as tmpdir:
             cache = NewsroomCache(cache_dir=Path(tmpdir))
-            today = datetime.now().strftime('%Y-%m-%d')
+            today = datetime.now().strftime("%Y-%m-%d")
 
-            cache.update([{"url": "https://example.com/1", "date": today, "headline": "First"}])
-            cache.update([{"url": "https://example.com/2", "date": today, "headline": "Second"}])
+            cache.update(
+                [{"url": "https://example.com/1", "date": today, "headline": "First"}]
+            )
+            cache.update(
+                [{"url": "https://example.com/2", "date": today, "headline": "Second"}]
+            )
 
             result = cache.get_articles()
             urls = {a["url"] for a in result}
@@ -86,10 +104,14 @@ class TestCacheMergeDedup:
         """Same URL in two updates should keep latest, not create duplicates."""
         with tempfile.TemporaryDirectory() as tmpdir:
             cache = NewsroomCache(cache_dir=Path(tmpdir))
-            today = datetime.now().strftime('%Y-%m-%d')
+            today = datetime.now().strftime("%Y-%m-%d")
 
-            cache.update([{"url": "https://example.com/1", "date": today, "headline": "V1"}])
-            cache.update([{"url": "https://example.com/1", "date": today, "headline": "V2"}])
+            cache.update(
+                [{"url": "https://example.com/1", "date": today, "headline": "V1"}]
+            )
+            cache.update(
+                [{"url": "https://example.com/1", "date": today, "headline": "V2"}]
+            )
 
             result = cache.get_articles()
             assert len(result) == 1
@@ -99,16 +121,24 @@ class TestCacheMergeDedup:
         """Update with mix of known and new URLs should merge correctly."""
         with tempfile.TemporaryDirectory() as tmpdir:
             cache = NewsroomCache(cache_dir=Path(tmpdir))
-            today = datetime.now().strftime('%Y-%m-%d')
+            today = datetime.now().strftime("%Y-%m-%d")
 
-            cache.update([
-                {"url": "https://example.com/a", "date": today, "headline": "A"},
-                {"url": "https://example.com/b", "date": today, "headline": "B"},
-            ])
-            cache.update([
-                {"url": "https://example.com/b", "date": today, "headline": "B-updated"},
-                {"url": "https://example.com/c", "date": today, "headline": "C"},
-            ])
+            cache.update(
+                [
+                    {"url": "https://example.com/a", "date": today, "headline": "A"},
+                    {"url": "https://example.com/b", "date": today, "headline": "B"},
+                ]
+            )
+            cache.update(
+                [
+                    {
+                        "url": "https://example.com/b",
+                        "date": today,
+                        "headline": "B-updated",
+                    },
+                    {"url": "https://example.com/c", "date": today, "headline": "C"},
+                ]
+            )
 
             result = cache.get_articles()
             by_url = {a["url"]: a["headline"] for a in result}
@@ -159,19 +189,20 @@ class TestFacetsEndpoint:
     @pytest.fixture
     def app_client(self):
         from ui.web.app import app
-        app.config['TESTING'] = True
+
+        app.config["TESTING"] = True
         with app.test_client() as client:
             yield client
 
     def test_facets_endpoint_returns_200(self, app_client):
-        with patch('ui.web.app.fetch_newsroom_api', return_value=[]):
-            resp = app_client.get('/api/news-intel/facets')
+        with patch("ui.web.app.fetch_newsroom_api", return_value=[]):
+            resp = app_client.get("/api/news-intel/facets")
         assert resp.status_code == 200
 
     def test_facets_topic_counts_match_actual_data(self, app_client):
         """Topic counts should match what Counter would produce from the articles."""
-        with patch('ui.web.app.fetch_newsroom_api', return_value=SAMPLE_ARTICLES):
-            resp = app_client.get('/api/news-intel/facets')
+        with patch("ui.web.app.fetch_newsroom_api", return_value=SAMPLE_ARTICLES):
+            resp = app_client.get("/api/news-intel/facets")
         data = resp.get_json()
 
         # Compute expected counts from the raw data
@@ -184,8 +215,8 @@ class TestFacetsEndpoint:
         assert actual == dict(expected)
 
     def test_facets_source_counts_match_actual_data(self, app_client):
-        with patch('ui.web.app.fetch_newsroom_api', return_value=SAMPLE_ARTICLES):
-            resp = app_client.get('/api/news-intel/facets')
+        with patch("ui.web.app.fetch_newsroom_api", return_value=SAMPLE_ARTICLES):
+            resp = app_client.get("/api/news-intel/facets")
         data = resp.get_json()
 
         expected = Counter(a["source"] for a in SAMPLE_ARTICLES)
@@ -193,22 +224,22 @@ class TestFacetsEndpoint:
         assert actual == dict(expected)
 
     def test_facets_topics_sorted_by_count_descending(self, app_client):
-        with patch('ui.web.app.fetch_newsroom_api', return_value=SAMPLE_ARTICLES):
-            resp = app_client.get('/api/news-intel/facets')
+        with patch("ui.web.app.fetch_newsroom_api", return_value=SAMPLE_ARTICLES):
+            resp = app_client.get("/api/news-intel/facets")
         counts = [t["count"] for t in resp.get_json()["topics"]]
         assert counts == sorted(counts, reverse=True)
 
     def test_facets_date_range_spans_all_articles(self, app_client):
-        with patch('ui.web.app.fetch_newsroom_api', return_value=SAMPLE_ARTICLES):
-            resp = app_client.get('/api/news-intel/facets')
+        with patch("ui.web.app.fetch_newsroom_api", return_value=SAMPLE_ARTICLES):
+            resp = app_client.get("/api/news-intel/facets")
         dr = resp.get_json()["date_range"]
         dates = sorted(a["date"][:10] for a in SAMPLE_ARTICLES)
         assert dr["min"] == dates[0]
         assert dr["max"] == dates[-1]
 
     def test_facets_empty_when_no_articles(self, app_client):
-        with patch('ui.web.app.fetch_newsroom_api', return_value=[]):
-            resp = app_client.get('/api/news-intel/facets')
+        with patch("ui.web.app.fetch_newsroom_api", return_value=[]):
+            resp = app_client.get("/api/news-intel/facets")
         data = resp.get_json()
         assert data["topics"] == []
         assert data["sources"] == []
@@ -220,52 +251,64 @@ class TestFacetsEndpoint:
 # 4. Cache → Facets integration (real cache feeds real endpoint)
 # ---------------------------------------------------------------------------
 
+
 class TestAllCachedArticlesAccessible:
     """Verify the UI endpoints don't artificially cap cached articles."""
 
     @pytest.fixture
     def app_client(self):
         from ui.web.app import app
-        app.config['TESTING'] = True
+
+        app.config["TESTING"] = True
         with app.test_client() as client:
             yield client
 
     def test_facets_counts_reflect_all_cached_articles(self, app_client):
         """Facets topic counts should sum to more than 500 if cache has >500 articles."""
         articles = []
-        today = datetime.now().strftime('%Y-%m-%d')
+        today = datetime.now().strftime("%Y-%m-%d")
         for i in range(800):
-            articles.append({
-                "url": f"https://example.com/{i}",
-                "date": today,
-                "source": "TestSource",
-                "headline": f"Article {i}",
-                "topic_tags": ["test_topic"],
-            })
-        with patch('ui.web.app.fetch_newsroom_api', return_value=articles):
-            resp = app_client.get('/api/news-intel/facets')
+            articles.append(
+                {
+                    "url": f"https://example.com/{i}",
+                    "date": today,
+                    "source": "TestSource",
+                    "headline": f"Article {i}",
+                    "topic_tags": ["test_topic"],
+                }
+            )
+        with patch("ui.web.app.fetch_newsroom_api", return_value=articles):
+            resp = app_client.get("/api/news-intel/facets")
         data = resp.get_json()
         test_topic = next(t for t in data["topics"] if t["name"] == "test_topic")
-        assert test_topic["count"] == 800, f"Expected 800 but got {test_topic['count']} — articles are being capped"
+        assert test_topic["count"] == 800, (
+            f"Expected 800 but got {test_topic['count']} — articles are being capped"
+        )
 
     def test_articles_endpoint_returns_all_when_unfiltered(self, app_client):
         """Unfiltered articles request should return all cached articles, not cap at 200."""
         articles = []
-        today = datetime.now().strftime('%Y-%m-%d')
+        today = datetime.now().strftime("%Y-%m-%d")
         for i in range(600):
-            articles.append({
-                "url": f"https://example.com/{i}",
-                "date": today,
-                "source": "TestSource",
-                "headline": f"Article {i}",
-                "topic_tags": ["energy"],
-            })
-        with patch('ui.web.app.fetch_newsroom_api', return_value=articles):
-            resp = app_client.post('/api/news-intel/articles',
+            articles.append(
+                {
+                    "url": f"https://example.com/{i}",
+                    "date": today,
+                    "source": "TestSource",
+                    "headline": f"Article {i}",
+                    "topic_tags": ["energy"],
+                }
+            )
+        with patch("ui.web.app.fetch_newsroom_api", return_value=articles):
+            resp = app_client.post(
+                "/api/news-intel/articles",
                 data='{"limit": 1000}',
-                content_type='application/json')
+                content_type="application/json",
+            )
         data = resp.get_json()
-        assert data["count"] == 600, f"Expected 600 but got {data['count']} — articles are being capped"
+        assert data["count"] == 600, (
+            f"Expected 600 but got {data['count']} — articles are being capped"
+        )
 
 
 class TestCacheFacetsIntegration:
@@ -283,14 +326,30 @@ class TestCacheFacetsIntegration:
             cache = NewsroomCache(cache_dir=Path(tmpdir))
             cache.update(SAMPLE_ARTICLES)
 
-            # Patch the cache instance at its source (imported locally in fetch_newsroom_cached)
-            with patch('tools.utils.newsroom_cache.get_cache', return_value=cache):
+            # Patch the cache instance and prevent S3 network calls for freshness check
+            with (
+                patch("tools.utils.newsroom_cache.get_cache", return_value=cache),
+                patch(
+                    "tools.utils.newsroom_cache.NewsroomCache._get_s3_max_date",
+                    return_value="2026-03-10",
+                ),
+                patch(
+                    "ui.web.auth.get_current_user",
+                    return_value=({"user_id": "test-user"}, None),
+                ),
+                patch(
+                    "ui.web.auth._get_user_subscription",
+                    return_value=("professional", {}, "regular"),
+                ),
+            ):
                 from ui.web.app import app
-                app.config['TESTING'] = True
+
+                app.config["TESTING"] = True
                 with app.test_client() as client:
-                    resp = client.get('/api/news-intel/facets')
+                    resp = client.get("/api/news-intel/facets")
 
             data = resp.get_json()
+            assert data is not None, "Response body should not be empty"
             topic_names = {t["name"] for t in data["topics"]}
             assert "energy" in topic_names
             assert "solar" in topic_names

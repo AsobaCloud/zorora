@@ -1,243 +1,165 @@
-"""
-Regression tests for Global View data freshness and consistency.
-
-These tests verify that:
-1. Facets endpoint returns actual S3 data range (not stale cache)
-2. Articles endpoint returns most recent articles by default
-3. Filter counts from stats endpoint match articles endpoint
-4. UI filter interactions return consistent data
-"""
-
-import pytest
-from datetime import datetime, timedelta
+from pathlib import Path
 from unittest.mock import patch
 
-
-class TestDataFreshness:
-    """Ensure Global View shows most recent available data."""
-    
-    def test_facets_date_range_matches_s3_not_cache(self, app_client):
-        """
-        Facets endpoint must return date range from S3, not from stale cache.
-        
-        Regression: Previously returned March 2026 when S3 had June 2026 data.
-        """
-        # Mock S3 to return current date folders
-        today = datetime.utcnow().strftime('%Y-%m-%d')
-        a_week_ago = (datetime.utcnow() - timedelta(days=7)).strftime('%Y-%m-%d')
-        
-        mock_folders = [
-            (datetime.utcnow() - timedelta(days=i)).strftime('%Y-%m-%d')
-            for i in range(10)
-        ]
-        
-        mock_articles = [
-            {
-                "headline": f"Article {i}",
-                "date": folder,
-                "source": "Test",
-                "url": f"https://example.com/{i}",
-                "topic_tags": ["test"],
-                "country_tags": ["United States"],
-            }
-            for i, folder in enumerate(mock_folders)
-        ]
-        
-        # Mock S3 functions - these will be imported by cache and newsroom_s3 modules
-        with patch('tools.research.newsroom_s3._list_date_folders', return_value=mock_folders):
-            with patch('tools.research.newsroom_s3._fetch_articles_from_date', side_effect=lambda s3, folder, max_results: [
-                a for a in mock_articles if a['date'] == folder
-            ]):
-                resp = app_client.get('/api/news-intel/facets')
-        
-        assert resp.status_code == 200
-        data = resp.get_json()
-        
-        # Date range should match S3 data (recent), not old cache
-        assert data['date_range']['max'] == today, \
-            f"Expected max date {today}, got {data['date_range']['max']}"
-        assert data['date_range']['min'] <= a_week_ago, \
-            f"Expected min date around {a_week_ago}, got {data['date_range']['min']}"
-    
-    def test_articles_default_returns_most_recent_first(self, app_client):
-        """
-        Articles endpoint must return most recent articles first by default.
-        
-        Regression: Previously returned articles from March when June data existed.
-        """
-        today = datetime.utcnow().strftime('%Y-%m-%d')
-        yesterday = (datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')
-        old_date = "2026-03-01"
-        
-        mock_articles = [
-            {"headline": "Old Article", "date": old_date, "source": "Test", 
-             "url": "https://example.com/old", "topic_tags": [], "country_tags": []},
-            {"headline": "Yesterday Article", "date": yesterday, "source": "Test",
-             "url": "https://example.com/yesterday", "topic_tags": [], "country_tags": []},
-            {"headline": "Today Article", "date": today, "source": "Test",
-             "url": "https://example.com/today", "topic_tags": [], "country_tags": []},
-        ]
-        
-        with patch('ui.web.app.fetch_newsroom_cached', return_value=(mock_articles, None)):
-            resp = app_client.post('/api/news-intel/articles', 
-                                   json={"limit": 10},
-                                   content_type='application/json')
-        
-        assert resp.status_code == 200
-        data = resp.get_json()
-        
-        # First article should be most recent
-        assert len(data['articles']) > 0
-        assert data['articles'][0]['date'] == today, \
-            f"Expected most recent article date {today}, got {data['articles'][0]['date']}"
+import pytest
 
 
-class TestFilterCountConsistency:
-    """Ensure filter counts match between stats and articles endpoints."""
-    
-    def test_stats_count_matches_articles_for_same_filters(self, app_client):
-        """
-        Stats endpoint country counts must match articles endpoint results.
-        
-        Regression: Map tooltip showed 50 articles for "Germany", 
-        but clicking filter showed different count.
-        """
-        mock_articles = [
-            {"headline": "Germany Energy 1", "date": "2026-06-01", "source": "Test",
-             "url": "https://example.com/1", "topic_tags": ["energy"],
-             "country_tags": ["Germany"]},
-            {"headline": "Germany Energy 2", "date": "2026-06-01", "source": "Test",
-             "url": "https://example.com/2", "topic_tags": ["energy"],
-             "country_tags": ["Germany"]},
-            {"headline": "Germany Politics", "date": "2026-06-01", "source": "Test",
-             "url": "https://example.com/3", "topic_tags": ["politics"],
-             "country_tags": ["Germany"]},
-            {"headline": "France Energy", "date": "2026-06-01", "source": "Test",
-             "url": "https://example.com/4", "topic_tags": ["energy"],
-             "country_tags": ["France"]},
-        ]
-        
-        with patch('ui.web.app.fetch_newsroom_cached', return_value=(mock_articles, None)):
-            # Get stats
-            stats_resp = app_client.post('/api/news-intel/stats',
-                                        json={},
-                                        content_type='application/json')
-            stats_data = stats_resp.get_json()
-            
-            # Get articles
-            articles_resp = app_client.post('/api/news-intel/articles',
-                                           json={"limit": 100},
-                                           content_type='application/json')
-            articles_data = articles_resp.get_json()
-        
-        # Find Germany in stats
-        germany_stat = next((s for s in stats_data['stats'] if s['country'] == 'Germany'), None)
-        assert germany_stat is not None, "Germany should appear in stats"
-        
-        # Count Germany articles from articles endpoint
-        germany_articles = [a for a in articles_data['articles'] 
-                          if 'Germany' in (a.get('country_tags') or [])]
-        
-        # Stats count must match actual article count
-        assert germany_stat['count'] == len(germany_articles), \
-            f"Stats shows {germany_stat['count']} Germany articles, " \
-            f"but articles endpoint returns {len(germany_articles)}"
-    
-    def test_topic_filter_count_matches_tooltip_count(self, app_client):
-        """
-        Topic filter count in tooltip must match filtered article count.
-        
-        Regression: Map showed "energy: 5" for Germany, 
-        but filtering showed different number.
-        """
-        mock_articles = [
-            {"headline": "Germany Energy 1", "date": "2026-06-01", "source": "Test",
-             "url": "https://example.com/1", "topic_tags": ["energy"],
-             "country_tags": ["Germany"]},
-            {"headline": "Germany Energy 2", "date": "2026-06-01", "source": "Test",
-             "url": "https://example.com/2", "topic_tags": ["energy"],
-             "country_tags": ["Germany"]},
-            {"headline": "Germany Politics", "date": "2026-06-01", "source": "Test",
-             "url": "https://example.com/3", "topic_tags": ["politics"],
-             "country_tags": ["Germany"]},
-        ]
-        
-        with patch('ui.web.app.fetch_newsroom_cached', return_value=(mock_articles, None)):
-            # Get stats (used for tooltip counts)
-            stats_resp = app_client.post('/api/news-intel/stats',
-                                        json={},
-                                        content_type='application/json')
-            stats_data = stats_resp.get_json()
-            
-            # Get articles filtered by topic
-            articles_resp = app_client.post('/api/news-intel/articles',
-                                           json={"topic": "energy", "limit": 100},
-                                           content_type='application/json')
-            articles_data = articles_resp.get_json()
-        
-        # Find Germany in stats and check energy topic count
-        germany_stat = next((s for s in stats_data['stats'] if s['country'] == 'Germany'), None)
-        assert germany_stat is not None
-        tooltip_energy_count = germany_stat['topics'].get('energy', 0)
-        
-        # Count Germany articles with energy topic
-        germany_energy_articles = [
-            a for a in articles_data['articles']
-            if 'Germany' in (a.get('country_tags') or []) and 'energy' in (a.get('topic_tags') or [])
-        ]
-        
-        assert tooltip_energy_count == len(germany_energy_articles), \
-            f"Tooltip shows {tooltip_energy_count} energy articles for Germany, " \
-            f"but filter returns {len(germany_energy_articles)}"
-
-
-class TestDateFilterDefaults:
-    """Ensure UI defaults to showing most recent articles."""
-    
-    def test_default_date_range_is_most_recent_week(self, app_client):
-        """
-        Without date filters, articles should default to most recent week.
-        
-        Regression: UI showed articles from March 24 instead of most recent.
-        """
-        today = datetime.utcnow()
-        old_date = today - timedelta(days=90)
-        
-        mock_articles = [
-            {"headline": "Old Article", "date": old_date.strftime('%Y-%m-%d'), 
-             "source": "Test", "url": "https://example.com/old", 
-             "topic_tags": [], "country_tags": []},
-            {"headline": "Recent Article", "date": today.strftime('%Y-%m-%d'),
-             "source": "Test", "url": "https://example.com/recent",
-             "topic_tags": [], "country_tags": []},
-        ]
-        
-        with patch('ui.web.app.fetch_newsroom_cached', return_value=(mock_articles, None)):
-            resp = app_client.post('/api/news-intel/articles',
-                                   json={"limit": 10},  # No date filters
-                                   content_type='application/json')
-        
-        data = resp.get_json()
-        
-        # Without date filters, should still get recent articles
-        # The default filtering should apply in the UI, but API should support it
-        dates = [a['date'] for a in data['articles']]
-        
-        # Most recent article should be included
-        assert today.strftime('%Y-%m-%d') in dates, \
-            "Most recent article should be returned without date filters"
+def article(headline, date, country="Germany", topic="energy", source="Desk", url=None):
+    return {
+        "headline": headline,
+        "date": date,
+        "source": source,
+        "url": url or f"https://example.com/{headline.lower().replace(' ', '-')}",
+        "topic_tags": [topic] if topic else [],
+        "geography_tags": [],
+        "country_tags": [country] if country else [],
+    }
 
 
 @pytest.fixture
 def app_client():
-    """Create test client for web app."""
     from ui.web.app import app
-    from tools.utils.newsroom_cache import get_cache
-    
-    # Clear cache before each test to ensure fresh state
-    cache = get_cache()
+    import ui.web.auth as auth
+
+    app.config["TESTING"] = True
+    with (
+        patch.object(
+            auth,
+            "get_current_user",
+            return_value=({"user_id": "test-user", "team_id": None}, None),
+        ),
+        patch.object(
+            auth, "_get_user_subscription", return_value=("professional", {}, "regular")
+        ),
+    ):
+        with app.test_client() as client:
+            yield client
+
+
+def test_newsroom_cached_refreshes_when_cache_date_lags_latest_s3_folder(tmp_path):
+    from tools.research import newsroom
+    from tools.utils.newsroom_cache import NewsroomCache
+
+    stale_cache = NewsroomCache(cache_dir=tmp_path, ttl_seconds=86400)
+    stale_cache.update([article("March stale", "2026-03-24")])
+    latest_articles = [article("June latest", "2026-06-03")]
+
+    with (
+        patch(
+            "tools.research.newsroom.fetch_newsroom_s3_raw",
+            return_value=latest_articles,
+        ),
+        patch(
+            "tools.utils.newsroom_cache.NewsroomCache._get_s3_max_date",
+            return_value="2026-06-03",
+        ),
+        patch("tools.utils.newsroom_cache.get_cache", return_value=stale_cache),
+    ):
+        articles, warning = newsroom.fetch_newsroom_cached(max_results=10)
+
+    assert warning is None
+    assert articles[0]["headline"] == "June latest"
+    assert articles[0]["date"] == "2026-06-03"
+
+
+def test_newsroom_cache_clear_invalidates_memory_cache(tmp_path):
+    from tools.utils.newsroom_cache import NewsroomCache
+
+    cache = NewsroomCache(cache_dir=tmp_path, ttl_seconds=86400)
+    cache.update([article("Cached article", "2026-06-03")])
+
+    assert cache.get_articles()
     cache.clear()
-    
-    app.config['TESTING'] = True
-    with app.test_client() as client:
-        yield client
+
+    assert cache.get_articles() == []
+
+
+def test_facets_date_range_comes_from_latest_article_universe(app_client):
+    from ui import web
+
+    articles = [
+        article("March stale", "2026-03-24"),
+        article("June latest", "2026-06-03"),
+    ]
+
+    with patch.object(web.app, "fetch_newsroom_api", return_value=articles):
+        response = app_client.get("/api/news-intel/facets")
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["date_range"]["max"] == "2026-06-03"
+    assert payload["date_range"]["min"] == "2026-03-24"
+
+
+def test_articles_endpoint_returns_newest_first_for_same_universe(app_client):
+    from ui import web
+
+    articles = [
+        article("Old article", "2026-03-24"),
+        article("Latest article", "2026-06-03"),
+        article("Middle article", "2026-05-30"),
+    ]
+
+    with patch.object(web.app, "fetch_newsroom_api", return_value=articles):
+        response = app_client.post("/api/news-intel/articles", json={"limit": 10})
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert [a["headline"] for a in payload["articles"]] == [
+        "Latest article",
+        "Middle article",
+        "Old article",
+    ]
+
+
+def test_stats_counts_match_articles_for_same_default_date_range(app_client):
+    from ui import web
+
+    articles = [
+        article("Germany energy 1", "2026-05-28", country="Germany", topic="energy"),
+        article("Germany energy 2", "2026-06-03", country="Germany", topic="energy"),
+        article("Germany old energy", "2026-05-01", country="Germany", topic="energy"),
+        article("France energy", "2026-06-03", country="France", topic="energy"),
+    ]
+    params = {"date_from": "2026-05-27", "date_to": "2026-06-03", "limit": 100}
+
+    with (
+        patch.object(web.app, "fetch_newsroom_cached", return_value=(articles, None)),
+        patch.object(web.app, "fetch_newsroom_api", return_value=articles),
+    ):
+        stats_response = app_client.post("/api/news-intel/stats", json=params)
+        articles_response = app_client.post("/api/news-intel/articles", json=params)
+
+    assert stats_response.status_code == 200
+    assert articles_response.status_code == 200
+
+    stats_payload = stats_response.get_json()
+    articles_payload = articles_response.get_json()
+    germany_stat = next(s for s in stats_payload["stats"] if s["country"] == "Germany")
+    germany_articles = [
+        a
+        for a in articles_payload["articles"]
+        if "Germany" in (a.get("country_tags") or [])
+    ]
+
+    assert germany_stat["count"] == 2
+    assert germany_stat["topics"]["energy"] == 2
+    assert len(germany_articles) == 2
+
+
+def test_frontend_awaits_facets_before_initial_global_view_requests():
+    html = Path("ui/web/templates/index.html").read_text()
+    load_facets_pos = html.index("await loadFacets();")
+    params_pos = html.index("const params = {", load_facets_pos)
+    stats_fetch_pos = html.index("fetch('/api/news-intel/stats'", params_pos)
+    articles_fetch_pos = html.index("fetch('/api/news-intel/articles'", stats_fetch_pos)
+
+    assert load_facets_pos < params_pos < stats_fetch_pos < articles_fetch_pos
+
+
+def test_frontend_default_date_range_is_latest_week():
+    html = Path("ui/web/templates/index.html").read_text()
+
+    assert "dateTo.value = dr.max;" in html
+    assert "fromDate.setDate(fromDate.getDate() - 7);" in html
+    assert "dateFrom.value = fromDate.toISOString().slice(0, 10);" in html

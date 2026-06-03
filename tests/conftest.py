@@ -45,5 +45,5 @@ def _authenticated_test_user(monkeypatch):
     )
     # Unlimited tier so require_research_quota neither blocks nor touches DynamoDB.
     monkeypatch.setattr(
-        auth, "_get_user_subscription", lambda user_id: ("professional", {}), raising=False
+        auth, "_get_user_subscription", lambda user_id: ("professional", {}, "regular"), raising=False
     )

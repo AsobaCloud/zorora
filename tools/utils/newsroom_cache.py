@@ -29,7 +29,9 @@ class NewsroomCache:
     - Prunes articles older than 90 days
     """
 
-    def __init__(self, cache_dir: Path = CACHE_DIR, ttl_seconds: int = CACHE_TTL_SECONDS):
+    def __init__(
+        self, cache_dir: Path = CACHE_DIR, ttl_seconds: int = CACHE_TTL_SECONDS
+    ):
         self.cache_dir = cache_dir
         self.cache_file = cache_dir / "articles.json"
         self.ttl_seconds = ttl_seconds
@@ -52,7 +54,7 @@ class NewsroomCache:
             return {"last_fetch": 0, "articles": []}
 
         try:
-            with open(self.cache_file, 'r') as f:
+            with open(self.cache_file, "r") as f:
                 data = json.load(f)
                 self._memory_cache = (time.time(), data)
                 return data
@@ -63,20 +65,22 @@ class NewsroomCache:
     def _save_cache(self, data: Dict[str, Any]):
         """Save cache to disk and update memory buffer."""
         try:
-            with open(self.cache_file, 'w') as f:
+            with open(self.cache_file, "w") as f:
                 json.dump(data, f, indent=2)
             self._memory_cache = (time.time(), data)
         except IOError as e:
             logger.error(f"Failed to save newsroom cache: {e}")
 
-    def _prune_old_articles(self, articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _prune_old_articles(
+        self, articles: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
         """Remove articles older than rolling window."""
         cutoff = datetime.now() - timedelta(days=ROLLING_WINDOW_DAYS)
-        cutoff_str = cutoff.strftime('%Y-%m-%d')
+        cutoff_str = cutoff.strftime("%Y-%m-%d")
 
         pruned = []
         for article in articles:
-            article_date = article.get('date', '')[:10]  # Get YYYY-MM-DD
+            article_date = article.get("date", "")[:10]  # Get YYYY-MM-DD
             if article_date >= cutoff_str:
                 pruned.append(article)
 
@@ -90,7 +94,7 @@ class NewsroomCache:
         articles = self.get_articles()
         if not articles:
             return None
-        dates = [a.get('date', '')[:10] for a in articles if a.get('date')]
+        dates = [a.get("date", "")[:10] for a in articles if a.get("date")]
         return max(dates) if dates else None
 
     def _get_s3_max_date(self) -> Optional[str]:
@@ -98,6 +102,7 @@ class NewsroomCache:
         try:
             # Import here to avoid circular imports and allow test mocking
             from tools.research.newsroom_s3 import _list_date_folders, _get_s3_client
+
             s3_client = _get_s3_client()
             folders = _list_date_folders(s3_client, days_back=90)
             return folders[0] if folders else None
@@ -164,12 +169,11 @@ class NewsroomCache:
         merged = list(by_url.values())
         pruned = self._prune_old_articles(merged)
 
-        cache = {
-            "last_fetch": time.time(),
-            "articles": pruned
-        }
+        cache = {"last_fetch": time.time(), "articles": pruned}
         self._save_cache(cache)
-        logger.info(f"Newsroom cache updated: {len(pruned)} articles (merged from {len(existing)} existing + {len(articles)} new)")
+        logger.info(
+            f"Newsroom cache updated: {len(pruned)} articles (merged from {len(existing)} existing + {len(articles)} new)"
+        )
 
     def get_age_seconds(self) -> float:
         """Get cache age in seconds."""
@@ -182,6 +186,7 @@ class NewsroomCache:
         if self.cache_file.exists():
             self.cache_file.unlink()
             logger.info("Newsroom cache cleared")
+        self._memory_cache = None
 
     def stats(self) -> Dict[str, Any]:
         """Get cache statistics."""
@@ -191,9 +196,11 @@ class NewsroomCache:
 
         return {
             "article_count": len(articles),
-            "last_fetch": datetime.fromtimestamp(last_fetch).isoformat() if last_fetch else None,
+            "last_fetch": datetime.fromtimestamp(last_fetch).isoformat()
+            if last_fetch
+            else None,
             "age_seconds": int(time.time() - last_fetch) if last_fetch else None,
-            "is_fresh": self.is_fresh()
+            "is_fresh": self.is_fresh(),
         }
 
 

@@ -9,24 +9,58 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 
 import config
+from tools.research.newsroom_s3 import fetch_newsroom_s3_raw
 
 logger = logging.getLogger(__name__)
 
 # Lock for coalescing concurrent fetches
 _fetch_lock = threading.Lock()
 
-STOP_WORDS = frozenset({
-    'why', 'did', 'does', 'how', 'what', 'when', 'where', 'who',
-    'the', 'a', 'an', 'in', 'on', 'at', 'to', 'for', 'of', 'and',
-    'or', 'is', 'was', 'were', 'are', 'been', 'be', 'has', 'had',
-    'do', 'with', 'from', 'about', 'that', 'this', 'it', 'not',
-})
+STOP_WORDS = frozenset(
+    {
+        "why",
+        "did",
+        "does",
+        "how",
+        "what",
+        "when",
+        "where",
+        "who",
+        "the",
+        "a",
+        "an",
+        "in",
+        "on",
+        "at",
+        "to",
+        "for",
+        "of",
+        "and",
+        "or",
+        "is",
+        "was",
+        "were",
+        "are",
+        "been",
+        "be",
+        "has",
+        "had",
+        "do",
+        "with",
+        "from",
+        "about",
+        "that",
+        "this",
+        "it",
+        "not",
+    }
+)
 
 # S3 export URL - single file with all articles, updated hourly by Lambda
 # Can be overridden via environment variable for quick fixes
 NEWSROOM_EXPORT_URL = os.environ.get(
     "NEWSROOM_EXPORT_URL",
-    "https://news-collection-website.s3.us-east-1.amazonaws.com/zorora-export/articles.json"
+    "https://news-collection-website.s3.us-east-1.amazonaws.com/zorora-export/articles.json",
 )
 
 
@@ -37,10 +71,10 @@ def _extract_keywords(query: str) -> List[str]:
 
 def _get_timeout() -> int:
     """Get timeout for newsroom fetch (S3 is fast)."""
-    return getattr(config, 'NEWSROOM_CONFIG', {}).get('timeout', 30)
+    return getattr(config, "NEWSROOM_CONFIG", {}).get("timeout", 30)
 
 
-def fetch_newsroom_cached(max_results: int = 100):
+def fetch_newsroom_cached(max_results: int = 10000):
     """
     Fetch newsroom articles with caching (90-day rolling window).
 
@@ -63,7 +97,9 @@ def fetch_newsroom_cached(max_results: int = 100):
     # Fast path: cache is fresh
     if cache.is_fresh():
         articles = cache.get_articles()
-        logger.info(f"Newsroom cache hit: {len(articles)} articles (age: {int(cache.get_age_seconds())}s)")
+        logger.info(
+            f"Newsroom cache hit: {len(articles)} articles (age: {int(cache.get_age_seconds())}s)"
+        )
         return (articles[:max_results], None)
 
     # Slow path: cache is stale, acquire lock to refresh
@@ -74,7 +110,7 @@ def fetch_newsroom_cached(max_results: int = 100):
             logger.info(f"Newsroom cache hit (after lock): {len(articles)} articles")
             return (articles[:max_results], None)
 
-        logger.info("Newsroom cache stale, fetching from S3 export...")
+        logger.info("Newsroom cache stale, fetching from S3 date folders...")
         articles = _fetch_newsroom_export()
 
         if articles:
@@ -85,7 +121,10 @@ def fetch_newsroom_cached(max_results: int = 100):
     stale_articles = cache.get_articles()
     if stale_articles:
         logger.warning(f"API failed, using stale cache: {len(stale_articles)} articles")
-        return (stale_articles[:max_results], "Using cached data \u2014 newsroom API unavailable")
+        return (
+            stale_articles[:max_results],
+            "Using cached data \u2014 newsroom API unavailable",
+        )
 
     return ([], "Newsroom API unavailable and no cached data")
 
@@ -93,22 +132,19 @@ def fetch_newsroom_cached(max_results: int = 100):
 def _fetch_newsroom_export() -> List[Dict[str, Any]]:
     """
     Fetch newsroom articles from S3 date folders.
-    
+
     Fetches live articles from daily S3 folders instead of stale export file.
     Returns most recent 90 days of articles.
-    
+
     Returns:
         List of article dicts
     """
     try:
-        # Import S3 fetch functions
-        from tools.research.newsroom_s3 import fetch_newsroom_s3_raw
-        
-        articles = fetch_newsroom_s3_raw(days_back=90, max_results=3000)
-        
+        articles = fetch_newsroom_s3_raw(days_back=90, max_results=10000)
+
         logger.info(f"✓ Newsroom S3 fetch: {len(articles)} articles from date folders")
         return articles
-        
+
     except Exception as e:
         logger.error(f"Newsroom S3 fetch error: {e}")
         # Fallback to export file if S3 folders fail
@@ -121,32 +157,32 @@ def _fetch_newsroom_export_fallback() -> List[Dict[str, Any]]:
     """
     try:
         response = requests.get(
-            NEWSROOM_EXPORT_URL,
-            timeout=30,
-            headers={'Accept': 'application/json'}
+            NEWSROOM_EXPORT_URL, timeout=30, headers={"Accept": "application/json"}
         )
-        
+
         if response.status_code != 200:
             logger.error(f"Newsroom S3 export returned {response.status_code}")
             return []
-        
+
         data = response.json()
-        articles = data.get('articles', [])
-        
+        articles = data.get("articles", [])
+
         valid_articles = []
         for article in articles:
-            if article.get('headline') and article.get('url'):
+            if article.get("headline") and article.get("url"):
                 valid_articles.append(article)
-        
+
         logger.warning(f"⚠ Using stale export file: {len(valid_articles)} articles")
         return valid_articles
-        
+
     except Exception as e:
         logger.error(f"Newsroom export fallback error: {e}")
         return []
 
 
-def fetch_newsroom_api(query: str = None, days_back: int = 90, max_results: int = 25) -> List[Dict[str, Any]]:
+def fetch_newsroom_api(
+    query: str = None, days_back: int = 90, max_results: int = 25
+) -> List[Dict[str, Any]]:
     """
     Fetch newsroom articles and return structured data.
     Uses S3 export - no authentication required.
@@ -161,17 +197,17 @@ def fetch_newsroom_api(query: str = None, days_back: int = 90, max_results: int 
     """
     try:
         # Calculate date cutoff
-        date_cutoff = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
-        
+        date_cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+
         # Fetch all articles from S3 export
         all_articles = _fetch_newsroom_export()
-        
+
         if not all_articles:
             return []
-        
+
         # Filter by date
-        articles = [a for a in all_articles if a.get('date', '') >= date_cutoff]
-        
+        articles = [a for a in all_articles if a.get("date", "") >= date_cutoff]
+
         # Apply search filter if query provided
         if query:
             keywords = _extract_keywords(query)
@@ -182,10 +218,10 @@ def fetch_newsroom_api(query: str = None, days_back: int = 90, max_results: int 
                     if any(kw in searchable for kw in keywords):
                         filtered.append(article)
                 articles = filtered
-        
+
         logger.info(f"Newsroom: {len(articles)} articles from S3 export")
         return articles[:max_results]
-        
+
     except Exception as e:
         logger.warning(f"Newsroom fetch error: {e}")
         return []
@@ -206,7 +242,7 @@ def get_newsroom_headlines(query: str = None, max_results: int = None) -> str:
         Formatted string with article headlines, sources, and URLs
     """
     if max_results is None:
-        max_results = getattr(config, 'NEWSROOM_MAX_RELEVANT', 25)
+        max_results = getattr(config, "NEWSROOM_MAX_RELEVANT", 25)
 
     try:
         # Fetch from cache (7-day rolling window)
@@ -227,9 +263,9 @@ def get_newsroom_headlines(query: str = None, max_results: int = None) -> str:
                 "tags": {
                     "core_topics": article.get("topic_tags", []),
                     "geography": article.get("geography_tags", []),
-                    "country": article.get("country_tags", [])
+                    "country": article.get("country_tags", []),
                 },
-                "date": article.get("date", "")
+                "date": article.get("date", ""),
             }
             headlines.append(headline)
 
@@ -238,9 +274,9 @@ def get_newsroom_headlines(query: str = None, max_results: int = None) -> str:
             query_words = [w.lower() for w in query.split() if len(w) >= 3]
             filtered = []
             for h in headlines:
-                title_lower = h['title'].lower()
+                title_lower = h["title"].lower()
                 # Match if any query word appears in title or topics
-                topics_str = ' '.join(str(t) for t in h['tags'].get('core_topics', []))
+                topics_str = " ".join(str(t) for t in h["tags"].get("core_topics", []))
                 searchable = f"{title_lower} {topics_str}".lower()
                 if any(word in searchable for word in query_words):
                     filtered.append(h)
@@ -248,63 +284,71 @@ def get_newsroom_headlines(query: str = None, max_results: int = None) -> str:
             logger.info(f"Filtered to {len(headlines)} articles matching: {query[:50]}")
         else:
             # No query - return most recent
-            headlines = sorted(headlines, key=lambda x: x.get('date', ''), reverse=True)[:max_results]
+            headlines = sorted(
+                headlines, key=lambda x: x.get("date", ""), reverse=True
+            )[:max_results]
             logger.info(f"Returning {len(headlines)} most recent articles")
-        
+
         if not headlines:
             return "No matching articles found in newsroom"
-        
+
         # Calculate tag distribution for overview
         all_topics = []
         for h in headlines:
-            if h['tags'] and isinstance(h['tags'], dict):
-                core_topics = h['tags'].get('core_topics', [])
+            if h["tags"] and isinstance(h["tags"], dict):
+                core_topics = h["tags"].get("core_topics", [])
                 if isinstance(core_topics, list):
                     all_topics.extend([str(t) for t in core_topics if t])
         topic_counts = Counter(all_topics)
-        
+
         # Format output with topic distribution and ALL headlines
         today = datetime.now()
-        formatted = [f"Newsroom Headlines for {today.strftime('%Y-%m-%d')} ({len(headlines)} articles)\n"]
+        formatted = [
+            f"Newsroom Headlines for {today.strftime('%Y-%m-%d')} ({len(headlines)} articles)\n"
+        ]
         formatted.append("=" * 80 + "\n")
-        
+
         if topic_counts:
             formatted.append("\nTopic Distribution:")
             for topic, count in topic_counts.most_common(15):
                 formatted.append(f"  • {topic}: {count} articles")
             formatted.append("\n" + "=" * 80 + "\n")
-            
+
             # Group headlines by primary core_topic
             by_topic = defaultdict(list)
             for h in headlines:
-                if h['tags'] and isinstance(h['tags'], dict):
-                    core_topics = h['tags'].get('core_topics', [])
-                    if core_topics and isinstance(core_topics, list) and len(core_topics) > 0:
+                if h["tags"] and isinstance(h["tags"], dict):
+                    core_topics = h["tags"].get("core_topics", [])
+                    if (
+                        core_topics
+                        and isinstance(core_topics, list)
+                        and len(core_topics) > 0
+                    ):
                         primary_topic = str(core_topics[0])
                         by_topic[primary_topic].append(h)
-            
+
             # Show ALL headlines grouped by topic
             formatted.append("\nRelevant Headlines by Topic:\n")
             for topic, count in topic_counts.most_common():
                 if topic in by_topic:
                     formatted.append(f"\n{topic.upper()} ({count} articles):")
                     for h in by_topic[topic]:
-                        date_str = h.get('date', 'Unknown date')
+                        date_str = h.get("date", "Unknown date")
                         formatted.append(f"  • {h['title']} [{date_str}]")
-                        if h.get('url'):
+                        if h.get("url"):
                             formatted.append(f"    URL: {h['url']}")
                         formatted.append(f"    Source: {h['source']}")
         else:
             # Fallback: just list all headlines if no topics
             for idx, h in enumerate(headlines, 1):
-                date_str = h.get('date', 'Unknown date')
+                date_str = h.get("date", "Unknown date")
                 formatted.append(f"\n{idx}. {h['title']} [{date_str}]")
                 formatted.append(f"   Source: {h['source']}")
-                if h.get('url'):
+                if h.get("url"):
                     formatted.append(f"   URL: {h['url']}")
-        
+
         return "\n".join(formatted)
-        
+
     except Exception as e:
         logger.error(f"Newsroom headlines error: {e}")
         return f"⚠ Newsroom unavailable (using academic + web only): {str(e)}"
