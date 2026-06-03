@@ -1,0 +1,45 @@
+{
+  "family": "ona-zorora-prod",
+  "taskRoleArn": "arn:aws:iam::905418405543:role/ona-zorora-task-role",
+  "executionRoleArn": "arn:aws:iam::905418405543:role/ona-zorora-task-execution-role",
+  "networkMode": "awsvpc",
+  "containerDefinitions": [
+    {
+      "name": "ona-zorora",
+      "image": "905418405543.dkr.ecr.af-south-1.amazonaws.com/ona-zorora:prod-62a99ea",
+      "cpu": 0,
+      "portMappings": [
+        {
+          "containerPort": 5000,
+          "hostPort": 5000,
+          "protocol": "tcp"
+        }
+      ],
+      "essential": true,
+      "environment": [
+        { "name": "FRED_API_KEY", "value": "" },
+        { "name": "HF_TOKEN", "value": "" },
+        { "name": "BRAVE_SEARCH_API_KEY", "value": "" },
+        { "name": "OPENAI_API_KEY", "value": "" },
+        { "name": "CONGRESS_GOV_API_KEY", "value": "" }
+      ],
+      "secrets": [
+        {
+          "name": "NEWSROOM_JWT_TOKEN",
+          "valueFrom": "arn:aws:ssm:af-south-1:905418405543:parameter/zorora/prod/newsroom-jwt-token"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/ona-zorora-prod",
+          "awslogs-region": "af-south-1",
+          "awslogs-stream-prefix": "zorora"
+        }
+      }
+    }
+  ],
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512"
+}

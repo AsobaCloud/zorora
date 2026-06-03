@@ -3960,6 +3960,22 @@
                     dateFrom.setAttribute('max', dr.max);
                     dateTo.setAttribute('max', dr.max);
                     dateTo.setAttribute('placeholder', dr.max);
+                    // Default to showing the most recent day's articles
+                    if (!dateTo.value) {
+                        dateTo.value = dr.max;
+                    }
+                    // Default date_from to 7 days before max to show recent articles
+                    if (!dateFrom.value && dr.min) {
+                        const maxDate = new Date(dr.max);
+                        const fromDate = new Date(maxDate);
+                        fromDate.setDate(fromDate.getDate() - 7);
+                        const minDate = new Date(dr.min);
+                        if (fromDate < minDate) {
+                            dateFrom.value = dr.min;
+                        } else {
+                            dateFrom.value = fromDate.toISOString().slice(0, 10);
+                        }
+                    }
                 }
             } catch (err) {
                 console.error('Facets load error:', err);
@@ -4130,35 +4146,163 @@
             document.getElementById('gvArticlesTab')?.classList.remove('hidden');
         }
 
-        function filterGvByCountry(country) {
-            gvArticles = gvAllArticles.filter(a => {
-                const tags = (a.country_tags || []).map(t => normalizeCountry(t));
-                return tags.includes(country);
-            });
-            gvPage = 0;
-            renderGvArticlesTable();
+        async function filterGvByCountry(country) {
+            const body = document.getElementById('gvArticlesBody');
+            if (body) body.innerHTML = '<tr><td colspan="6"><div class="gv-loading-state">Loading articles...</div></td></tr>';
             switchToArticlesTab();
+
+            const params = {
+                topic: document.getElementById('gvTopic')?.value || '',
+                date_from: document.getElementById('gvDateFrom')?.value || null,
+                date_to: document.getElementById('gvDateTo')?.value || null,
+                limit: 10000,
+            };
+
+            try {
+                const resp = await fetch('/api/news-intel/articles', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(params),
+                });
+                const data = await resp.json();
+                if (!data || !data.articles) {
+                    if (body) body.innerHTML = '<tr><td colspan="6"><div class="gv-error-state">Failed to load articles</div></td></tr>';
+                    return;
+                }
+
+                // Filter to selected country
+                gvAllArticles = data.articles.filter(a => {
+                    const tags = (a.country_tags || []).map(t => normalizeCountry(t));
+                    return tags.includes(country);
+                });
+                gvArticles = gvAllArticles;
+
+                // Apply client-side search/source filters if active
+                const search = (document.getElementById('gvSearch')?.value || '').toLowerCase();
+                const selectedSources = gvFacetState.source.selected;
+                if (search || selectedSources.size > 0) {
+                    gvArticles = gvArticles.filter(a => {
+                        if (search && !(a.headline || '').toLowerCase().includes(search)) return false;
+                        if (selectedSources.size > 0 && !selectedSources.has(a.source || '')) return false;
+                        return true;
+                    });
+                }
+
+                gvPage = 0;
+                renderGvArticlesTable();
+            } catch (err) {
+                console.error('Filter by country error:', err);
+                if (body) body.innerHTML = '<tr><td colspan="6"><div class="gv-error-state">Error loading articles</div></td></tr>';
+            }
         }
 
-        function filterGvByTopic(country, topic) {
-            gvArticles = gvAllArticles.filter(a => {
-                const tags = (a.country_tags || []).map(t => normalizeCountry(t));
-                const topics = a.topic_tags || [];
-                return tags.includes(country) && topics.includes(topic);
-            });
-            gvPage = 0;
-            renderGvArticlesTable();
+        async function filterGvByTopic(country, topic) {
+            const body = document.getElementById('gvArticlesBody');
+            if (body) body.innerHTML = '<tr><td colspan="6"><div class="gv-loading-state">Loading articles...</div></td></tr>';
             switchToArticlesTab();
+
+            // Set the topic filter in the UI
+            document.getElementById('gvTopic').value = topic;
+            document.getElementById('gvTopicInput').value = topic;
+            gvFacetState.topic.selected.clear();
+            gvFacetState.topic.selected.add(topic);
+            topicFacet.renderChips();
+
+            const params = {
+                topic: topic,
+                date_from: document.getElementById('gvDateFrom')?.value || null,
+                date_to: document.getElementById('gvDateTo')?.value || null,
+                limit: 10000,
+            };
+
+            try {
+                const resp = await fetch('/api/news-intel/articles', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(params),
+                });
+                const data = await resp.json();
+                if (!data || !data.articles) {
+                    if (body) body.innerHTML = '<tr><td colspan="6"><div class="gv-error-state">Failed to load articles</div></td></tr>';
+                    return;
+                }
+
+                // Filter to selected country (topic filter already applied server-side)
+                gvAllArticles = data.articles.filter(a => {
+                    const tags = (a.country_tags || []).map(t => normalizeCountry(t));
+                    return tags.includes(country);
+                });
+                gvArticles = gvAllArticles;
+
+                // Apply client-side search/source filters if active
+                const search = (document.getElementById('gvSearch')?.value || '').toLowerCase();
+                const selectedSources = gvFacetState.source.selected;
+                if (search || selectedSources.size > 0) {
+                    gvArticles = gvArticles.filter(a => {
+                        if (search && !(a.headline || '').toLowerCase().includes(search)) return false;
+                        if (selectedSources.size > 0 && !selectedSources.has(a.source || '')) return false;
+                        return true;
+                    });
+                }
+
+                gvPage = 0;
+                renderGvArticlesTable();
+            } catch (err) {
+                console.error('Filter by topic error:', err);
+                if (body) body.innerHTML = '<tr><td colspan="6"><div class="gv-error-state">Error loading articles</div></td></tr>';
+            }
         }
 
-        function filterGvBySource(country, source) {
-            gvArticles = gvAllArticles.filter(a => {
-                const tags = (a.country_tags || []).map(t => normalizeCountry(t));
-                return tags.includes(country) && (a.source || '') === source;
-            });
-            gvPage = 0;
-            renderGvArticlesTable();
+        async function filterGvBySource(country, source) {
+            const body = document.getElementById('gvArticlesBody');
+            if (body) body.innerHTML = '<tr><td colspan="6"><div class="gv-loading-state">Loading articles...</div></td></tr>';
             switchToArticlesTab();
+
+            // Set the source filter in the UI
+            gvFacetState.source.selected.clear();
+            gvFacetState.source.selected.add(source);
+            document.getElementById('gvSource').value = source;
+            document.getElementById('gvSourceInput').value = source;
+            sourceFacet.renderChips();
+
+            const params = {
+                topic: document.getElementById('gvTopic')?.value || '',
+                date_from: document.getElementById('gvDateFrom')?.value || null,
+                date_to: document.getElementById('gvDateTo')?.value || null,
+                limit: 10000,
+            };
+
+            try {
+                const resp = await fetch('/api/news-intel/articles', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(params),
+                });
+                const data = await resp.json();
+                if (!data || !data.articles) {
+                    if (body) body.innerHTML = '<tr><td colspan="6"><div class="gv-error-state">Failed to load articles</div></td></tr>';
+                    return;
+                }
+
+                // Filter to selected country and source
+                gvAllArticles = data.articles.filter(a => {
+                    const tags = (a.country_tags || []).map(t => normalizeCountry(t));
+                    return tags.includes(country) && (a.source || '') === source;
+                });
+                gvArticles = gvAllArticles;
+
+                // Apply client-side search filter if active
+                const search = (document.getElementById('gvSearch')?.value || '').toLowerCase();
+                if (search) {
+                    gvArticles = gvArticles.filter(a => (a.headline || '').toLowerCase().includes(search));
+                }
+
+                gvPage = 0;
+                renderGvArticlesTable();
+            } catch (err) {
+                console.error('Filter by source error:', err);
+                if (body) body.innerHTML = '<tr><td colspan="6"><div class="gv-error-state">Error loading articles</div></td></tr>';
+            }
         }
 
         function renderGlobalMapMarkers(stats) {

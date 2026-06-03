@@ -1,0 +1,101 @@
+{
+  "taskDefinitionArn": "arn:aws:ecs:af-south-1:905418405543:task-definition/ona-zorora-prod:21",
+  "containerDefinitions": [
+    {
+      "name": "ona-zorora",
+      "image": "905418405543.dkr.ecr.af-south-1.amazonaws.com/ona-zorora:prod-62a99ea",
+      "cpu": 0,
+      "portMappings": [
+        {
+          "containerPort": 5000,
+          "hostPort": 5000,
+          "protocol": "tcp"
+        }
+      ],
+      "essential": true,
+      "environment": [
+        {
+          "name": "FRED_API_KEY",
+          "value": ""
+        },
+        {
+          "name": "HF_TOKEN",
+          "value": ""
+        },
+        {
+          "name": "BRAVE_SEARCH_API_KEY",
+          "value": ""
+        },
+        {
+          "name": "NEWSROOM_JWT_TOKEN",
+          "value": ""
+        },
+        {
+          "name": "OPENAI_API_KEY",
+          "value": ""
+        },
+        {
+          "name": "CONGRESS_GOV_API_KEY",
+          "value": ""
+        }
+      ],
+      "mountPoints": [],
+      "volumesFrom": [],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/ona-zorora-prod",
+          "awslogs-region": "af-south-1",
+          "awslogs-stream-prefix": "zorora"
+        }
+      },
+      "systemControls": []
+    }
+  ],
+  "family": "ona-zorora-prod",
+  "taskRoleArn": "arn:aws:iam::905418405543:role/ona-zorora-task-role",
+  "executionRoleArn": "arn:aws:iam::905418405543:role/ona-zorora-task-execution-role",
+  "networkMode": "awsvpc",
+  "revision": 21,
+  "volumes": [],
+  "status": "ACTIVE",
+  "requiresAttributes": [
+    {
+      "name": "com.amazonaws.ecs.capability.logging-driver.awslogs"
+    },
+    {
+      "name": "ecs.capability.execution-role-awslogs"
+    },
+    {
+      "name": "com.amazonaws.ecs.capability.ecr-auth"
+    },
+    {
+      "name": "com.amazonaws.ecs.capability.docker-remote-api.1.19"
+    },
+    {
+      "name": "com.amazonaws.ecs.capability.task-iam-role"
+    },
+    {
+      "name": "ecs.capability.execution-role-ecr-pull"
+    },
+    {
+      "name": "com.amazonaws.ecs.capability.docker-remote-api.1.18"
+    },
+    {
+      "name": "ecs.capability.task-eni"
+    }
+  ],
+  "placementConstraints": [],
+  "compatibilities": [
+    "EC2",
+    "MANAGED_INSTANCES",
+    "FARGATE"
+  ],
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
+  "cpu": "256",
+  "memory": "512",
+  "registeredAt": "2026-06-01T10:14:14.774000-05:00",
+  "registeredBy": "arn:aws:sts::905418405543:assumed-role/ona-github-actions-ecr-role/GitHubActions"
+}
