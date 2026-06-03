@@ -9,6 +9,9 @@ from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
+# Data freshness tolerance - cache is stale if behind S3 by more than this
+DATA_LAG_TOLERANCE_SECONDS = 3600  # 1 hour
+
 # Cache location
 CACHE_DIR = Path(__file__).parent.parent.parent / ".cache" / "newsroom"
 CACHE_FILE = CACHE_DIR / "articles.json"
@@ -82,12 +85,49 @@ class NewsroomCache:
 
         return pruned
 
+    def _get_cached_max_date(self) -> Optional[str]:
+        """Get the most recent article date in cache."""
+        articles = self.get_articles()
+        if not articles:
+            return None
+        dates = [a.get('date', '')[:10] for a in articles if a.get('date')]
+        return max(dates) if dates else None
+
+    def _get_s3_max_date(self) -> Optional[str]:
+        """Get the most recent date available in S3 (lightweight check)."""
+        try:
+            # Import here to avoid circular imports and allow test mocking
+            from tools.research.newsroom_s3 import _list_date_folders, _get_s3_client
+            s3_client = _get_s3_client()
+            folders = _list_date_folders(s3_client, days_back=90)
+            return folders[0] if folders else None
+        except Exception as e:
+            logger.debug(f"Could not check S3 max date: {e}")
+            return None
+
     def is_fresh(self) -> bool:
-        """Check if cache is fresh (within TTL)."""
+        """Check if cache is fresh (within TTL and data recency)."""
+        # First check: timestamp-based freshness
         cache = self._load_cache()
         last_fetch = cache.get("last_fetch", 0)
         age = time.time() - last_fetch
-        return age < self.ttl_seconds
+        if age >= self.ttl_seconds:
+            return False
+
+        # Second check: data recency (cached articles match S3 availability)
+        cached_max = self._get_cached_max_date()
+        s3_max = self._get_s3_max_date()
+
+        if cached_max is None or s3_max is None:
+            # Can't determine data recency - fall back to timestamp only
+            return True
+
+        # Cache is stale if behind S3 by more than tolerance
+        if s3_max > cached_max:
+            logger.info(f"Cache data stale: cached={cached_max}, s3={s3_max}")
+            return False
+
+        return True
 
     def get_articles(self) -> List[Dict[str, Any]]:
         """
