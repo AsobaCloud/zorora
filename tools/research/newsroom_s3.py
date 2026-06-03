@@ -76,15 +76,16 @@ def _fetch_articles_from_date(s3_client, date_folder: str, max_results: int = 50
     articles = []
     
     try:
-        # List metadata.json files for this date
-        prefix = f"{NEWSROOM_PREFIX}{date_folder}/"
+        # List metadata.json files for this date (in metadata/ subfolder)
+        prefix = f"{NEWSROOM_PREFIX}{date_folder}/metadata/"
         response = s3_client.list_objects_v2(
             Bucket=NEWSROOM_BUCKET,
             Prefix=prefix,
             MaxKeys=1000
         )
         
-        keys = [obj['Key'] for obj in response.get('Contents', []) if obj['Key'].endswith('metadata.json')]
+        # Files are named {hash}.json, not metadata.json
+        keys = [obj['Key'] for obj in response.get('Contents', []) if obj['Key'].endswith('.json')]
         
         # Batch fetch metadata files
         for key in keys[:max_results]:
