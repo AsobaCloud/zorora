@@ -75,7 +75,7 @@ def _get_s3_client():
     """Get S3 client (region-agnostic for public buckets)."""
     if not HAS_BOTO3:
         raise RuntimeError("boto3 not installed, cannot access S3")
-    return boto3.client("s3", region_name="af-south-1")
+    return boto3.client("s3", region_name="us-east-1")
 
 
 def _list_date_folders(s3_client, days_back: int = 90) -> List[str]:
