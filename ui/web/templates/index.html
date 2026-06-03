@@ -4033,6 +4033,9 @@
             const force = opts && opts.force === true;
             initGlobalViewMap();
 
+            // Load facets first to set default date values if not already set
+            await loadFacets();
+
             const topicVal = document.getElementById('gvTopic')?.value || '';
             const params = {
                 topic: topicVal,
@@ -4043,8 +4046,6 @@
             if (!force && _tabDataCache.globalKey === globalCacheKey) {
                 return;
             }
-
-            loadFacets();
 
             // Set loading states
             const mapCov = document.getElementById('gvMapCoverage');
