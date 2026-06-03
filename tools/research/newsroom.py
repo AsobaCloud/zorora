@@ -92,13 +92,32 @@ def fetch_newsroom_cached(max_results: int = 100):
 
 def _fetch_newsroom_export() -> List[Dict[str, Any]]:
     """
-    Fetch newsroom articles from S3 export file.
+    Fetch newsroom articles from S3 date folders.
     
-    Single HTTP request, returns all ~3000 articles in 2-3 seconds.
-    No authentication required - S3 bucket is public-read for this path.
+    Fetches live articles from daily S3 folders instead of stale export file.
+    Returns most recent 90 days of articles.
     
     Returns:
         List of article dicts
+    """
+    try:
+        # Import S3 fetch functions
+        from tools.research.newsroom_s3 import fetch_newsroom_s3_raw
+        
+        articles = fetch_newsroom_s3_raw(days_back=90, max_results=3000)
+        
+        logger.info(f"✓ Newsroom S3 fetch: {len(articles)} articles from date folders")
+        return articles
+        
+    except Exception as e:
+        logger.error(f"Newsroom S3 fetch error: {e}")
+        # Fallback to export file if S3 folders fail
+        return _fetch_newsroom_export_fallback()
+
+
+def _fetch_newsroom_export_fallback() -> List[Dict[str, Any]]:
+    """
+    Fallback: Fetch from S3 export file if date folder fetch fails.
     """
     try:
         response = requests.get(
@@ -114,20 +133,16 @@ def _fetch_newsroom_export() -> List[Dict[str, Any]]:
         data = response.json()
         articles = data.get('articles', [])
         
-        # Validate article format
         valid_articles = []
         for article in articles:
             if article.get('headline') and article.get('url'):
                 valid_articles.append(article)
         
-        logger.info(f"✓ Newsroom S3 export: {len(valid_articles)} articles (exported at {data.get('exported_at', 'unknown')})")
+        logger.warning(f"⚠ Using stale export file: {len(valid_articles)} articles")
         return valid_articles
         
-    except requests.exceptions.Timeout:
-        logger.error("Newsroom S3 export timed out after 30s")
-        return []
     except Exception as e:
-        logger.error(f"Newsroom S3 export error: {e}")
+        logger.error(f"Newsroom export fallback error: {e}")
         return []
 
 
