@@ -134,12 +134,20 @@ def _fetch_articles_from_date(
                 metadata = json.loads(obj["Body"].read().decode("utf-8"))
 
                 # Normalize to standard format
+                tags = metadata.get("tags", {})
+                topic_tags = tags.get("core_topics", []) or []
+                if not topic_tags:
+                    # Fallback: use special_tags and matched_keywords when core_topics is empty
+                    topic_tags = tags.get("special_tags", []) or []
+                    if not topic_tags:
+                        topic_tags = tags.get("matched_keywords", []) or []
+
                 article = {
                     "headline": metadata.get("title", ""),
                     "date": _parse_date(metadata.get("pub_date", "")),
-                    "topic_tags": metadata.get("tags", {}).get("core_topics", []),
-                    "geography_tags": metadata.get("tags", {}).get("continents", []),
-                    "country_tags": metadata.get("tags", {}).get("countries", []),
+                    "topic_tags": topic_tags,
+                    "geography_tags": tags.get("continents", []),
+                    "country_tags": tags.get("countries", []),
                     "url": metadata.get("url", ""),
                     "source": metadata.get("source", "Unknown"),
                 }
