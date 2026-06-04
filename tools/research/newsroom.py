@@ -74,80 +74,103 @@ def _get_timeout() -> int:
     return getattr(config, "NEWSROOM_CONFIG", {}).get("timeout", 30)
 
 
+# Background refresh tracking
+_refresh_thread = None
+
+
+def _trigger_background_refresh(cache):
+    """Start a background thread to refresh stale cache without blocking requests."""
+    global _refresh_thread
+    if _refresh_thread is not None and _refresh_thread.is_alive():
+        return
+
+    def _refresh():
+        try:
+            with _fetch_lock:
+                if cache.is_fresh():
+                    return
+                articles = _fetch_newsroom_export()
+                if articles:
+                    cache.update(articles)
+        except Exception as e:
+            logger.error(f"Background refresh failed: {e}", exc_info=True)
+
+    _refresh_thread = threading.Thread(target=_refresh, daemon=True)
+    _refresh_thread.start()
+
+
 def fetch_newsroom_cached(max_results: int = 10000):
     """
     Fetch newsroom articles with caching (90-day rolling window).
 
-    Uses local cache to avoid repeated API calls. Cache refreshes
-    daily (24-hour TTL) since newsroom updates ~400 articles/day.
-    New articles are merged with existing cache, deduplicated by URL.
+    Stale-while-revalidate: if cache is stale, returns cached data immediately
+    and refreshes in the background. First cold-start blocks until data is fetched.
 
     Args:
-        max_results: Max articles to return (default: 100)
+        max_results: Max articles to return
 
     Returns:
         Tuple of (articles_list, error_string_or_None).
-        error is None on success, a warning message on stale-cache fallback,
-        or an error message when no data is available.
     """
     from tools.utils.newsroom_cache import get_cache
 
     cache = get_cache()
 
+    def _sorted(articles):
+        articles = list(articles)
+        articles.sort(key=lambda x: x.get("date", ""), reverse=True)
+        return articles
+
     # Fast path: cache is fresh
     if cache.is_fresh():
-        articles = cache.get_articles()
-        logger.info(
-            f"Newsroom cache hit: {len(articles)} articles (age: {int(cache.get_age_seconds())}s)"
-        )
+        articles = _sorted(cache.get_articles())
         return (articles[:max_results], None)
 
-    # Slow path: cache is stale, acquire lock to refresh
+    # Stale-while-revalidate path
     with _fetch_lock:
-        # Double-check freshness after acquiring lock
+        # Double-check after acquiring lock
         if cache.is_fresh():
-            articles = cache.get_articles()
-            logger.info(f"Newsroom cache hit (after lock): {len(articles)} articles")
+            articles = _sorted(cache.get_articles())
             return (articles[:max_results], None)
 
-        logger.info("Newsroom cache stale, fetching from S3 date folders...")
+        stale_articles = cache.get_articles()
+        if stale_articles:
+            # Return stale data immediately, refresh in background
+            _trigger_background_refresh(cache)
+            logger.info(
+                f"Newsroom stale-while-revalidate: {len(stale_articles)} articles"
+            )
+            return (_sorted(stale_articles)[:max_results], None)
+
+        # No cache at all — must block and fetch
+        logger.info("Newsroom cache cold, fetching baseline...")
         articles = _fetch_newsroom_export()
 
         if articles:
             cache.update(articles)
-            return (articles[:max_results], None)
+            return (_sorted(articles)[:max_results], None)
 
-    # Lock released and API failed - try to use stale cache as fallback
-    stale_articles = cache.get_articles()
-    if stale_articles:
-        logger.warning(f"API failed, using stale cache: {len(stale_articles)} articles")
-        return (
-            stale_articles[:max_results],
-            "Using cached data \u2014 newsroom API unavailable",
-        )
-
-    return ([], "Newsroom API unavailable and no cached data")
+    # Everything failed — return empty
+    return ([], "Newsroom data unavailable and no cached data")
 
 
 def _fetch_newsroom_export() -> List[Dict[str, Any]]:
     """
-    Fetch newsroom articles from S3 date folders.
+    Fetch newsroom articles from S3 date folders (fully parallel).
 
-    Fetches live articles from daily S3 folders instead of stale export file.
-    Returns most recent 90 days of articles.
+    The export file is stale (2+ months old), so we fetch directly
+    from daily S3 folders using parallel listing and get_object.
 
     Returns:
         List of article dicts
     """
     try:
-        articles = fetch_newsroom_s3_raw(days_back=90, max_results=10000)
-
-        logger.info(f"✓ Newsroom S3 fetch: {len(articles)} articles from date folders")
+        articles = fetch_newsroom_s3_raw(days_back=7, max_results=500)
+        logger.info(f"Newsroom S3 fetch: {len(articles)} articles")
         return articles
-
     except Exception as e:
         logger.error(f"Newsroom S3 fetch error: {e}")
-        # Fallback to export file if S3 folders fail
+        # Fallback to export file if daily folders fail
         return _fetch_newsroom_export_fallback()
 
 

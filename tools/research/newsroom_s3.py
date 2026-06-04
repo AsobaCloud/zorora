@@ -6,6 +6,7 @@ import threading
 from typing import List, Dict, Any
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 try:
     import boto3
@@ -75,7 +76,10 @@ def _get_s3_client():
     """Get S3 client (region-agnostic for public buckets)."""
     if not HAS_BOTO3:
         raise RuntimeError("boto3 not installed, cannot access S3")
-    return boto3.client("s3", region_name="us-east-1")
+    # Increase connection pool to match concurrency level
+    from botocore.config import Config
+    bc_config = Config(max_pool_connections=25)
+    return boto3.client("s3", region_name="us-east-1", config=bc_config)
 
 
 def _list_date_folders(s3_client, days_back: int = 90) -> List[str]:
@@ -127,22 +131,19 @@ def _fetch_articles_from_date(
             if obj["Key"].endswith(".json")
         ]
 
-        # Batch fetch metadata files
-        for key in keys[:max_results]:
+        def _fetch_single(key: str) -> Dict:
             try:
                 obj = s3_client.get_object(Bucket=NEWSROOM_BUCKET, Key=key)
                 metadata = json.loads(obj["Body"].read().decode("utf-8"))
 
-                # Normalize to standard format
                 tags = metadata.get("tags", {})
                 topic_tags = tags.get("core_topics", []) or []
                 if not topic_tags:
-                    # Fallback: use special_tags and matched_keywords when core_topics is empty
                     topic_tags = tags.get("special_tags", []) or []
                     if not topic_tags:
                         topic_tags = tags.get("matched_keywords", []) or []
 
-                article = {
+                return {
                     "headline": metadata.get("title", ""),
                     "date": _parse_date(metadata.get("pub_date", "")),
                     "topic_tags": topic_tags,
@@ -151,10 +152,19 @@ def _fetch_articles_from_date(
                     "url": metadata.get("url", ""),
                     "source": metadata.get("source", "Unknown"),
                 }
-                articles.append(article)
             except Exception as e:
                 logger.warning(f"Error reading {key}: {e}")
-                continue
+                return {}
+
+        # Fetch metadata files concurrently (S3 supports parallel get_object)
+        with ThreadPoolExecutor(max_workers=20) as executor:
+            futures = {
+                executor.submit(_fetch_single, key): key for key in keys[:max_results]
+            }
+            for future in as_completed(futures):
+                article = future.result()
+                if article:
+                    articles.append(article)
 
     except Exception as e:
         logger.error(f"Error fetching from {date_folder}: {e}")
@@ -181,11 +191,58 @@ def _parse_date(date_str: str) -> str:
     return date_str[:10] if len(date_str) >= 10 else date_str
 
 
+def _list_metadata_keys_for_day(s3_client, date_folder: str) -> List[str]:
+    """List all metadata .json keys for a single date folder."""
+    try:
+        prefix = f"{NEWSROOM_PREFIX}{date_folder}/metadata/"
+        response = s3_client.list_objects_v2(
+            Bucket=NEWSROOM_BUCKET, Prefix=prefix, MaxKeys=1000
+        )
+        return [
+            obj["Key"]
+            for obj in response.get("Contents", [])
+            if obj["Key"].endswith(".json")
+        ]
+    except Exception as e:
+        logger.warning(f"Error listing metadata for {date_folder}: {e}")
+        return []
+
+
+def _fetch_single_article(s3_client, key: str) -> Dict:
+    """Fetch and parse a single metadata file into an article dict."""
+    try:
+        obj = s3_client.get_object(Bucket=NEWSROOM_BUCKET, Key=key)
+        metadata = json.loads(obj["Body"].read().decode("utf-8"))
+
+        tags = metadata.get("tags", {})
+        topic_tags = tags.get("core_topics", []) or []
+        if not topic_tags:
+            topic_tags = tags.get("special_tags", []) or []
+            if not topic_tags:
+                topic_tags = tags.get("matched_keywords", []) or []
+
+        return {
+            "headline": metadata.get("title", ""),
+            "date": _parse_date(metadata.get("pub_date", "")),
+            "topic_tags": topic_tags,
+            "geography_tags": tags.get("continents", []),
+            "country_tags": tags.get("countries", []),
+            "url": metadata.get("url", ""),
+            "source": metadata.get("source", "Unknown"),
+        }
+    except Exception as e:
+        logger.warning(f"Error reading {key}: {e}")
+        return {}
+
+
 def fetch_newsroom_s3_raw(
     days_back: int = 90, max_results: int = 10000
 ) -> List[Dict[str, Any]]:
     """
     Fetch newsroom articles directly from S3 (no API auth required).
+
+    Fully parallel: lists metadata keys for all days concurrently,
+    then fetches all metadata files concurrently.
 
     Args:
         days_back: Number of days to fetch (default: 90)
@@ -201,7 +258,7 @@ def fetch_newsroom_s3_raw(
     try:
         s3_client = _get_s3_client()
 
-        # Get date folders
+        # Step 1: Get date folders (single S3 LIST call)
         date_folders = _list_date_folders(s3_client, days_back)
         logger.info(f"Found {len(date_folders)} date folders to scan")
 
@@ -209,26 +266,35 @@ def fetch_newsroom_s3_raw(
             logger.warning("No date folders found in S3")
             return []
 
-        # Fetch articles from each date
+        # Step 2: List metadata keys for ALL days in parallel
+        all_keys = []
+        with ThreadPoolExecutor(max_workers=20) as executor:
+            futures = {
+                executor.submit(_list_metadata_keys_for_day, s3_client, folder): folder
+                for folder in date_folders
+            }
+            for future in as_completed(futures):
+                keys = future.result()
+                all_keys.extend(keys)
+
+        logger.info(f"Found {len(all_keys)} metadata files across all days")
+
+        # Step 3: Fetch ALL metadata files in parallel
         all_articles = []
         seen_urls = set()
 
-        for date_folder in date_folders:
-            if len(all_articles) >= max_results:
-                break
-
-            articles = _fetch_articles_from_date(
-                s3_client, date_folder, max_results - len(all_articles)
-            )
-
-            # Deduplicate by URL
-            for article in articles:
-                url = article.get("url", "")
-                if url and url not in seen_urls:
-                    all_articles.append(article)
-                    seen_urls.add(url)
-
-            logger.info(f"Fetched {len(articles)} articles from {date_folder}")
+        with ThreadPoolExecutor(max_workers=20) as executor:
+            futures = [
+                executor.submit(_fetch_single_article, s3_client, key)
+                for key in all_keys[:max_results]
+            ]
+            for future in as_completed(futures):
+                article = future.result()
+                if article:
+                    url = article.get("url", "")
+                    if url and url not in seen_urls:
+                        all_articles.append(article)
+                        seen_urls.add(url)
 
         # Sort by date (newest first)
         all_articles.sort(key=lambda x: x.get("date", ""), reverse=True)

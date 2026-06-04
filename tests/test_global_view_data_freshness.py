@@ -36,12 +36,14 @@ def app_client():
             yield client
 
 
-def test_newsroom_cached_refreshes_when_cache_date_lags_latest_s3_folder(tmp_path):
+def test_newsroom_cached_uses_stale_while_revalidate_when_behind_s3(tmp_path):
+    """When cache is stale, first call returns stale data immediately.
+    Background refresh updates cache for subsequent calls."""
     from tools.research import newsroom
     from tools.utils.newsroom_cache import NewsroomCache
 
     stale_cache = NewsroomCache(cache_dir=tmp_path, ttl_seconds=86400)
-    stale_cache.update([article("March stale", "2026-03-24")])
+    stale_cache.update([article("May stale", "2026-05-28")])
     latest_articles = [article("June latest", "2026-06-03")]
 
     with (
@@ -55,11 +57,20 @@ def test_newsroom_cached_refreshes_when_cache_date_lags_latest_s3_folder(tmp_pat
         ),
         patch("tools.utils.newsroom_cache.get_cache", return_value=stale_cache),
     ):
+        # First call: stale-while-revalidate returns stale data immediately
         articles, warning = newsroom.fetch_newsroom_cached(max_results=10)
+        assert articles[0]["headline"] == "May stale"
+        assert warning is None
 
-    assert warning is None
-    assert articles[0]["headline"] == "June latest"
-    assert articles[0]["date"] == "2026-06-03"
+        # Simulate what the background thread would do
+        fresh_articles = newsroom._fetch_newsroom_export()
+        stale_cache.update(fresh_articles)
+
+        # Second call: cache should now be fresh
+        articles2, warning2 = newsroom.fetch_newsroom_cached(max_results=10)
+        assert articles2[0]["headline"] == "June latest"
+        assert articles2[0]["date"] == "2026-06-03"
+        assert warning2 is None
 
 
 def test_newsroom_cache_clear_invalidates_memory_cache(tmp_path):
@@ -223,3 +234,48 @@ def test_s3_topic_fallback_uses_matched_keywords_when_special_tags_also_empty():
 
     assert len(articles) == 1
     assert articles[0]["topic_tags"] == ["tariff", "trade"]
+
+
+def test_facets_endpoint_loads_fast_on_first_visit(app_client):
+    """When a user opens Global View, /api/news-intel/facets must respond fast
+    enough that the page doesn't hang on first load (cache cold)."""
+    import time
+    from tools.utils.newsroom_cache import get_cache
+
+    get_cache().clear()
+
+    start = time.time()
+    response = app_client.get("/api/news-intel/facets")
+    elapsed = time.time() - start
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert "topics" in payload and "date_range" in payload
+    assert elapsed < 4, f"Facets endpoint too slow on first load: {elapsed:.1f}s (target < 4s)"
+
+
+def test_facets_topic_distribution_is_diverse(app_client):
+    """Topic facets must show multiple topics, not artificially dominated by one."""
+    import time
+    from tools.utils.newsroom_cache import get_cache
+
+    get_cache().clear()
+
+    start = time.time()
+    response = app_client.get("/api/news-intel/facets")
+    elapsed = time.time() - start
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    topics = payload.get("topics", [])
+    assert len(topics) >= 2, f"Expected multiple topics, got: {topics}"
+
+    top_count = topics[0]["count"] if topics else 0
+    total_count = sum(t["count"] for t in topics)
+    if total_count > 0:
+        assert top_count / total_count < 0.8, (
+            f"Topic '{topics[0]['name']}' dominates at {top_count}/{total_count} — "
+            "fallback extraction may not be working"
+        )
+
+    assert elapsed < 4, f"Facets endpoint too slow: {elapsed:.1f}s (target < 4s)"
