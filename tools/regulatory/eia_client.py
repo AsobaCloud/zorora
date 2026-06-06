@@ -60,6 +60,13 @@ def _fetch_paginated(
 
             response = requests.get(url, params=params, timeout=timeout)
             response.raise_for_status()
+            
+            # Check if response is HTML (error page) instead of JSON
+            content_type = response.headers.get('content-type', '')
+            if 'text/html' in content_type:
+                logger.warning("EIA API returned HTML instead of JSON for %s", endpoint_name)
+                return []
+            
             payload = response.json()
             response_data = payload.get("response", {})
             batch = response_data.get("data", []) or []

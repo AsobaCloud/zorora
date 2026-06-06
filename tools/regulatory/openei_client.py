@@ -71,6 +71,13 @@ def fetch_utility_rates(lat: float, lon: float) -> Dict[str, Any]:
             timeout=timeout,
         )
         search.raise_for_status()
+        
+        # Check if response is HTML (error page) instead of JSON
+        content_type = search.headers.get('content-type', '')
+        if 'text/html' in content_type:
+            logger.warning("OpenEI API returned HTML instead of JSON for %.4f, %.4f", lat, lon)
+            return {"lat": lat, "lon": lon, "rates": {}, "properties": {}}
+        
         items = search.json().get("items", []) or []
     except Exception as exc:
         logger.warning("OpenEI search failed for %.4f, %.4f: %s", lat, lon, exc)

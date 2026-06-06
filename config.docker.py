@@ -12,6 +12,38 @@ def _env_flag(name: str, default: bool) -> bool:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
+def _get_ssm_parameter(param_name: str, region: str = "af-south-1") -> str:
+    """Fetch a parameter from AWS SSM Parameter Store."""
+    try:
+        import boto3
+        client = boto3.client('ssm', region_name=region)
+        response = client.get_parameter(
+            Name=param_name,
+            WithDecryption=True
+        )
+        return response['Parameter']['Value']
+    except Exception as e:
+        logging.warning(f"Failed to fetch SSM parameter {param_name}: {e}")
+        return ""
+
+def _get_eia_api_key() -> str:
+    """Get EIA API key from environment or SSM."""
+    # Check environment variable first
+    key = os.environ.get("EIA_API_KEY")
+    if key:
+        return key
+    # Fall back to SSM
+    return _get_ssm_parameter("/zorora/prod/eia-api-key")
+
+def _get_openei_api_key() -> str:
+    """Get OpenEI API key from environment or SSM."""
+    # Check environment variable first
+    key = os.environ.get("OPENEI_API_KEY")
+    if key:
+        return key
+    # Fall back to SSM
+    return _get_ssm_parameter("/zorora/prod/openei-api-key")
+
 # LM Studio API Configuration (OpenAI-compatible)
 API_URL = os.environ.get("LLM_API_URL", "http://localhost:1234/v1/chat/completions")
 MODEL = "qwen/qwen3-vl-4b"  # Regular model - fast and decisive
@@ -383,7 +415,7 @@ FRED = {
 
 # EIA Open Data v2 Configuration
 EIA = {
-    "api_key": os.environ.get("EIA_API_KEY", ""),
+    "api_key": _get_eia_api_key(),
     "base_url": "https://api.eia.gov/v2",
     "timeout": 30,
     "enabled": True,
@@ -392,7 +424,7 @@ EIA = {
 
 # OpenEI Utility Rate Database Configuration
 OPENEI = {
-    "api_key": os.environ.get("OPENEI_API_KEY", ""),
+    "api_key": _get_openei_api_key(),
     "base_url": "https://api.openei.org",
     "timeout": 30,
     "enabled": True,
