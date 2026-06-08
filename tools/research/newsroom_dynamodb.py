@@ -3,6 +3,7 @@ DynamoDB client for newsroom article operations.
 Replaces S3-based metadata storage with indexed DynamoDB queries.
 """
 
+import os
 import hashlib
 import logging
 from datetime import datetime
@@ -82,7 +83,7 @@ def _truncate_utf8(text: str, max_bytes: int) -> str:
 
 def insert_article(metadata: Dict[str, Any]) -> bool:
     """
-    Insert an article into DynamoDB.
+    Insert an article into DynamoDB with fixed SK="METADATA" for URL-based idempotency.
     
     Args:
         metadata: Article metadata dict with keys:
@@ -104,7 +105,8 @@ def insert_article(metadata: Dict[str, Any]) -> bool:
         return False
     
     try:
-        table = _get_dynamodb().Table(TABLE_NAME)
+        table_name = os.environ.get("DYNAMODB_TABLE_NAME", TABLE_NAME)
+        table = _get_dynamodb().Table(table_name)
         
         url = metadata.get('url', '')
         if not url:
@@ -121,18 +123,36 @@ def insert_article(metadata: Dict[str, Any]) -> bool:
         matched_keywords = tags.get('matched_keywords', [])
         continents = tags.get('continents', [])
         countries = tags.get('countries', [])
-        full_content = _truncate_utf8(
-            metadata.get('full_content', ''),
-            MAX_FULL_CONTENT_BYTES,
-        )
-        content_length = metadata.get('content_length', 0)
-        if metadata.get('full_content'):
-            content_length = len(full_content)
         
-        # Build item
+        full_content = metadata.get('full_content', '')
+        content_length = len(full_content.encode('utf-8')) if full_content else 0
+        
+        # Handle content overflow to S3
+        s3_overflow_key = None
+        if content_length > MAX_FULL_CONTENT_BYTES:
+            try:
+                s3_client = boto3.client('s3', region_name='us-east-1')
+                content_hash = hashlib.md5(full_content.encode()).hexdigest()
+                s3_overflow_key = f"content/overflow/{content_hash}.html"
+                
+                s3_client.put_object(
+                    Bucket="news-collection-website",
+                    Key=s3_overflow_key,
+                    Body=full_content.encode('utf-8'),
+                    ContentType='text/html'
+                )
+                
+                # Truncate for DynamoDB
+                full_content = _truncate_utf8(full_content, MAX_FULL_CONTENT_BYTES)
+                logger.info(f"Content overflow to S3: {s3_overflow_key}")
+            except Exception as e:
+                logger.error(f"Failed to upload overflow to S3: {e}")
+                # Continue with truncated content
+        
+        # Build item with fixed SK="METADATA"
         item = {
             'PK': f"ARTICLE#{url_hash}",
-            'SK': _parse_date_to_sort_key(pub_date),
+            'SK': "METADATA",  # Fixed SK for URL-based idempotency
             'url': url,
             'title': metadata.get('title', ''),
             'source': metadata.get('source', 'Unknown'),
@@ -154,6 +174,10 @@ def insert_article(metadata: Dict[str, Any]) -> bool:
             'pub_timestamp': _parse_timestamp(pub_date),
             'collection_key': f"COLLECTED#{collection_date[:10]}",
         }
+        
+        # Add S3 overflow key if content was too large
+        if s3_overflow_key:
+            item['s3_overflow_key'] = s3_overflow_key
         
         # Add source GSI key
         source = metadata.get('source', 'Unknown')

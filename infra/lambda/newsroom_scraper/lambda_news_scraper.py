@@ -10,11 +10,18 @@ MODULE_DIR = Path(__file__).resolve().parent
 if str(MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_DIR))
 
+# Add repo root for tools imports
+REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 
 def lambda_handler(event, context):
     try:
         os.environ.setdefault("AWS_EC2_METADATA_DISABLED", "true")
         os.environ.setdefault("FRESH_MODE", "false")
+        os.environ.setdefault("DYNAMODB_TABLE_NAME", "newsroom_articles")
+        
         from news_scraper import main
 
         main()
