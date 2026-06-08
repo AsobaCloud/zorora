@@ -214,6 +214,9 @@ def parse_newsroom_results(articles: List[Dict[str, Any]], query: str) -> List[S
         if article.get("topic_tags"):
             tags = article.get("topic_tags", [])[:3]
             snippet_parts.append(f"Topics: {', '.join(tags)}")
+        description = str(article.get("description", "")).strip()
+        if description:
+            snippet_parts.append(description[:300])
         
         source = Source(
             source_id=source_id,
@@ -221,6 +224,7 @@ def parse_newsroom_results(articles: List[Dict[str, Any]], query: str) -> List[S
             title=title,
             source_type="newsroom",
             content_snippet=" | ".join(snippet_parts),
+            content_full=str(article.get("full_content", "")).strip(),
             publication_date=article.get("date", "")
         )
         sources.append(source)
@@ -272,7 +276,12 @@ def aggregate_sources(
 
     def fetch_newsroom():
         try:
-            articles = fetch_newsroom_api(query, days_back=90, max_results=max_results_per_source)
+            articles = fetch_newsroom_api(
+                query,
+                days_back=90,
+                max_results=max_results_per_source,
+                include_content=True,
+            )
             return parse_newsroom_results(articles, query)
         except Exception as e:
             logger.warning(f"Newsroom fetch failed: {e}")

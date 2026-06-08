@@ -198,7 +198,7 @@ This is the most important Lambda for Zorora. Every 6 hours, it wakes up and:
 1. Scrapes news articles from RSS feeds (energy, solar, policy sources)
 2. Uses ML to tag articles with topics (energy, solar, policy, etc.)
 3. Writes tagged articles to `newsroom_articles` in DynamoDB (us-east-1)
-4. Exports a JSON file to S3 for legacy compatibility
+4. Optionally writes transitional repair/export artifacts to S3 during migration workflows
 
 **Why Lambda?** News scraping happens 4 times per day. Running a 24/7 server would cost ~$50/month. Lambda costs pennies.
 
@@ -210,8 +210,8 @@ This is the most important Lambda for Zorora. Every 6 hours, it wakes up and:
 - **Timeout:** 300 seconds
 - **Memory:** 512 MB
 - **Log Group:** `/aws/lambda/ona-newsroom-sync-prod` (85 KB stored)
-- **S3 Output:** `s3://news-collection-website/zorora-export/articles.json`
-- **IAM Permissions:** S3 (read/write), DynamoDB (newsroom_articles table)
+- **Primary Serving Store:** `newsroom_articles` DynamoDB table in `us-east-1`
+- **IAM Permissions:** DynamoDB (newsroom_articles table) and transitional S3 access for repair/export tooling only
 
 **Troubleshooting:**
 - If articles aren't updating: Check EventBridge rule is active
@@ -473,12 +473,12 @@ S3 is incredibly cheap for storage ($0.023/GB/month) and provides 99.999999999% 
 
 #### `news-collection-website` - The News Export Bucket
 
-This bucket serves two purposes: the primary news export file for Zorora, and legacy storage for the news scraper.
+This bucket is transitional storage for newsroom migration and legacy scraper artifacts. Zorora runtime newsroom serving now reads from DynamoDB.
 
-**Purpose:** News article storage and exports
+**Purpose:** Legacy news article storage, migration repair input, and optional exports
 
 **Key Prefixes:**
-- `zorora-export/articles.json`: Zorora newsroom export file (primary)
+- `zorora-export/articles.json`: Transitional export artifact
 - `{YYYY-MM-DD}/`: Daily article folders (legacy S3 metadata structure)
 
 **Data Contract:**
@@ -502,14 +502,14 @@ This bucket serves two purposes: the primary news export file for Zorora, and le
   }
   ```
 
-**Access:** Public read access for export file
+**Access:** Legacy/public access may still exist for transitional export consumers, but Zorora runtime should not depend on it.
 
-**Why both S3 and DynamoDB?** We're in transition. Originally, news was stored only in S3. We migrated to DynamoDB for faster queries, but kept the S3 export for backward compatibility with systems that haven't migrated yet.
+**Why both S3 and DynamoDB?** We're in transition. Runtime serving is DynamoDB-only; S3 remains only for migration repair and optional backward-compatibility exports.
 
 **Troubleshooting:**
-- If export file is outdated: Check Lambda is writing to S3
-- If file is inaccessible: Verify bucket policy allows public read
-- If file is too large: Consider pagination or date range filtering
+- If newsroom data is stale in Zorora: Check DynamoDB writes and query health first
+- If repair tooling fails: Verify the legacy S3 objects still exist
+- If optional export consumers break: Verify bucket policy and export job health separately from Zorora runtime
 
 #### `ona-zorora-prod-user-state-migrate`
 **Purpose:** User state migration (temporary)

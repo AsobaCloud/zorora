@@ -2,9 +2,8 @@
 
 import logging
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, List, Optional, Set
-from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
@@ -134,11 +133,11 @@ class DigestWorkflow:
         Returns:
             List of article dictionaries
         """
-        from tools.research.newsroom import _fetch_newsroom_api_raw
+        from tools.research.newsroom import fetch_newsroom_api
 
         # Fetch more articles for better coverage across continents
         max_results = min(days_back * 50, 1000)  # ~50 articles per day, max 1000
-        articles = _fetch_newsroom_api_raw(days_back=days_back, max_results=max_results)
+        articles = fetch_newsroom_api(days_back=days_back, max_results=max_results)
 
         return articles
 

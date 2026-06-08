@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from tools.alerts.store import AlertStore
 from tools.market.store import MarketDataStore
+from tools.research.newsroom_dynamodb import hydrate_articles_with_content
 from tools.research.newsroom import fetch_newsroom_cached
 from workflows.digest_synthesis import filter_newsroom_articles, news_intel_synthesis
 
@@ -23,8 +24,9 @@ def execute_alert(alert: dict, store: AlertStore, now: datetime | None = None):
         date_to=today.isoformat(),
         limit=int(alert.get("article_limit", 100)),
     )
+    hydrated = hydrate_articles_with_content(filtered, max_articles=min(len(filtered), 20))
     synthesis = news_intel_synthesis(
-        filtered,
+        hydrated,
         topic=alert.get("topic", ""),
         date_from=date_from,
         date_to=today.isoformat(),

@@ -117,12 +117,15 @@ class TestMarketLatestEndpoint:
     def test_latest_returns_series_data(self, mock_store_cls):
         mock_store = MagicMock()
         mock_store_cls.return_value = mock_store
-        import pandas as pd
-        df = pd.DataFrame({"value": [100.0, 102.0]},
-                          index=pd.to_datetime(["2026-03-07", "2026-03-08"]))
-        mock_store.get_series_df.return_value = df
 
         mod = _import_app_module()
+        sid, series = next(iter(mod.SERIES_CATALOG.items()))
+        mock_store.get_all_latest_observations.return_value = {
+            (series.provider, sid): [
+                {"value": 102.0, "date": "2026-03-08", "last_fetched_at": "2026-03-08T00:00:00"},
+                {"value": 100.0, "date": "2026-03-07", "last_fetched_at": "2026-03-07T00:00:00"},
+            ]
+        }
         client = mod.app.test_client()
         resp = client.get("/api/market/latest")
         assert resp.status_code == 200
@@ -216,29 +219,28 @@ class TestNewsroomCachedReturnsTuple:
         assert len(articles) == 1
         assert error is None
 
-    @patch("tools.research.newsroom._fetch_newsroom_api_raw")
+    @patch("tools.research.newsroom._trigger_background_refresh")
     @patch("tools.utils.newsroom_cache.get_cache")
-    def test_api_fail_stale_fallback_returns_warning(self, mock_get_cache, mock_raw):
+    def test_stale_cache_returns_stale_articles_and_triggers_refresh(self, mock_get_cache, mock_refresh):
         cache = MagicMock()
         cache.is_fresh.return_value = False
         cache.get_articles.return_value = [{"headline": "Stale"}]
         mock_get_cache.return_value = cache
-        mock_raw.return_value = []  # API failed
 
         from tools.research.newsroom import fetch_newsroom_cached
         articles, error = fetch_newsroom_cached(max_results=10)
         assert len(articles) == 1
-        assert error is not None
-        assert "unavailable" in error.lower()
+        assert error is None
+        mock_refresh.assert_called_once_with(cache)
 
-    @patch("tools.research.newsroom._fetch_newsroom_api_raw")
+    @patch("tools.research.newsroom._fetch_newsroom_export")
     @patch("tools.utils.newsroom_cache.get_cache")
-    def test_api_fail_no_cache_returns_empty_with_error(self, mock_get_cache, mock_raw):
+    def test_api_fail_no_cache_returns_empty_with_error(self, mock_get_cache, mock_fetch):
         cache = MagicMock()
         cache.is_fresh.return_value = False
         cache.get_articles.return_value = []
         mock_get_cache.return_value = cache
-        mock_raw.return_value = []
+        mock_fetch.return_value = []
 
         from tools.research.newsroom import fetch_newsroom_cached
         articles, error = fetch_newsroom_cached(max_results=10)
@@ -248,11 +250,13 @@ class TestNewsroomCachedReturnsTuple:
 
 
 class TestNewsroomTimeout:
-    """Test that NEWSROOM_API_TIMEOUT is 30s for Lambda cold-start tolerance."""
+    """Test that newsroom timeout comes from config."""
 
-    def test_timeout_is_30(self):
-        from tools.research.newsroom import NEWSROOM_API_TIMEOUT
-        assert NEWSROOM_API_TIMEOUT == 30
+    def test_timeout_comes_from_config(self):
+        import config
+        from tools.research.newsroom import _get_timeout
+
+        assert _get_timeout() == config.NEWSROOM_CONFIG["timeout"]
 
 
 class TestTemplateStructure:

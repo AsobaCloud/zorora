@@ -55,13 +55,24 @@ def news_intel_synthesis(articles, topic=None, date_from=None, date_to=None):
         return "No articles matched the selected filters."
 
     entries = []
+    content_budget = config.SYNTHESIS.get("content_budget", 5000)
+    content_used = 0
     for article in articles[:80]:
         headline = article.get("headline", "Untitled")
         source = article.get("source", "Unknown")
         date_str = article.get("date", "")[:10]
         url = article.get("url", "")
         topics = ", ".join(article.get("topic_tags", [])[:6])
-        entries.append(f"- [{date_str}] {headline} ({source})\n  Topics: {topics}\n  URL: {url}")
+        entry = f"- [{date_str}] {headline} ({source})\n  Topics: {topics}\n  URL: {url}"
+        if content_used < content_budget:
+            body = str(article.get("full_content") or article.get("description") or "").strip()
+            if body:
+                remaining = min(1200, content_budget - content_used)
+                excerpt = body[:remaining]
+                if excerpt:
+                    content_used += len(excerpt)
+                    entry += f"\n  Content: {excerpt}"
+        entries.append(entry)
 
     scope = f"topic='{topic or 'all'}', date_from='{date_from or 'none'}', date_to='{date_to or 'none'}'"
     prompt = (

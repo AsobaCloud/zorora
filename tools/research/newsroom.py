@@ -1,15 +1,15 @@
-"""Newsroom search tool - fetches articles from S3 export (fast, no auth required)."""
+"""Newsroom search tool - fetches articles from DynamoDB (fast, indexed queries)."""
 
 import logging
 import os
 import requests
 import threading
 from typing import List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime
 from collections import Counter, defaultdict
 
 import config
-from tools.research.newsroom_s3 import fetch_newsroom_s3_raw
+from tools.research.newsroom_dynamodb import fetch_newsroom_dynamodb_raw
 
 logger = logging.getLogger(__name__)
 
@@ -156,22 +156,21 @@ def fetch_newsroom_cached(max_results: int = 10000):
 
 def _fetch_newsroom_export() -> List[Dict[str, Any]]:
     """
-    Fetch newsroom articles from S3 date folders (fully parallel).
+    Fetch newsroom articles from DynamoDB (indexed queries).
 
-    The export file is stale (2+ months old), so we fetch directly
-    from daily S3 folders using parallel listing and get_object.
+    Uses DynamoDB for fast, indexed queries by date range.
+    Replaces S3 date folder fetching.
 
     Returns:
         List of article dicts
     """
     try:
-        articles = fetch_newsroom_s3_raw(days_back=7, max_results=500)
-        logger.info(f"Newsroom S3 fetch: {len(articles)} articles")
+        articles = fetch_newsroom_dynamodb_raw(days_back=7, max_results=500)
+        logger.info(f"Newsroom DynamoDB fetch: {len(articles)} articles")
         return articles
     except Exception as e:
-        logger.error(f"Newsroom S3 fetch error: {e}")
-        # Fallback to export file if daily folders fail
-        return _fetch_newsroom_export_fallback()
+        logger.error(f"Newsroom DynamoDB fetch error: {e}")
+        return []
 
 
 def _fetch_newsroom_export_fallback() -> List[Dict[str, Any]]:
@@ -204,11 +203,14 @@ def _fetch_newsroom_export_fallback() -> List[Dict[str, Any]]:
 
 
 def fetch_newsroom_api(
-    query: str = None, days_back: int = 90, max_results: int = 25
+    query: str = None,
+    days_back: int = 90,
+    max_results: int = 25,
+    include_content: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     Fetch newsroom articles and return structured data.
-    Uses S3 export - no authentication required.
+    Uses DynamoDB for indexed queries - no authentication required.
 
     Args:
         query: Search term for filtering (optional)
@@ -219,19 +221,18 @@ def fetch_newsroom_api(
         List of article dictionaries with keys: headline, date, url, source, topic_tags, etc.
     """
     try:
-        # Calculate date cutoff
-        date_cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
-
-        # Fetch all articles from S3 export
-        all_articles = _fetch_newsroom_export()
+        # Fetch from DynamoDB
+        all_articles = fetch_newsroom_dynamodb_raw(
+            days_back=days_back,
+            max_results=1000,
+            include_content=include_content,
+        )
 
         if not all_articles:
             return []
 
-        # Filter by date
-        articles = [a for a in all_articles if a.get("date", "") >= date_cutoff]
-
         # Apply search filter if query provided
+        articles = all_articles
         if query:
             keywords = _extract_keywords(query)
             if keywords:
@@ -242,7 +243,7 @@ def fetch_newsroom_api(
                         filtered.append(article)
                 articles = filtered
 
-        logger.info(f"Newsroom: {len(articles)} articles from S3 export")
+        logger.info(f"Newsroom: {len(articles)} articles from DynamoDB")
         return articles[:max_results]
 
     except Exception as e:

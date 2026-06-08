@@ -867,39 +867,12 @@ def research_chat_history(research_id):
 
 @app.route("/api/news-intel/facets", methods=["GET"])
 def get_news_intel_facets():
-    """Return available topics, sources, and date range from cached articles."""
+    """Return available topics, sources, and date range from DynamoDB."""
     try:
-        from collections import Counter
+        from tools.research.newsroom_dynamodb import generate_facets
 
-        articles = fetch_newsroom_api(max_results=10000)
-
-        topic_counts = Counter()
-        source_counts = Counter()
-        dates = []
-
-        for article in articles:
-            for tag in article.get("topic_tags") or []:
-                topic_counts[tag] += 1
-            src = article.get("source")
-            if src:
-                source_counts[src] += 1
-            d = (article.get("date") or "")[:10]
-            if d:
-                dates.append(d)
-
-        topics = [
-            {"name": name, "count": count} for name, count in topic_counts.most_common()
-        ]
-        sources = [
-            {"name": name, "count": count}
-            for name, count in source_counts.most_common()
-        ]
-        date_range = {
-            "min": min(dates) if dates else None,
-            "max": max(dates) if dates else None,
-        }
-
-        return jsonify({"topics": topics, "sources": sources, "date_range": date_range})
+        facets = generate_facets(days_back=90)
+        return jsonify(facets)
     except Exception as e:
         logger.error(f"News intel facets error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
@@ -992,8 +965,13 @@ def synthesize_news_intel():
         staged_articles = data.get("staged_articles") or []
         if staged_articles:
             filtered = staged_articles + filtered
+        from tools.research.newsroom_dynamodb import hydrate_articles_with_content
+        hydrated = hydrate_articles_with_content(
+            filtered,
+            max_articles=min(len(filtered), 20),
+        )
         synthesis = _news_intel_synthesis(
-            filtered, topic=topic, date_from=date_from, date_to=date_to
+            hydrated, topic=topic, date_from=date_from, date_to=date_to
         )
 
         return jsonify(
@@ -1001,7 +979,7 @@ def synthesize_news_intel():
                 "topic": topic,
                 "date_from": date_from,
                 "date_to": date_to,
-                "count": len(filtered),
+                "count": len(hydrated),
                 "synthesis": synthesis,
                 "articles": [
                     {
@@ -1011,7 +989,7 @@ def synthesize_news_intel():
                         "url": article.get("url", ""),
                         "topic_tags": article.get("topic_tags", []),
                     }
-                    for article in filtered
+                    for article in hydrated
                 ],
             }
         )
@@ -1045,6 +1023,8 @@ def news_intel_chat():
                 {"error": "articles are required for news-intel chat context"}
             ), 400
 
+        from tools.research.newsroom_dynamodb import hydrate_articles_with_content
+        hydrated_articles = hydrate_articles_with_content(articles, max_articles=20)
         context_summary = (
             f"Topic: {topic or 'All'}\nDate From: {date_from or 'Any'}\nDate To: {date_to or 'Any'}\n\n"
             f"Synthesis:\n{synthesis}"
@@ -1053,7 +1033,7 @@ def news_intel_chat():
             message=message,
             context_label=f"News Intel ({session_id})",
             context_summary=context_summary,
-            sources=articles,
+            sources=hydrated_articles,
             history=history,
             strict_citations=strict_citations,
         )

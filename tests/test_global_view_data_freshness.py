@@ -36,7 +36,7 @@ def app_client():
             yield client
 
 
-def test_newsroom_cached_uses_stale_while_revalidate_when_behind_s3(tmp_path):
+def test_newsroom_cached_uses_stale_while_revalidate_when_cache_is_stale(tmp_path):
     """When cache is stale, first call returns stale data immediately.
     Background refresh updates cache for subsequent calls."""
     from tools.research import newsroom
@@ -47,26 +47,21 @@ def test_newsroom_cached_uses_stale_while_revalidate_when_behind_s3(tmp_path):
     latest_articles = [article("June latest", "2026-06-03")]
 
     with (
+        patch("tools.research.newsroom._fetch_newsroom_export", return_value=latest_articles),
+        patch("tools.research.newsroom._trigger_background_refresh"),
         patch(
-            "tools.research.newsroom.fetch_newsroom_s3_raw",
-            return_value=latest_articles,
-        ),
-        patch(
-            "tools.utils.newsroom_cache.NewsroomCache._get_s3_max_date",
-            return_value="2026-06-03",
+            "tools.utils.newsroom_cache.NewsroomCache.is_fresh",
+            side_effect=[False, False, True],
         ),
         patch("tools.utils.newsroom_cache.get_cache", return_value=stale_cache),
     ):
-        # First call: stale-while-revalidate returns stale data immediately
         articles, warning = newsroom.fetch_newsroom_cached(max_results=10)
         assert articles[0]["headline"] == "May stale"
         assert warning is None
 
-        # Simulate what the background thread would do
         fresh_articles = newsroom._fetch_newsroom_export()
         stale_cache.update(fresh_articles)
 
-        # Second call: cache should now be fresh
         articles2, warning2 = newsroom.fetch_newsroom_cached(max_results=10)
         assert articles2[0]["headline"] == "June latest"
         assert articles2[0]["date"] == "2026-06-03"
@@ -86,14 +81,14 @@ def test_newsroom_cache_clear_invalidates_memory_cache(tmp_path):
 
 
 def test_facets_date_range_comes_from_latest_article_universe(app_client):
-    from ui import web
-
-    articles = [
-        article("March stale", "2026-03-24"),
-        article("June latest", "2026-06-03"),
-    ]
-
-    with patch.object(web.app, "fetch_newsroom_api", return_value=articles):
+    with patch(
+        "tools.research.newsroom_dynamodb.generate_facets",
+        return_value={
+            "topics": [],
+            "sources": [],
+            "date_range": {"min": "2026-03-24", "max": "2026-06-03"},
+        },
+    ):
         response = app_client.get("/api/news-intel/facets")
 
     assert response.status_code == 200

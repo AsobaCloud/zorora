@@ -235,22 +235,34 @@ class ResearchWorkflow:
         """
         try:
             from tools.research.newsroom import fetch_newsroom_cached
+            from tools.research.newsroom_dynamodb import hydrate_articles_with_content
 
-            articles = fetch_newsroom_cached(max_results=100)
+            articles, _warning = fetch_newsroom_cached(max_results=100)
 
             if not articles:
                 logger.warning("No articles in newsroom cache")
                 return None
 
-            # Format articles as summaries for LLM to filter
+            articles = hydrate_articles_with_content(articles, max_articles=20)
             summaries = []
+            content_budget = 8000
+            content_used = 0
             for art in articles:
                 headline = art.get('headline', 'No headline')
                 topics = ', '.join(art.get('topic_tags', [])[:3]) or 'No topics'
                 date = art.get('date', '')[:10]
                 url = art.get('url', '')
                 source = art.get('source', 'Unknown')
-                summaries.append(f"- [{date}] {headline}\n  Topics: {topics}\n  Source: {source}\n  URL: {url}")
+                summary = f"- [{date}] {headline}\n  Topics: {topics}\n  Source: {source}\n  URL: {url}"
+                if content_used < content_budget:
+                    body = str(art.get('full_content') or art.get('description') or '').strip()
+                    if body:
+                        remaining = min(500, content_budget - content_used)
+                        excerpt = body[:remaining]
+                        if excerpt:
+                            content_used += len(excerpt)
+                            summary += f"\n  Content: {excerpt}"
+                summaries.append(summary)
 
             result = "\n\n".join(summaries)
             logger.info(f"Newsroom: {len(articles)} articles fetched from cache")

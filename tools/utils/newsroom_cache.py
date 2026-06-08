@@ -111,28 +111,11 @@ class NewsroomCache:
             return None
 
     def is_fresh(self) -> bool:
-        """Check if cache is fresh (within TTL and data recency)."""
-        # First check: timestamp-based freshness
+        """Check if cache is fresh within TTL."""
         cache = self._load_cache()
         last_fetch = cache.get("last_fetch", 0)
         age = time.time() - last_fetch
-        if age >= self.ttl_seconds:
-            return False
-
-        # Second check: data recency (cached articles match S3 availability)
-        cached_max = self._get_cached_max_date()
-        s3_max = self._get_s3_max_date()
-
-        if cached_max is None or s3_max is None:
-            # Can't determine data recency - fall back to timestamp only
-            return True
-
-        # Cache is stale if behind S3 by more than tolerance
-        if s3_max > cached_max:
-            logger.info(f"Cache data stale: cached={cached_max}, s3={s3_max}")
-            return False
-
-        return True
+        return age < self.ttl_seconds
 
     def get_articles(self) -> List[Dict[str, Any]]:
         """

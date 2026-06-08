@@ -6,7 +6,7 @@ All code changes are committed. This is a **critical fix** for the newsroom API 
 
 ## What Changed
 
-1. **Newsroom data source**: API Gateway → S3 export file
+1. **Newsroom data source**: API Gateway/S3 export → DynamoDB
 2. **Authentication**: JWT token required → None required
 3. **Fetch time**: ~28 seconds → ~2-3 seconds
 4. **Cost**: ~$4.70/mo → ~$0.12/mo
@@ -18,14 +18,20 @@ All code changes are committed. This is a **critical fix** for the newsroom API 
 aws lambda get-function --function-name ona-newsroom-sync-prod --region af-south-1
 ```
 
-### 2. Verify export file exists
+### 2. Verify newsroom table is reachable
 ```bash
-aws s3 ls s3://news-collection-website/zorora-export/articles.json --region af-south-1
+aws dynamodb scan \
+  --table-name newsroom_articles \
+  --region us-east-1 \
+  --max-items 5 \
+  --projection-expression 'PK,SK,title,pub_date'
 ```
 
-### 3. Test export file is accessible
+### 3. Test DynamoDB-backed newsroom fetch
 ```bash
-curl -s https://news-collection-website.s3.af-south-1.amazonaws.com/zorora-export/articles.json | head -c 500
+curl -s http://localhost:5000/api/news-intel/articles \
+  -H 'Content-Type: application/json' \
+  -d '{}' | head -c 500
 ```
 
 ## Deployment Steps
@@ -132,5 +138,5 @@ After confirming success:
 
 If deployment fails:
 1. Check CloudWatch logs: `/ecs/ona-zorora-prod`
-2. Verify Lambda is exporting: `aws logs tail /aws/lambda/ona-newsroom-sync-prod`
-3. Check S3 file exists: `aws s3 ls s3://news-collection-website/zorora-export/`
+2. Verify Lambda is scraping: `aws logs tail /aws/lambda/ona-newsroom-sync-prod`
+3. Verify DynamoDB has fresh articles: `aws dynamodb scan --table-name newsroom_articles --region us-east-1 --max-items 5`
