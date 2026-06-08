@@ -37,21 +37,24 @@ Now the user submits a query: "What's the current state of solar energy adoption
 
 The ECS container orchestrates a multi-source search:
 
-1. **Newsroom data**: Pulls recent articles from `newsroom_articles` table in DynamoDB (us-east-1)
+1. **Newsroom data**: Pulls recent articles from `newsroom_articles` table in DynamoDB (us-east-1) with full_content
 2. **Web search**: Uses the Brave Search API key (from SSM) to fetch current web results
 3. **Regulatory data**: Calls EIA and OpenEI APIs using keys from SSM
-4. **Synthesis**: Sends all sources to the reasoning model for synthesis
+4. **Synthesis**: Sends all sources to the reasoning model for synthesis (newsroom articles include full_content for better context)
 
 **Why DynamoDB for newsroom?** We need fast, indexed queries by date, topic, and source. DynamoDB's Global Secondary Indexes let us query articles from the last 90 days in under 100ms - far faster than scanning S3.
 
 ### Step 5: Background Data Refresh
 
-While users sleep, the system keeps data fresh. Every 6 hours, an **EventBridge rule** triggers the **`ona-newsroom-sync-prod` Lambda**:
+While users sleep, the system keeps data fresh. The newsroom scraper (imported from the sibling `newsroom` repo) runs as a Lambda function:
 
-1. Scrapes news articles from RSS feeds
-2. Tags articles with topics using ML
-3. Writes to `newsroom_articles` in DynamoDB (us-east-1)
-4. Exports a JSON file to S3 for legacy compatibility
+1. Scrapes news articles from RSS feeds and direct websites
+2. Tags articles with topics using ML (geographic and topical tagging)
+3. Writes to `newsroom_articles` in DynamoDB (us-east-1) with full_content
+4. Idempotency via DynamoDB conditional writes (no S3 manifest)
+5. HTML index generation writes to local filesystem (no S3 output)
+
+**Why DynamoDB for ingestion?** Conditional writes provide idempotency without maintaining a separate S3 manifest. Full article content is stored directly in DynamoDB, eliminating the need for separate content files.
 
 **Why Lambda for background tasks?** We only pay when the function runs. A 5-minute execution every 6 hours costs pennies per month, compared to a 24/7 server.
 
@@ -97,16 +100,16 @@ Now that you've seen the journey, let's dive into each component in detail.
 │  └──────────────────┘                                          │
 │                                     │                           │
 │  ┌──────────────────┐              │                           │
-│  │  S3 Buckets      │◀─────────────┘                           │
-│  │  - news-         │                                          │
-│  │    collection-   │                                          │
-│  │    website       │                                          │
-│  │  - ona-platform  │                                          │
-│  └──────────────────┘                                          │
+│  │  S3 Buckets      │              │                           │
+│  │  - news-         │              │                           │
+│  │    collection-   │              │                           │
+│  │    website       │              │                           │
+│  │    (Legacy)      │              │                           │
+│  │  - ona-platform  │              │                           │
+│  └──────────────────┘              │                           │
 │                                                                  │
 │  ┌──────────────────────────────────────────────────┐          │
 │  │  Lambda Functions (EventBridge Scheduled)        │          │
-│  │  - ona-newsroom-sync-prod                        │          │
 │  │  - ona-weatherCache-prod                         │          │
 │  │  - globalTrainingService                         │          │
 │  │  - ona-user-auth                                 │          │
