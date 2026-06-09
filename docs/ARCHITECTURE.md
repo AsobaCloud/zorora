@@ -20,7 +20,14 @@ User Query / Slash Command
 Deterministic Decision Tree (pattern matching)
     ↓
     ├─→ RESEARCH WORKFLOW (newsroom + web + synthesis)
+    │   ├─→ Multi-Source Synthesis (Parallel aggregation)
+    │   ├─→ Cross-Domain Logic (Data + Policy synthesis)
     │   └─→ Save to ~/.zorora/research/
+    │
+    ├─→ SPECIALIZED INTELLIGENCE WORKFLOWS
+    │   ├─→ MARKET WORKFLOW (Energy/Market analysis via Ember, ESKOM, SAPP)
+    │   ├─→ REGULATORY WORKFLOW (NERSA/Eskom tariff & policy tracking)
+    │   └─→ FEASIBILITY WORKFLOW (GIS-based energy project site scoring)
     │
     ├─→ DEVELOPMENT WORKFLOW (/develop - multi-step code dev)
     │   ├─→ Phase 1: Explore codebase

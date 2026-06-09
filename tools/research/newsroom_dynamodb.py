@@ -1,6 +1,7 @@
 """
 DynamoDB client for newsroom article operations.
 Replaces S3-based metadata storage with indexed DynamoDB queries.
+Strict adherence to docs/INGESTION_CONTRACT.md.
 """
 
 import os
@@ -29,14 +30,16 @@ def _get_dynamodb():
     """Get DynamoDB resource."""
     if not HAS_BOTO3:
         raise RuntimeError("boto3 not installed, cannot access DynamoDB")
-    return boto3.resource('dynamodb', region_name='us-east-1')
+    region = os.environ.get("AWS_REGION", "us-east-1")
+    return boto3.resource('dynamodb', region_name=region)
 
 
 def _get_dynamodb_client():
     """Get DynamoDB client."""
     if not HAS_BOTO3:
         raise RuntimeError("boto3 not installed, cannot access DynamoDB")
-    return boto3.client('dynamodb', region_name='us-east-1')
+    region = os.environ.get("AWS_REGION", "us-east-1")
+    return boto3.client('dynamodb', region_name=region)
 
 
 def _url_hash(url: str) -> str:
@@ -83,7 +86,8 @@ def _truncate_utf8(text: str, max_bytes: int) -> str:
 
 def insert_article(metadata: Dict[str, Any]) -> bool:
     """
-    Insert an article into DynamoDB with fixed SK="METADATA" for URL-based idempotency.
+    Insert an article into DynamoDB using the production single-table schema.
+    Strictly follows docs/INGESTION_CONTRACT.md.
     
     Args:
         metadata: Article metadata dict with keys:
@@ -92,10 +96,8 @@ def insert_article(metadata: Dict[str, Any]) -> bool:
             - source
             - pub_date
             - collection_date
-            - content_length
-            - tags (dict with core_topics, special_tags, matched_keywords, continents, countries)
-            - feed_url (optional)
-            - base_url (optional)
+            - full_content
+            - tags (dict with core_topics, continents, countries, special_tags)
     
     Returns:
         True if inserted, False if already exists or error
@@ -113,16 +115,37 @@ def insert_article(metadata: Dict[str, Any]) -> bool:
             logger.warning("Article missing URL, skipping")
             return False
         
+        # Primary Keys
         url_hash = _url_hash(url)
-        pub_date = metadata.get('pub_date', metadata.get('date', ''))
-        collection_date = metadata.get('collection_date', datetime.now().isoformat())
+        pk = f"ARTICLE#{url_hash}"
+        
+        pub_date_raw = metadata.get('pub_date', metadata.get('date', ''))
+        sk = _parse_date_to_sort_key(pub_date_raw)
+        
+        # GSI Attributes
+        date_key = sk
+        pub_timestamp = _parse_timestamp(pub_date_raw)
+        
+        collection_date_raw = metadata.get('collection_date', datetime.now().isoformat())
+        collection_key = f"COLLECTED#{collection_date_raw[:10]}"
+        
+        source = metadata.get('source', 'Unknown')
+        source_key = f"SOURCE#{source}"
         
         tags = metadata.get('tags', {})
         core_topics = tags.get('core_topics', [])
         special_tags = tags.get('special_tags', [])
-        matched_keywords = tags.get('matched_keywords', [])
         continents = tags.get('continents', [])
         countries = tags.get('countries', [])
+        
+        # topic_key logic: priority to special tags (e.g. legislation), then first core topic
+        topic_key = None
+        if 'legislation' in special_tags:
+            topic_key = "TOPIC#legislation"
+        elif 'economy_politics' in special_tags:
+            topic_key = "TOPIC#economy_politics"
+        elif core_topics:
+            topic_key = f"TOPIC#{core_topics[0]}"
         
         full_content = metadata.get('full_content', '')
         content_length = len(full_content.encode('utf-8')) if full_content else 0
@@ -131,7 +154,8 @@ def insert_article(metadata: Dict[str, Any]) -> bool:
         s3_overflow_key = None
         if content_length > MAX_FULL_CONTENT_BYTES:
             try:
-                s3_client = boto3.client('s3', region_name='us-east-1')
+                region = os.environ.get("AWS_REGION", "us-east-1")
+                s3_client = boto3.client('s3', region_name=region)
                 content_hash = hashlib.md5(full_content.encode()).hexdigest()
                 s3_overflow_key = f"content/overflow/{content_hash}.html"
                 
@@ -149,45 +173,38 @@ def insert_article(metadata: Dict[str, Any]) -> bool:
                 logger.error(f"Failed to upload overflow to S3: {e}")
                 # Continue with truncated content
         
-        # Build item with fixed SK="METADATA"
+        # Build item using production schema
         item = {
-            'PK': f"ARTICLE#{url_hash}",
-            'SK': "METADATA",  # Fixed SK for URL-based idempotency
+            'PK': pk,
+            'SK': sk,
             'url': url,
             'title': metadata.get('title', ''),
-            'source': metadata.get('source', 'Unknown'),
-            'pub_date': pub_date,
-            'collection_date': collection_date,
+            'source': source,
+            'source_key': source_key,
+            'pub_date': pub_date_raw,
+            'date_key': date_key,
+            'pub_timestamp': pub_timestamp,
+            'collection_date': collection_date_raw,
+            'collection_key': collection_key,
             'content_length': content_length,
             'core_topics': core_topics,
             'special_tags': special_tags,
-            'matched_keywords': matched_keywords,
             'continents': continents,
             'countries': countries,
             
             # Content fields
             'description': metadata.get('description', ''),
             'full_content': full_content,
-            
-            # GSI keys
-            'date_key': _parse_date_to_sort_key(pub_date),
-            'pub_timestamp': _parse_timestamp(pub_date),
-            'collection_key': f"COLLECTED#{collection_date[:10]}",
         }
+        
+        if topic_key:
+            item['topic_key'] = topic_key
         
         # Add S3 overflow key if content was too large
         if s3_overflow_key:
             item['s3_overflow_key'] = s3_overflow_key
         
-        # Add source GSI key
-        source = metadata.get('source', 'Unknown')
-        item['source_key'] = f"SOURCE#{source}"
-        
-        # Add topic GSI keys (one per topic for multi-topic articles)
-        if core_topics:
-            item['topic_key'] = f"TOPIC#{core_topics[0]}"  # Primary topic
-        
-        # Optional fields
+        # Add optional fields
         if 'feed_url' in metadata:
             item['feed_url'] = metadata['feed_url']
         if 'base_url' in metadata:
@@ -196,7 +213,7 @@ def insert_article(metadata: Dict[str, Any]) -> bool:
         try:
             table.put_item(
                 Item=item,
-                ConditionExpression='attribute_not_exists(PK) AND attribute_not_exists(SK)',
+                ConditionExpression='attribute_not_exists(PK)',
             )
         except ClientError as e:
             if e.response.get('Error', {}).get('Code') == 'ConditionalCheckFailedException':
@@ -219,24 +236,19 @@ def fetch_articles_by_date_range(
 ) -> List[Dict[str, Any]]:
     """
     Fetch articles by date range using date-index GSI.
-    
-    Args:
-        date_from: Start date (YYYY-MM-DD)
-        date_to: End date (YYYY-MM-DD)
-        limit: Maximum articles to return
-    
-    Returns:
-        List of article dicts
     """
     if not HAS_BOTO3:
         logger.error("boto3 not available")
         return []
     
     try:
-        table = _get_dynamodb().Table(TABLE_NAME)
+        table_name = os.environ.get("DYNAMODB_TABLE_NAME", TABLE_NAME)
+        table = _get_dynamodb().Table(table_name)
         
-        # Scan with filter for date range (date-index doesn't support range queries on partition key)
+        # date-index uses date_key (HASH) and pub_timestamp (RANGE)
+        # We scan the index to get date range across multiple partition keys
         response = table.scan(
+            IndexName='date-index',
             FilterExpression=Attr('date_key').between(
                 f"DATE#{date_from}",
                 f"DATE#{date_to}"
@@ -248,7 +260,8 @@ def fetch_articles_by_date_range(
         for item in response.get('Items', []):
             articles.append(_dynamodb_item_to_dict(item, include_content=include_content))
         
-        logger.info(f"Fetched {len(articles)} articles from {date_from} to {date_to}")
+        # Sort by date descending
+        articles.sort(key=lambda x: x.get('date', ''), reverse=True)
         return articles
         
     except Exception as e:
@@ -265,24 +278,20 @@ def fetch_articles_by_topic(
 ) -> List[Dict[str, Any]]:
     """
     Fetch articles by topic using topic-index GSI.
-    
-    Args:
-        topic: Topic name
-        date_from: Optional start date filter
-        date_to: Optional end date filter
-        limit: Maximum articles to return
-    
-    Returns:
-        List of article dicts
     """
     if not HAS_BOTO3:
         logger.error("boto3 not available")
         return []
     
     try:
-        table = _get_dynamodb().Table(TABLE_NAME)
+        table_name = os.environ.get("DYNAMODB_TABLE_NAME", TABLE_NAME)
+        table = _get_dynamodb().Table(table_name)
         
         key_condition = Key('topic_key').eq(f"TOPIC#{topic}")
+        if date_from and date_to:
+            key_condition &= Key('SK').between(f"DATE#{date_from}", f"DATE#{date_to}")
+        elif date_from:
+            key_condition &= Key('SK').gte(f"DATE#{date_from}")
         
         response = table.query(
             IndexName='topic-index',
@@ -293,25 +302,8 @@ def fetch_articles_by_topic(
         
         articles = []
         for item in response.get('Items', []):
-            # Apply date filters if specified
-            if date_from or date_to:
-                pub_date = item.get('pub_date', '')
-                if pub_date:
-                    try:
-                        from dateutil import parser
-                        parsed = parser.parse(pub_date)
-                        iso_date = parsed.strftime('%Y-%m-%d')
-                        
-                        if date_from and iso_date < date_from:
-                            continue
-                        if date_to and iso_date > date_to:
-                            continue
-                    except Exception:
-                        pass
-            
             articles.append(_dynamodb_item_to_dict(item, include_content=include_content))
         
-        logger.info(f"Fetched {len(articles)} articles for topic: {topic}")
         return articles
         
     except Exception as e:
@@ -328,51 +320,30 @@ def fetch_articles_by_source(
 ) -> List[Dict[str, Any]]:
     """
     Fetch articles by source using source-index GSI.
-    
-    Args:
-        source: Source name
-        date_from: Optional start date filter
-        date_to: Optional end date filter
-        limit: Maximum articles to return
-    
-    Returns:
-        List of article dicts
     """
     if not HAS_BOTO3:
         logger.error("boto3 not available")
         return []
     
     try:
-        table = _get_dynamodb().Table(TABLE_NAME)
+        table_name = os.environ.get("DYNAMODB_TABLE_NAME", TABLE_NAME)
+        table = _get_dynamodb().Table(table_name)
+        
+        key_condition = Key('source_key').eq(f"SOURCE#{source}")
+        if date_from and date_to:
+            key_condition &= Key('SK').between(f"DATE#{date_from}", f"DATE#{date_to}")
         
         response = table.query(
             IndexName='source-index',
-            KeyConditionExpression=Key('source_key').eq(f"SOURCE#{source}"),
+            KeyConditionExpression=key_condition,
             ScanIndexForward=False,
             Limit=limit
         )
         
         articles = []
         for item in response.get('Items', []):
-            # Apply date filters if specified
-            if date_from or date_to:
-                pub_date = item.get('pub_date', '')
-                if pub_date:
-                    try:
-                        from dateutil import parser
-                        parsed = parser.parse(pub_date)
-                        iso_date = parsed.strftime('%Y-%m-%d')
-                        
-                        if date_from and iso_date < date_from:
-                            continue
-                        if date_to and iso_date > date_to:
-                            continue
-                    except Exception:
-                        pass
-            
             articles.append(_dynamodb_item_to_dict(item, include_content=include_content))
         
-        logger.info(f"Fetched {len(articles)} articles for source: {source}")
         return articles
         
     except Exception as e:
@@ -387,13 +358,6 @@ def fetch_recent_articles(
 ) -> List[Dict[str, Any]]:
     """
     Fetch recent articles using collection-date-index GSI.
-    
-    Args:
-        days_back: Number of days to look back
-        limit: Maximum articles to return
-    
-    Returns:
-        List of article dicts
     """
     if not HAS_BOTO3:
         logger.error("boto3 not available")
@@ -402,7 +366,8 @@ def fetch_recent_articles(
     try:
         from datetime import timedelta
         
-        table = _get_dynamodb().Table(TABLE_NAME)
+        table_name = os.environ.get("DYNAMODB_TABLE_NAME", TABLE_NAME)
+        table = _get_dynamodb().Table(table_name)
         
         # Calculate date range
         end_date = datetime.now()
@@ -411,10 +376,10 @@ def fetch_recent_articles(
         start_key = f"COLLECTED#{start_date.strftime('%Y-%m-%d')}"
         end_key = f"COLLECTED#{end_date.strftime('%Y-%m-%d')}"
         
-        response = table.query(
+        # This is a scan across collection_key values in the index
+        response = table.scan(
             IndexName='collection-date-index',
-            KeyConditionExpression=Key('collection_key').between(start_key, end_key),
-            ScanIndexForward=False,
+            FilterExpression=Attr('collection_key').between(start_key, end_key),
             Limit=limit
         )
         
@@ -422,7 +387,7 @@ def fetch_recent_articles(
         for item in response.get('Items', []):
             articles.append(_dynamodb_item_to_dict(item, include_content=include_content))
         
-        logger.info(f"Fetched {len(articles)} articles from last {days_back} days")
+        articles.sort(key=lambda x: x.get('date', ''), reverse=True)
         return articles
         
     except Exception as e:
@@ -432,13 +397,7 @@ def fetch_recent_articles(
 
 def generate_facets(days_back: int = 90) -> Dict[str, Any]:
     """
-    Generate facets (topic distribution, sources, date range) for UI.
-    
-    Args:
-        days_back: Number of days to analyze
-    
-    Returns:
-        Dict with topics, sources, and date_range
+    Generate facets for UI.
     """
     if not HAS_BOTO3:
         logger.error("boto3 not available")
@@ -447,77 +406,42 @@ def generate_facets(days_back: int = 90) -> Dict[str, Any]:
     try:
         from datetime import timedelta
         
-        table = _get_dynamodb().Table(TABLE_NAME)
+        table_name = os.environ.get("DYNAMODB_TABLE_NAME", TABLE_NAME)
+        table = _get_dynamodb().Table(table_name)
         
-        # Calculate date range
         end_date = datetime.now()
         start_date = end_date - timedelta(days=days_back)
         
         start_key = f"COLLECTED#{start_date.strftime('%Y-%m-%d')}"
         end_key = f"COLLECTED#{end_date.strftime('%Y-%m-%d')}"
         
-        # Scan with projection to get only needed attributes
         response = table.scan(
             FilterExpression=Attr('collection_key').between(start_key, end_key),
-            ProjectionExpression='#topics, #src, #date',
+            ProjectionExpression='core_topics, #src, pub_date',
             ExpressionAttributeNames={
-                '#topics': 'core_topics',
-                '#src': 'source',
-                '#date': 'pub_date'
+                '#src': 'source'
             },
             Limit=10000
         )
         
-        # Count topics
         topic_counter = Counter()
         source_counter = Counter()
         dates = []
         
         for item in response.get('Items', []):
-            # Count topics
             for topic in item.get('core_topics', []):
                 topic_counter[topic] += 1
-            
-            # Count sources
             source = item.get('source', 'Unknown')
             source_counter[source] += 1
-            
-            # Collect dates
             pub_date = item.get('pub_date', '')
             if pub_date:
-                try:
-                    from dateutil import parser
-                    parsed = parser.parse(pub_date)
-                    dates.append(parsed.strftime('%Y-%m-%d'))
-                except Exception:
-                    pass
+                dates.append(pub_date[:10])
         
-        # Build topic list
-        topics = [
-            {"name": topic, "count": count}
-            for topic, count in topic_counter.most_common()
-        ]
+        topics = [{"name": topic, "count": count} for topic, count in topic_counter.most_common()]
+        sources = [{"name": source, "count": count} for source, count in source_counter.most_common()]
+        date_range = {"min": min(dates), "max": max(dates)} if dates else {}
         
-        # Build source list
-        sources = [
-            {"name": source, "count": count}
-            for source, count in source_counter.most_common()
-        ]
-        
-        # Build date range
-        date_range = {}
-        if dates:
-            date_range = {
-                "min": min(dates),
-                "max": max(dates)
-            }
-        
-        logger.info(f"Generated facets: {len(topics)} topics, {len(sources)} sources")
-        return {
-            "topics": topics,
-            "sources": sources,
-            "date_range": date_range
-        }
+        return {"topics": topics, "sources": sources, "date_range": date_range}
         
     except Exception as e:
         logger.error(f"Error generating facets: {e}")
@@ -534,6 +458,7 @@ def _dynamodb_item_to_dict(item: Dict[str, Any], include_content: bool = False) 
         "country_tags": item.get('countries', []),
         "url": item.get('url', ''),
         "source": item.get('source', 'Unknown'),
+        "special_tags": item.get('special_tags', []),
     }
     if include_content:
         article["description"] = item.get('description', '')
@@ -549,7 +474,8 @@ def hydrate_articles_with_content(
         return list(articles)
 
     try:
-        table = _get_dynamodb().Table(TABLE_NAME)
+        table_name = os.environ.get("DYNAMODB_TABLE_NAME", TABLE_NAME)
+        table = _get_dynamodb().Table(table_name)
     except Exception as e:
         logger.error(f"Error accessing DynamoDB for article hydration: {e}")
         return list(articles)
@@ -605,13 +531,6 @@ def fetch_newsroom_dynamodb_raw(
 ) -> List[Dict[str, Any]]:
     """
     Fetch newsroom articles from DynamoDB (replaces S3 fetch).
-    
-    Args:
-        days_back: Number of days to fetch
-        max_results: Maximum articles to return
-    
-    Returns:
-        List of article dictionaries
     """
     if not HAS_BOTO3:
         logger.error("boto3 not available")
@@ -635,7 +554,6 @@ def fetch_newsroom_dynamodb_raw(
             include_content=include_content,
         )
         
-        logger.info(f"Total articles from DynamoDB: {len(articles)}")
         return articles
         
     except Exception as e:
