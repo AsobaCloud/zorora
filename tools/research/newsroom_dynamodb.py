@@ -236,6 +236,7 @@ def fetch_articles_by_date_range(
 ) -> List[Dict[str, Any]]:
     """
     Fetch articles by date range using date-index GSI.
+    Uses efficient queries per date instead of a scan to avoid throttling.
     """
     if not HAS_BOTO3:
         logger.error("boto3 not available")
@@ -245,23 +246,34 @@ def fetch_articles_by_date_range(
         table_name = os.environ.get("DYNAMODB_TABLE_NAME", TABLE_NAME)
         table = _get_dynamodb().Table(table_name)
         
-        # date-index uses date_key (HASH) and pub_timestamp (RANGE)
-        # We scan the index to get date range across multiple partition keys
-        response = table.scan(
-            IndexName='date-index',
-            FilterExpression=Attr('date_key').between(
-                f"DATE#{date_from}",
-                f"DATE#{date_to}"
-            ),
-            Limit=limit
-        )
+        # Calculate all dates in the range
+        from datetime import datetime, timedelta
+        start_dt = datetime.strptime(date_from, '%Y-%m-%d')
+        end_dt = datetime.strptime(date_to, '%Y-%m-%d')
         
+        delta = end_dt - start_dt
+        dates_to_query = []
+        for i in range(delta.days + 1):
+            day = start_dt + timedelta(days=i)
+            dates_to_query.append(day.strftime('%Y-%m-%d'))
+        
+        # Query each date (newest first)
         articles = []
-        for item in response.get('Items', []):
-            articles.append(_dynamodb_item_to_dict(item, include_content=include_content))
+        for date_str in reversed(dates_to_query):
+            if len(articles) >= limit:
+                break
+                
+            response = table.query(
+                IndexName='date-index',
+                KeyConditionExpression=Key('date_key').eq(f"DATE#{date_str}"),
+                ScanIndexForward=False, # Newest first within the date
+                Limit=limit - len(articles)
+            )
+            
+            for item in response.get('Items', []):
+                articles.append(_dynamodb_item_to_dict(item, include_content=include_content))
         
-        # Sort by date descending
-        articles.sort(key=lambda x: x.get('date', ''), reverse=True)
+        logger.info(f"Fetched {len(articles)} articles across {len(dates_to_query)} days")
         return articles
         
     except Exception as e:
