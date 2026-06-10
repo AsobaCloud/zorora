@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM --platform=linux/arm64 python:3.11-slim
 
 # curl needed for HEALTHCHECK; no GIS native libs needed (GIS code uses stdlib sqlite3+struct)
 RUN apt-get update && apt-get install -y --no-install-recommends \

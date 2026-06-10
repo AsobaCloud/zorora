@@ -36,11 +36,10 @@ aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" \
   | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
 
 # ---------------------------------------------------------------------------
-# 3. Build the image for linux/amd64 (Fargate x86_64)
+# 3. Build the image (platform set in Dockerfile to linux/arm64)
 # ---------------------------------------------------------------------------
 
 docker build \
-  --platform linux/amd64 \
   --tag "${IMAGE_URI}:${STAGE}" \
   --tag "${IMAGE_URI}:${STAGE}-${GIT_SHA}" \
   .

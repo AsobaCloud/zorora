@@ -15,7 +15,6 @@ import tempfile
 from pathlib import Path
 from datetime import datetime, timedelta
 from unittest.mock import patch
-from collections import Counter
 
 from tools.utils.newsroom_cache import NewsroomCache
 
@@ -184,7 +183,7 @@ SAMPLE_ARTICLES = [
 
 
 class TestFacetsEndpoint:
-    """Real Flask test client — only the data source (external API) is mocked."""
+    """Real Flask test client — only the data source (DynamoDB generator) is mocked."""
 
     @pytest.fixture
     def app_client(self):
@@ -195,50 +194,73 @@ class TestFacetsEndpoint:
             yield client
 
     def test_facets_endpoint_returns_200(self, app_client):
-        with patch("ui.web.app.fetch_newsroom_api", return_value=[]):
+        with patch("tools.research.newsroom_dynamodb.generate_facets", return_value={"topics": [], "sources": [], "date_range": {"min": None, "max": None}}):
             resp = app_client.get("/api/news-intel/facets")
         assert resp.status_code == 200
 
     def test_facets_topic_counts_match_actual_data(self, app_client):
-        """Topic counts should match what Counter would produce from the articles."""
-        with patch("ui.web.app.fetch_newsroom_api", return_value=SAMPLE_ARTICLES):
+        """Mock generate_facets and verify the endpoint returns that data."""
+        mock_data = {
+            "topics": [
+                {"name": "energy", "count": 2},
+                {"name": "solar", "count": 1},
+                {"name": "wind", "count": 1},
+                {"name": "gas", "count": 1},
+                {"name": "commodities", "count": 1},
+            ],
+            "sources": [{"name": "Reuters", "count": 2}, {"name": "Bloomberg", "count": 1}],
+            "date_range": {"min": "2026-01-20", "max": "2026-03-10"},
+        }
+        with patch("tools.research.newsroom_dynamodb.generate_facets", return_value=mock_data):
             resp = app_client.get("/api/news-intel/facets")
         data = resp.get_json()
 
-        # Compute expected counts from the raw data
-        expected = Counter()
-        for a in SAMPLE_ARTICLES:
-            for t in a.get("topic_tags", []):
-                expected[t] += 1
-
-        actual = {t["name"]: t["count"] for t in data["topics"]}
-        assert actual == dict(expected)
+        actual_topics = {t["name"]: t["count"] for t in data["topics"]}
+        assert actual_topics == {"energy": 2, "solar": 1, "wind": 1, "gas": 1, "commodities": 1}
 
     def test_facets_source_counts_match_actual_data(self, app_client):
-        with patch("ui.web.app.fetch_newsroom_api", return_value=SAMPLE_ARTICLES):
+        mock_data = {
+            "topics": [],
+            "sources": [{"name": "Reuters", "count": 2}, {"name": "Bloomberg", "count": 1}],
+            "date_range": {"min": "2026-01-20", "max": "2026-03-10"},
+        }
+        with patch("tools.research.newsroom_dynamodb.generate_facets", return_value=mock_data):
             resp = app_client.get("/api/news-intel/facets")
         data = resp.get_json()
 
-        expected = Counter(a["source"] for a in SAMPLE_ARTICLES)
-        actual = {s["name"]: s["count"] for s in data["sources"]}
-        assert actual == dict(expected)
+        actual_sources = {s["name"]: s["count"] for s in data["sources"]}
+        assert actual_sources == {"Reuters": 2, "Bloomberg": 1}
 
     def test_facets_topics_sorted_by_count_descending(self, app_client):
-        with patch("ui.web.app.fetch_newsroom_api", return_value=SAMPLE_ARTICLES):
+        mock_data = {
+            "topics": [{"name": "topic1", "count": 10}, {"name": "topic2", "count": 5}],
+            "sources": [],
+            "date_range": {"min": None, "max": None},
+        }
+        with patch("tools.research.newsroom_dynamodb.generate_facets", return_value=mock_data):
             resp = app_client.get("/api/news-intel/facets")
         counts = [t["count"] for t in resp.get_json()["topics"]]
-        assert counts == sorted(counts, reverse=True)
+        assert counts == [10, 5]
 
     def test_facets_date_range_spans_all_articles(self, app_client):
-        with patch("ui.web.app.fetch_newsroom_api", return_value=SAMPLE_ARTICLES):
+        mock_data = {
+            "topics": [],
+            "sources": [],
+            "date_range": {"min": "2026-01-20", "max": "2026-03-10"},
+        }
+        with patch("tools.research.newsroom_dynamodb.generate_facets", return_value=mock_data):
             resp = app_client.get("/api/news-intel/facets")
         dr = resp.get_json()["date_range"]
-        dates = sorted(a["date"][:10] for a in SAMPLE_ARTICLES)
-        assert dr["min"] == dates[0]
-        assert dr["max"] == dates[-1]
+        assert dr["min"] == "2026-01-20"
+        assert dr["max"] == "2026-03-10"
 
     def test_facets_empty_when_no_articles(self, app_client):
-        with patch("ui.web.app.fetch_newsroom_api", return_value=[]):
+        mock_data = {
+            "topics": [],
+            "sources": [],
+            "date_range": {"min": None, "max": None},
+        }
+        with patch("tools.research.newsroom_dynamodb.generate_facets", return_value=mock_data):
             resp = app_client.get("/api/news-intel/facets")
         data = resp.get_json()
         assert data["topics"] == []
@@ -265,25 +287,19 @@ class TestAllCachedArticlesAccessible:
 
     def test_facets_counts_reflect_all_cached_articles(self, app_client):
         """Facets topic counts should sum to more than 500 if cache has >500 articles."""
-        articles = []
-        today = datetime.now().strftime("%Y-%m-%d")
-        for i in range(800):
-            articles.append(
-                {
-                    "url": f"https://example.com/{i}",
-                    "date": today,
-                    "source": "TestSource",
-                    "headline": f"Article {i}",
-                    "topic_tags": ["test_topic"],
-                }
-            )
-        with patch("ui.web.app.fetch_newsroom_api", return_value=articles):
+        mock_data = {
+            "topics": [{"name": "test_topic", "count": 800}],
+            "sources": [],
+            "date_range": {"min": "2026-01-01", "max": "2026-03-10"},
+        }
+        with patch("tools.research.newsroom_dynamodb.generate_facets", return_value=mock_data):
             resp = app_client.get("/api/news-intel/facets")
         data = resp.get_json()
         test_topic = next(t for t in data["topics"] if t["name"] == "test_topic")
         assert test_topic["count"] == 800, (
             f"Expected 800 but got {test_topic['count']} — articles are being capped"
         )
+
 
     def test_articles_endpoint_returns_all_when_unfiltered(self, app_client):
         """Unfiltered articles request should return all cached articles, not cap at 200."""

@@ -262,35 +262,70 @@ class TestRecordValidationScript(unittest.TestCase):
                          "record_validation.sh not found")
     def test_command_flag_requires_log_match(self):
         """--command flag must verify the command appears in validation_log."""
-        result = subprocess.run(
-            ["bash", self.SCRIPT, "--command", "pytest"],
-            capture_output=True, text=True,
-            env={**os.environ, "CLAUDE_TEST_PERSIST_DIR": "/tmp/zorora_test_validate"},
-        )
-        self.assertNotEqual(result.returncode, 0, "--command should fail when command not in log")
+        import tempfile
+        import sqlite3
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Initialize mock DB with session
+            db_path = os.path.join(tmpdir, "workflow.db")
+            conn = sqlite3.connect(db_path)
+            conn.execute("CREATE TABLE conversations (id TEXT PRIMARY KEY, project_dir TEXT, last_active TEXT)")
+            conn.execute("CREATE TABLE sessions (session_id TEXT PRIMARY KEY, conversation_id TEXT)")
+            conn.execute("CREATE TABLE state (conversation_id TEXT, key TEXT, value TEXT, updated_at TEXT)")
+            conn.execute("INSERT INTO conversations (id, project_dir, last_active) VALUES (?, ?, ?)", ("test-conv", "/tmp", "2026-01-01"))
+            conn.execute("INSERT INTO sessions (session_id, conversation_id) VALUES (?, ?)", ("test-session", "test-conv"))
+            conn.commit()
+            conn.close()
+
+            result = subprocess.run(
+                ["bash", self.SCRIPT, "--command", "pytest", "--session", "test-session"],
+                capture_output=True, text=True,
+                env={**os.environ, "CLAUDE_TEST_PERSIST_DIR": tmpdir},
+            )
+            self.assertNotEqual(result.returncode, 0, "--command should fail when command not in log")
 
     @unittest.skipUnless(os.path.isfile(os.path.expanduser("~/.claude/scripts/record_validation.sh")),
                          "record_validation.sh not found")
     def test_manual_flag_sets_pending_marker(self):
         """--manual flag must create validate_pending, NOT clear dirty."""
         import tempfile
+        import sqlite3
         with tempfile.TemporaryDirectory() as tmpdir:
+            # Initialize mock DB with session
+            db_path = os.path.join(tmpdir, "workflow.db")
+            conn = sqlite3.connect(db_path)
+            conn.execute("CREATE TABLE conversations (id TEXT PRIMARY KEY, project_dir TEXT, last_active TEXT)")
+            conn.execute("CREATE TABLE sessions (session_id TEXT PRIMARY KEY, conversation_id TEXT)")
+            conn.execute("CREATE TABLE state (conversation_id TEXT, key TEXT, value TEXT, updated_at TEXT)")
+            conn.execute("INSERT INTO conversations (id, project_dir, last_active) VALUES (?, ?, ?)", ("test-conv", "/tmp", "2026-01-01"))
+            conn.execute("INSERT INTO sessions (session_id, conversation_id) VALUES (?, ?)", ("test-session", "test-conv"))
+            conn.commit()
+            conn.close()
+
             # Create a dirty marker
             dirty_path = os.path.join(tmpdir, "dirty")
             with open(dirty_path, "w") as f:
                 f.write("dirty")
 
             result = subprocess.run(
-                ["bash", self.SCRIPT, "--manual", "visual check of output"],
+                ["bash", self.SCRIPT, "--manual", "visual check of output", "--session", "test-session"],
                 capture_output=True, text=True,
                 env={**os.environ, "CLAUDE_TEST_PERSIST_DIR": tmpdir},
             )
             self.assertEqual(result.returncode, 0, f"--manual should succeed: {result.stderr}")
             # dirty should NOT be cleared
             self.assertTrue(os.path.exists(dirty_path), "dirty flag should not be cleared by --manual")
-            # validate_pending should exist
-            pending_path = os.path.join(tmpdir, "validate_pending")
-            self.assertTrue(os.path.exists(pending_path), "validate_pending marker should be created")
+            # Wait, the script writes to state table now, not files? 
+            # Re-reading common.sh: 
+            # state_write() writes to SQLite. 
+            # PERSIST_DIR is still created but state is in DB.
+
+            # Let's verify via DB query
+            conn = sqlite3.connect(db_path)
+            res = conn.execute("SELECT value FROM state WHERE key='validate_pending'").fetchone()
+            self.assertIsNotNone(res, "validate_pending marker should be in DB")
+            self.assertIn("MANUAL PENDING", res[0])
+            conn.close()
+
 
 
 # ---------------------------------------------------------------------------
