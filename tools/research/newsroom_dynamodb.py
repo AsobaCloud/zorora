@@ -473,7 +473,11 @@ def generate_facets(days_back: int = 90) -> Dict[str, Any]:
         
         topics = [{"name": topic, "count": count} for topic, count in topic_counter.most_common()]
         sources = [{"name": source, "count": count} for source, count in source_counter.most_common()]
-        date_range = {"min": min(dates), "max": max(dates)} if dates else {}
+        
+        if not dates:
+            return {"topics": topics, "sources": sources, "date_range": {"min": None, "max": None}}
+            
+        date_range = {"min": min(dates), "max": max(dates)}
         
         return {"topics": topics, "sources": sources, "date_range": date_range}
         
