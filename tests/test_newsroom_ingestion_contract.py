@@ -29,7 +29,7 @@ def test_insert_article_populates_contract_attributes():
     
     url_hash = _url_hash(metadata['url'])
     expected_pk = f"ARTICLE#{url_hash}"
-    expected_sk = "DATE#2026-06-09"
+    expected_sk = "METADATA"
     
     # Mock DynamoDB
     with patch('tools.research.newsroom_dynamodb._get_dynamodb') as mock_get:

@@ -13,8 +13,8 @@ This document defines the strict architectural and data contracts for all Zorora
 ### Primary Keys
 - **PK** (Partition Key): `ARTICLE#{url_hash}` 
   - `url_hash` is the MD5 hex digest of the normalized article URL.
-- **SK** (Sort Key): `DATE#{pub_date}`
-  - `pub_date` format: `YYYY-MM-DD` (ISO 8601).
+- **SK** (Sort Key): `METADATA`
+  - Fixed string used to ensure URL-based uniqueness (idempotency) across the table.
 
 ### Global Secondary Indexes (GSI)
 Every item MUST populate these attributes to enable correct GSI routing:

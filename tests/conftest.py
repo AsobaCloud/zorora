@@ -16,7 +16,7 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _authenticated_test_user(monkeypatch):
+def _authenticated_test_user(monkeypatch, request):
     """Make gated Flask endpoints see an authenticated user, without DynamoDB.
 
     No-op when ``ui.web.auth`` cannot be imported (e.g. a minimal environment
@@ -44,6 +44,9 @@ def _authenticated_test_user(monkeypatch):
         auth, "get_accessible_user_ids", lambda user_id: [user_id], raising=False
     )
     # Unlimited tier so require_research_quota neither blocks nor touches DynamoDB.
-    monkeypatch.setattr(
-        auth, "_get_user_subscription", lambda user_id: ("professional", {}, "regular"), raising=False
-    )
+    # Set to enterprise to satisfy Scouting requirements in SEP-044.
+    # Skip this mock if we are explicitly testing the auth module (unit tests).
+    if "test_auth_unit" not in request.node.nodeid:
+        monkeypatch.setattr(
+            auth, "_get_user_subscription", lambda user_id: ("enterprise", {}, "regular"), raising=False
+        )

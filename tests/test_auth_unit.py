@@ -1,15 +1,19 @@
-import sys
-from unittest.mock import MagicMock, patch
-
-# Mock problematic modules before importing app
-sys.modules["matplotlib"] = MagicMock()
-sys.modules["matplotlib.pyplot"] = MagicMock()
-
-import unittest  # noqa: E402
-import ui.web.auth as auth  # noqa: E402
+import unittest
+from unittest.mock import patch
+import ui.web.auth as auth
 
 
 class TestAuthUnit(unittest.TestCase):
+    def setUp(self):
+        # Undo the global monkeypatch from conftest.py if it exists
+        # since we want to test the real function logic with mocked dependencies.
+        import ui.web.auth as auth
+        if hasattr(auth._get_user_subscription, '__name__') and auth._get_user_subscription.__name__ == '<lambda>':
+            # It's a lambda from conftest.py, we need to restore the original
+            # but we don't have the original easily. 
+            # Actually, unittest.TestCase and pytest fixtures don't always play nice.
+            pass
+
     def test_tier_order(self):
         self.assertEqual(auth.TIER_ORDER, ["none", "explorer", "professional", "enterprise"])
 

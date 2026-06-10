@@ -15,12 +15,6 @@ if str(MODULE_DIR) not in sys.path:
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-# Import the restored scraper modules
-import news_scraper  # noqa: E402
-import polymarket_scraper  # noqa: E402
-import legislation_scraper  # noqa: E402
-import economy_politics_scraper  # noqa: E402
-
 def lambda_handler(event, context):
     """
     Lambda entry point for newsroom scraper suite.
@@ -36,32 +30,52 @@ def lambda_handler(event, context):
         
         if fresh_mode:
             os.environ['FRESH_MODE'] = 'true'
-            news_scraper.FRESH_MODE = True
-            polymarket_scraper.FRESH_MODE = True
-            legislation_scraper.FRESH_MODE = True
-            economy_politics_scraper.FRESH_MODE = True
 
         results = {}
         
         if mode == 'news' or mode == 'all':
+            import news_scraper
+            if fresh_mode:
+                news_scraper.FRESH_MODE = True
             print("Running Global News Scraper...")
             news_scraper.main()
-            results['news'] = news_scraper.progress_tracker.progress['total_articles']
+            if hasattr(news_scraper, 'progress_tracker'):
+                results['news'] = news_scraper.progress_tracker.progress['total_articles']
+            else:
+                results['news'] = 0
             
         if mode == 'polymarket' or mode == 'all':
+            import polymarket_scraper
+            if fresh_mode:
+                polymarket_scraper.FRESH_MODE = True
             print("Running Polymarket Scraper...")
             polymarket_scraper.process_polymarket_feeds()
-            results['polymarket'] = polymarket_scraper.progress_tracker.progress['total_articles']
+            if hasattr(polymarket_scraper, 'progress_tracker'):
+                results['polymarket'] = polymarket_scraper.progress_tracker.progress['total_articles']
+            else:
+                results['polymarket'] = 0
             
         if mode == 'legislation' or mode == 'all':
+            import legislation_scraper
+            if fresh_mode:
+                legislation_scraper.FRESH_MODE = True
             print("Running Legislation Scraper...")
             legislation_scraper.process_legislation_feeds()
-            results['legislation'] = legislation_scraper.progress_tracker.progress['total_articles']
+            if hasattr(legislation_scraper, 'progress_tracker'):
+                results['legislation'] = legislation_scraper.progress_tracker.progress['total_articles']
+            else:
+                results['legislation'] = 0
             
         if mode == 'economy' or mode == 'all':
+            import economy_politics_scraper
+            if fresh_mode:
+                economy_politics_scraper.FRESH_MODE = True
             print("Running Economy/Politics Scraper...")
             economy_politics_scraper.process_economy_politics_feeds()
-            results['economy'] = economy_politics_scraper.progress_tracker.progress['total_articles']
+            if hasattr(economy_politics_scraper, 'progress_tracker'):
+                results['economy'] = economy_politics_scraper.progress_tracker.progress['total_articles']
+            else:
+                results['economy'] = 0
 
         return {
             "statusCode": 200,

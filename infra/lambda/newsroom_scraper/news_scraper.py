@@ -450,6 +450,7 @@ def process_rss_feeds():
         list(executor.map(process_single_rss_feed, feeds))
 
 def scrape_website(base_url: str):
+    # ... (content remains the same)
     if progress_tracker.is_source_complete(base_url):
         return 0
     logger.info(f"Scraping website: {base_url}")
@@ -491,6 +492,8 @@ def scrape_website(base_url: str):
     except Exception as e:
         logger.error(f"Scrape error {base_url}: {e}")
         return 0
+
+scrape_website_articles = scrape_website
 
 def process_direct_scraping():
     for source in NEWS_SOURCES['direct_scraping']:
