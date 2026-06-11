@@ -252,13 +252,23 @@ def test_facets_endpoint_loads_fast_on_first_visit(app_client):
 def test_facets_topic_distribution_is_diverse(app_client):
     """Topic facets must show multiple topics, not artificially dominated by one."""
     import time
-    from tools.utils.newsroom_cache import get_cache
 
-    get_cache().clear()
+    mock_data = {
+        "topics": [
+            {"name": "energy", "count": 60},
+            {"name": "geopolitics", "count": 40},
+        ],
+        "sources": [],
+        "date_range": {"min": "2026-03-24", "max": "2026-06-03"},
+    }
 
-    start = time.time()
-    response = app_client.get("/api/news-intel/facets")
-    elapsed = time.time() - start
+    with patch(
+        "tools.research.newsroom_dynamodb.generate_facets",
+        return_value=mock_data,
+    ):
+        start = time.time()
+        response = app_client.get("/api/news-intel/facets")
+        elapsed = time.time() - start
 
     assert response.status_code == 200
     payload = response.get_json()

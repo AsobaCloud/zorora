@@ -9,7 +9,7 @@ These tests verify the script-level requirements from the operator's perspective
 5. The script defaults to the af-south-1 region
 6. The script creates the ECR repo idempotently (ecr create-repository)
 7. The script authenticates Docker against ECR (ecr get-login-password)
-8. The script builds a linux/amd64 image (Fargate-compatible)
+8. The script builds a linux/arm64 image (Graviton-compatible)
 9. The script pushes the built image (docker push)
 10. The script produces both a mutable stage tag and an immutable stage-SHA tag
 11. The script uses set -euo pipefail for safety
@@ -283,7 +283,7 @@ class TestDockerAuthentication:
 # ---------------------------------------------------------------------------
 
 class TestDockerBuild:
-    """The script must build a linux/amd64 image for Fargate compatibility."""
+    """The script must build a linux/arm64 image for Graviton compatibility."""
 
     def test_script_uses_docker_build(self):
         """The script must call 'docker build' to build the image."""
@@ -295,36 +295,27 @@ class TestDockerBuild:
             "scripts/deploy-ecr.sh must call 'docker build' to build the image."
         )
 
-    def test_script_specifies_linux_amd64_platform(self):
-        """The build must use --platform linux/amd64 for Fargate (x86_64) compatibility."""
+    def test_script_specifies_linux_arm64_platform(self):
+        """The build must use linux/arm64 for Graviton compatibility (hardcoded in Dockerfile)."""
+        if not SCRIPT_PATH.exists():
+            pytest.skip("scripts/deploy-ecr.sh does not exist yet")
+
+        # After our latest fix, the platform is hardcoded in the Dockerfile
+        # so scripts/deploy-ecr.sh no longer needs the explicit flag, 
+        # but the project intent is ARM64.
+        dockerfile_content = (PROJECT_ROOT / "Dockerfile").read_text()
+        assert "linux/arm64" in dockerfile_content, (
+            "Dockerfile must specify --platform=linux/arm64 for Graviton compatibility."
+        )
+
+    def test_script_standardized_on_arm64(self):
+        """The deploy script must not contain outdated amd64 references."""
         if not SCRIPT_PATH.exists():
             pytest.skip("scripts/deploy-ecr.sh does not exist yet")
 
         content = SCRIPT_PATH.read_text()
-        assert "linux/amd64" in content, (
-            "scripts/deploy-ecr.sh must pass --platform linux/amd64 to docker build. "
-            "Fargate tasks run on x86_64; building on an ARM Mac without specifying "
-            "the platform produces ARM images that crash on Fargate."
-        )
-
-    def test_script_passes_platform_flag_to_build(self):
-        """The --platform flag must be passed to docker build (not just defined
-        as a variable without being used)."""
-        if not SCRIPT_PATH.exists():
-            pytest.skip("scripts/deploy-ecr.sh does not exist yet")
-
-        content = SCRIPT_PATH.read_text()
-        import re
-        # Match: docker build ... --platform linux/amd64 ...
-        # or:    docker build ... --platform=linux/amd64 ...
-        build_platform = re.compile(
-            r'docker\s+build.*--platform[=\s]+linux/amd64',
-            re.DOTALL,
-        )
-        has_build_platform = bool(build_platform.search(content))
-        assert has_build_platform, (
-            "The --platform linux/amd64 flag must appear in the docker build "
-            "command, not just defined as a variable elsewhere in the script."
+        assert "linux/amd64" not in content, (
+            "scripts/deploy-ecr.sh still contains outdated linux/amd64 references."
         )
 
 

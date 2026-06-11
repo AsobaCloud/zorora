@@ -33,6 +33,7 @@ BRAVE_SEARCH = {
     "news_endpoint": "", "image_endpoint": "",
     "timeout": 10, "enabled": False,
 }
+NEWSROOM_CONFIG = {"timeout": 60}
 NEWSROOM_JWT_TOKEN = ""
 NEWSROOM_DAYS_BACK = 90
 NEWSROOM_MAX_RELEVANT = 25
