@@ -17,8 +17,9 @@ class TestAuthUnit(unittest.TestCase):
     def test_tier_order(self):
         self.assertEqual(auth.TIER_ORDER, ["none", "explorer", "professional", "enterprise"])
 
-    @patch('ui.web.auth._users_table')
-    def test_get_user_subscription_with_user_type(self, mock_table):
+    @patch('ui.web.auth._users_table_ref')
+    def test_get_user_subscription_with_user_type(self, mock_table_ref):
+        mock_table = mock_table_ref.return_value
         mock_table.get_item.return_value = {
             "Item": {
                 "subscriptions": [{"product": "zorora", "tier": "professional"}],
@@ -31,8 +32,9 @@ class TestAuthUnit(unittest.TestCase):
         self.assertEqual(usage, {"queries": 5})
         self.assertEqual(user_type, "admin")
 
-    @patch('ui.web.auth._users_table')
-    def test_get_user_subscription_default_user_type(self, mock_table):
+    @patch('ui.web.auth._users_table_ref')
+    def test_get_user_subscription_default_user_type(self, mock_table_ref):
+        mock_table = mock_table_ref.return_value
         mock_table.get_item.return_value = {
             "Item": {
                 "subscriptions": [{"product": "zorora", "tier": "explorer"}],
