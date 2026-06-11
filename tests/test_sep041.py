@@ -341,13 +341,24 @@ class TestCacheFacetsIntegration:
         with tempfile.TemporaryDirectory() as tmpdir:
             cache = NewsroomCache(cache_dir=Path(tmpdir))
             cache.update(SAMPLE_ARTICLES)
+            
+            # Match the expected output of generate_facets for the sample data
+            mock_facets = {
+                "topics": [{"name": "energy", "count": 2}, {"name": "solar", "count": 1}],
+                "sources": [{"name": "Reuters", "count": 2}, {"name": "Bloomberg", "count": 1}],
+                "date_range": {"min": "2026-01-20", "max": "2026-03-10"},
+            }
 
-            # Patch the cache instance and prevent S3 network calls for freshness check
+            # Patch the cache instance and prevent S3/DynamoDB network calls
             with (
                 patch("tools.utils.newsroom_cache.get_cache", return_value=cache),
                 patch(
                     "tools.utils.newsroom_cache.NewsroomCache._get_s3_max_date",
                     return_value="2026-03-10",
+                ),
+                patch(
+                    "tools.research.newsroom_dynamodb.generate_facets",
+                    return_value=mock_facets,
                 ),
                 patch(
                     "ui.web.auth.get_current_user",

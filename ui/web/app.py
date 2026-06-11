@@ -355,11 +355,8 @@ def auth_signup():
     if "@" not in email:
         return jsonify({"error": "Invalid email address"}), 400
 
-    region = (
-        os.environ.get("AWS_REGION")
-        or os.environ.get("AWS_DEFAULT_REGION")
-        or "af-south-1"
-    )
+    # User data is in us-east-1 (Database Region)
+    region = os.environ.get("DYNAMODB_REGION", "us-east-1")
     dynamodb = boto3.resource("dynamodb", region_name=region)
     users_table = dynamodb.Table(os.environ.get("USERS_TABLE", "ona-platform-users"))
 

@@ -13,6 +13,10 @@ untouched; this only affects the in-process test client.
 """
 
 import pytest
+import os
+
+# Set TESTING environment variable to true before any imports that might initialize DynamoDB
+os.environ["TESTING"] = "true"
 
 
 @pytest.fixture(autouse=True)

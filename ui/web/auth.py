@@ -23,10 +23,26 @@ logger = logging.getLogger(__name__)
 JWT_SECRET = os.environ.get("ONA_JWT_SECRET", "change-this-secret-key-in-production")
 JWT_ALGORITHM = "HS256"
 
-# DynamoDB
-_aws_region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "af-south-1"
-_dynamodb = boto3.resource("dynamodb", region_name=_aws_region)
-_users_table = _dynamodb.Table(os.environ.get("USERS_TABLE", "ona-platform-users"))
+# DynamoDB - User data is in us-east-1 (Database Region)
+# Use DYNAMODB_REGION if set, otherwise default to us-east-1 for user tables
+def _get_users_table():
+    """Lazy initialization of users table."""
+    region = os.environ.get("DYNAMODB_REGION", "us-east-1")
+    # In CI/Testing, return a mock if boto3 fails
+    if os.environ.get("GITHUB_ACTIONS") == "true" or os.environ.get("TESTING") == "true":
+        try:
+            db = boto3.resource("dynamodb", region_name=region)
+            return db.Table(os.environ.get("USERS_TABLE", "ona-platform-users"))
+        except Exception:
+            from unittest.mock import MagicMock
+            return MagicMock()
+            
+    db = boto3.resource("dynamodb", region_name=region)
+    return db.Table(os.environ.get("USERS_TABLE", "ona-platform-users"))
+
+# Use a proxy object or just fetch when needed
+def _users_table_ref():
+    return _get_users_table()
 
 # Tier limits
 TIER_LIMITS = {
@@ -70,7 +86,7 @@ def _get_user_subscription(user_id: str) -> tuple:
     Returns ('none', {}, 'regular') if no subscription found.
     """
     try:
-        response = _users_table.get_item(
+        response = _users_table_ref().get_item(
             Key={"user_id": user_id},
             ProjectionExpression="subscriptions, #u, user_type",
             ExpressionAttributeNames={"#u": "usage"},
@@ -96,7 +112,7 @@ def _get_user_subscription(user_id: str) -> tuple:
 def _increment_usage(user_id: str, counter_key: str) -> int:
     """Atomically increment a usage counter. Returns new value."""
     try:
-        response = _users_table.update_item(
+        response = _users_table_ref().update_item(
             Key={"user_id": user_id},
             UpdateExpression="SET usage.#k = if_not_exists(usage.#k, :zero) + :one",
             ExpressionAttributeNames={"#k": counter_key},
@@ -132,7 +148,7 @@ def _reset_usage(user_id: str):
         next_reset = now.replace(month=now.month + 1, day=1, hour=0, minute=0, second=0, microsecond=0)
 
     try:
-        _users_table.update_item(
+        _users_table_ref().update_item(
             Key={"user_id": user_id},
             UpdateExpression="SET usage.zorora_research_queries = :zero, usage.zorora_queries_reset_at = :reset",
             ExpressionAttributeValues={
@@ -294,7 +310,7 @@ def get_user_team_context(user_id: str) -> dict:
     Returns dict with team_id and can_share_team_content flag.
     """
     try:
-        response = _users_table.get_item(
+        response = _users_table_ref().get_item(
             Key={"user_id": user_id},
             ProjectionExpression="group_id, team_id, subscriptions",
         )
@@ -331,7 +347,7 @@ def get_accessible_user_ids(user_id: str) -> list:
     if team_context["can_share_team_content"] and team_context["team_id"]:
         try:
             # Query for all team members
-            response = _users_table.scan(
+            response = _users_table_ref().scan(
                 FilterExpression="group_id = :team_id OR team_id = :team_id",
                 ExpressionAttributeValues={":team_id": team_context["team_id"]},
                 ProjectionExpression="user_id",

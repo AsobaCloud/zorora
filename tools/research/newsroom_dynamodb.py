@@ -9,7 +9,6 @@ import hashlib
 import logging
 from datetime import datetime
 from typing import List, Dict, Any, Optional
-from collections import Counter
 
 try:
     import boto3
@@ -35,13 +34,19 @@ def _get_dynamodb():
     if os.environ.get("GITHUB_ACTIONS") == "true" or os.environ.get("TESTING") == "true":
         # Return a mock if no credentials found
         try:
-            region = os.environ.get("AWS_REGION", "us-east-1")
+            region = os.environ.get("DYNAMODB_REGION", os.environ.get("AWS_REGION", "us-east-1"))
             return boto3.resource('dynamodb', region_name=region)
         except Exception:
             from unittest.mock import MagicMock
             return MagicMock()
 
-    region = os.environ.get("AWS_REGION", "us-east-1")
+    # Database region is us-east-1 (as per INFRASTRUCTURE.md and INGESTION_CONTRACT.md)
+    # Use DYNAMODB_REGION if set, otherwise default to us-east-1
+    region = os.environ.get("DYNAMODB_REGION", os.environ.get("AWS_REGION", "us-east-1"))
+    if region == "af-south-1":
+        # Fargate platform sets AWS_REGION=af-south-1, but DB is in us-east-1
+        region = "us-east-1"
+        
     return boto3.resource('dynamodb', region_name=region)
 
 
@@ -49,7 +54,11 @@ def _get_dynamodb_client():
     """Get DynamoDB client."""
     if not HAS_BOTO3:
         raise RuntimeError("boto3 not installed, cannot access DynamoDB")
-    region = os.environ.get("AWS_REGION", "us-east-1")
+    
+    region = os.environ.get("DYNAMODB_REGION", os.environ.get("AWS_REGION", "us-east-1"))
+    if region == "af-south-1":
+        region = "us-east-1"
+        
     return boto3.client('dynamodb', region_name=region)
 
 
@@ -439,6 +448,7 @@ def generate_facets(days_back: int = 90) -> Dict[str, Any]:
     
     try:
         from datetime import timedelta
+        from collections import Counter
         
         table_name = os.environ.get("DYNAMODB_TABLE_NAME", TABLE_NAME)
         table = _get_dynamodb().Table(table_name)
@@ -446,30 +456,70 @@ def generate_facets(days_back: int = 90) -> Dict[str, Any]:
         end_date = datetime.now()
         start_date = end_date - timedelta(days=days_back)
         
-        start_key = f"COLLECTED#{start_date.strftime('%Y-%m-%d')}"
-        end_key = f"COLLECTED#{end_date.strftime('%Y-%m-%d')}"
-        
-        response = table.scan(
-            FilterExpression=Attr('collection_key').between(start_key, end_key),
-            ProjectionExpression='core_topics, #src, pub_date',
-            ExpressionAttributeNames={
-                '#src': 'source'
-            },
-            Limit=10000
-        )
-        
+        # Calculate dates to query
+        delta = end_date - start_date
+        dates_to_query = []
+        for i in range(delta.days + 1):
+            day = start_date + timedelta(days=i)
+            dates_to_query.append(day.strftime('%Y-%m-%d'))
+            
         topic_counter = Counter()
         source_counter = Counter()
         dates = []
         
-        for item in response.get('Items', []):
-            for topic in item.get('core_topics', []):
-                topic_counter[topic] += 1
-            source = item.get('source', 'Unknown')
-            source_counter[source] += 1
-            pub_date = item.get('pub_date', '')
-            if pub_date:
-                dates.append(pub_date[:10])
+        # Query each date using collection-date-index GSI
+        # This is much faster and cheaper than a full table scan
+        for date_str in dates_to_query:
+            collection_key = f"COLLECTED#{date_str}"
+            
+            # Query the GSI
+            try:
+                # Use a loop for pagination if needed
+                last_evaluated_key = None
+                while True:
+                    query_kwargs = {
+                        'IndexName': 'collection-date-index',
+                        'KeyConditionExpression': Key('collection_key').eq(collection_key),
+                        'ProjectionExpression': 'core_topics, #src, pub_date',
+                        'ExpressionAttributeNames': {'#src': 'source'},
+                        'Limit': 2000
+                    }
+                    if last_evaluated_key:
+                        query_kwargs['ExclusiveStartKey'] = last_evaluated_key
+                        
+                    response = table.query(**query_kwargs)
+                    
+                    for item in response.get('Items', []):
+                        for topic in item.get('core_topics', []):
+                            topic_counter[topic] += 1
+                        source = item.get('source', 'Unknown')
+                        source_counter[source] += 1
+                        pub_date = item.get('pub_date', '')
+                        if pub_date:
+                            dates.append(pub_date[:10])
+                            
+                    last_evaluated_key = response.get('LastEvaluatedKey')
+                    if not last_evaluated_key:
+                        break
+                        
+            except Exception as e:
+                # Fallback to scan if index query fails (e.g. index not found)
+                logger.warning(f"Index query failed for {collection_key}, falling back to scan: {e}")
+                start_key = f"COLLECTED#{date_str}"
+                response = table.scan(
+                    FilterExpression=Attr('collection_key').eq(start_key),
+                    ProjectionExpression='core_topics, #src, pub_date',
+                    ExpressionAttributeNames={'#src': 'source'},
+                    Limit=2000
+                )
+                for item in response.get('Items', []):
+                    for topic in item.get('core_topics', []):
+                        topic_counter[topic] += 1
+                    source = item.get('source', 'Unknown')
+                    source_counter[source] += 1
+                    pub_date = item.get('pub_date', '')
+                    if pub_date:
+                        dates.append(pub_date[:10])
         
         topics = [{"name": topic, "count": count} for topic, count in topic_counter.most_common()]
         sources = [{"name": source, "count": count} for source, count in source_counter.most_common()]

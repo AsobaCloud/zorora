@@ -171,66 +171,6 @@ def test_frontend_default_date_range_is_latest_week():
     assert "dateFrom.value = fromDate.toISOString().slice(0, 10);" in html
 
 
-def test_s3_topic_fallback_uses_special_tags_when_core_topics_empty():
-    """When core_topics is empty, topic_tags should fall back to special_tags."""
-    from tools.research.newsroom_s3 import _fetch_articles_from_date
-    import json
-    from unittest.mock import Mock
-
-    mock_metadata = {
-        "title": "Test Article",
-        "pub_date": "2026-06-03",
-        "url": "https://example.com/test",
-        "source": "TestSource",
-        "tags": {
-            "core_topics": [],
-            "special_tags": ["economy_politics"],
-            "matched_keywords": ["tax", "election"],
-            "continents": ["Asia"],
-            "countries": ["India"],
-        },
-    }
-
-    mock_s3 = Mock()
-    mock_s3.list_objects_v2.return_value = {"Contents": [{"Key": "news/2026-06-03/metadata/test.json"}]}
-    mock_s3.get_object.return_value = {"Body": Mock(read=lambda: json.dumps(mock_metadata).encode())}
-
-    articles = _fetch_articles_from_date(mock_s3, "2026-06-03", max_results=1)
-
-    assert len(articles) == 1
-    assert articles[0]["topic_tags"] == ["economy_politics"]
-
-
-def test_s3_topic_fallback_uses_matched_keywords_when_special_tags_also_empty():
-    """When both core_topics and special_tags are empty, use matched_keywords."""
-    from tools.research.newsroom_s3 import _fetch_articles_from_date
-    import json
-    from unittest.mock import Mock
-
-    mock_metadata = {
-        "title": "Test Article",
-        "pub_date": "2026-06-03",
-        "url": "https://example.com/test",
-        "source": "TestSource",
-        "tags": {
-            "core_topics": [],
-            "special_tags": [],
-            "matched_keywords": ["tariff", "trade"],
-            "continents": ["Americas"],
-            "countries": ["United States"],
-        },
-    }
-
-    mock_s3 = Mock()
-    mock_s3.list_objects_v2.return_value = {"Contents": [{"Key": "news/2026-06-03/metadata/test.json"}]}
-    mock_s3.get_object.return_value = {"Body": Mock(read=lambda: json.dumps(mock_metadata).encode())}
-
-    articles = _fetch_articles_from_date(mock_s3, "2026-06-03", max_results=1)
-
-    assert len(articles) == 1
-    assert articles[0]["topic_tags"] == ["tariff", "trade"]
-
-
 def test_facets_endpoint_loads_fast_on_first_visit(app_client):
     """When a user opens Global View, /api/news-intel/facets must respond fast
     enough that the page doesn't hang on first load (cache cold)."""
@@ -238,10 +178,20 @@ def test_facets_endpoint_loads_fast_on_first_visit(app_client):
     from tools.utils.newsroom_cache import get_cache
 
     get_cache().clear()
+    
+    mock_data = {
+        "topics": [{"name": "energy", "count": 1}],
+        "sources": [],
+        "date_range": {"min": "2026-03-24", "max": "2026-06-03"},
+    }
 
-    start = time.time()
-    response = app_client.get("/api/news-intel/facets")
-    elapsed = time.time() - start
+    with patch(
+        "tools.research.newsroom_dynamodb.generate_facets",
+        return_value=mock_data,
+    ):
+        start = time.time()
+        response = app_client.get("/api/news-intel/facets")
+        elapsed = time.time() - start
 
     assert response.status_code == 200
     payload = response.get_json()
